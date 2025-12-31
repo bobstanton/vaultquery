@@ -1,0 +1,10 @@
+{
+	"id": "vaultquery",
+	"name": "VaultQuery",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.16",
+	"description": "Execute SELECT, INSERT, UPDATE, and DELETE statements on notes, properties, tasks, tables, headings and links.",
+	"author": "Bob Stanton",
+	"authorUrl": "https://github.com/bobstanton",
+	"isDesktopOnly": false
+}
