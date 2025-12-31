@@ -1,0 +1,252 @@
+/**
+ * SlickGrid Obsidian Theme Overrides
+ *
+ * These styles override the SlickGrid Alpine theme to match Obsidian's native look.
+ * This file is imported after slick-alpine-theme.css so our overrides take precedence.
+ *
+ * When upgrading SlickGrid, review these overrides for compatibility with new versions.
+ */
+
+/* Container styles for VaultQuery SlickGrid instances */
+.vaultquery-slickgrid {
+    width: 100%;
+    min-height: 400px;
+    max-height: 600px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--background-primary);
+    position: relative;
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-medium);
+    /* Ensure proper isolation of grid instances */
+    isolation: isolate;
+    contain: layout style paint;
+    clear: both;
+    display: block;
+}
+
+/* Header */
+.vaultquery-slickgrid .slick-header {
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    height: 32px !important;
+}
+
+.vaultquery-slickgrid .slick-header-column {
+    background: var(--background-secondary);
+    border-right: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    height: 32px !important;
+    line-height: 32px;
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-medium);
+    padding: 0 0 0 var(--size-4-2);
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vaultquery-slickgrid .slick-header-column:hover {
+    background: var(--background-modifier-hover);
+}
+
+.vaultquery-slickgrid .slick-header-column .slick-column-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+}
+
+.vaultquery-slickgrid .slick-header-column-sorted {
+    background: var(--background-modifier-active);
+}
+
+.vaultquery-slickgrid .slick-header-column.slick-sortable-placeholder {
+    background: var(--background-modifier-active);
+}
+
+/* Sort indicators */
+.vaultquery-slickgrid .slick-sort-indicator {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-accent);
+}
+
+.vaultquery-slickgrid .slick-sort-indicator-asc,
+.vaultquery-slickgrid .slick-sort-indicator-desc {
+    background: none;
+}
+
+/* Rows */
+.vaultquery-slickgrid .slick-row {
+    background: var(--background-primary);
+    border-bottom: 1px solid var(--table-border-color);
+    height: 32px;
+}
+
+.vaultquery-slickgrid .slick-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.vaultquery-slickgrid .slick-row.selected {
+    background: var(--background-modifier-active-hover);
+}
+
+.vaultquery-slickgrid .slick-row.odd {
+    background: var(--table-row-background-hover);
+}
+
+.vaultquery-slickgrid .slick-row.odd:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Cells */
+.vaultquery-slickgrid .slick-cell {
+    border-right: 1px solid transparent;
+    color: var(--text-normal);
+    padding: var(--size-4-1) var(--size-4-2);
+    line-height: 1.4;
+    font-family: var(--font-text);
+    font-size: var(--font-ui-medium);
+    vertical-align: middle;
+    box-sizing: border-box;
+}
+
+.vaultquery-slickgrid .slick-cell.selected {
+    background: var(--background-modifier-active);
+}
+
+.vaultquery-slickgrid .slick-cell.active {
+    background: var(--background-modifier-active);
+}
+
+/* Viewport */
+.vaultquery-slickgrid .slick-viewport {
+    background: var(--background-primary);
+    border: none;
+    height: 100%;
+    min-height: 350px;
+}
+
+/* Scrollbar styling */
+.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+    background: var(--scrollbar-bg);
+}
+
+.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-track {
+    background: var(--scrollbar-bg);
+    border-radius: var(--radius-m);
+}
+
+.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb-bg);
+    border-radius: var(--radius-m);
+    border: 2px solid var(--scrollbar-bg);
+}
+
+.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-bg-hover);
+}
+
+.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-corner {
+    background: var(--scrollbar-bg);
+}
+
+/* Path links in grid cells */
+.vaultquery-slickgrid .slick-path-link {
+    color: var(--text-accent);
+    text-decoration: none;
+    cursor: pointer;
+    font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-slickgrid .slick-path-link:hover {
+    color: var(--text-accent-hover);
+    text-decoration: underline;
+}
+
+/* Header menu */
+.vaultquery-slickgrid .slick-header-menu {
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    box-shadow: var(--shadow-l);
+    z-index: 1000;
+}
+
+.vaultquery-slickgrid .slick-header-menuitem {
+    color: var(--text-normal);
+    padding: var(--size-4-2) var(--size-4-3);
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-medium);
+}
+
+.vaultquery-slickgrid .slick-header-menuitem:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Column resizing handle */
+.vaultquery-slickgrid .slick-resizable-handle {
+    width: 4px;
+    right: 0;
+    cursor: col-resize;
+    background: transparent;
+    border-right: 1px solid var(--background-modifier-border);
+    box-shadow: none !important; /* Override Alpine theme box-shadow */
+}
+
+.vaultquery-slickgrid .slick-resizable-handle:hover {
+    background: var(--interactive-accent);
+    border-right: 2px solid var(--interactive-accent);
+    box-shadow: none !important; /* Override Alpine theme box-shadow */
+}
+
+/* Mobile/touch-friendly resize handles */
+@media (pointer: coarse), (hover: none) {
+    .vaultquery-slickgrid .slick-resizable-handle {
+        width: 16px;
+        right: -6px;
+        background: transparent;
+        /* Visible indicator for touch users */
+        border-right: 2px solid var(--background-modifier-border);
+    }
+
+    .vaultquery-slickgrid .slick-resizable-handle:active {
+        background: var(--interactive-accent);
+        border-right: 3px solid var(--interactive-accent);
+    }
+}
+
+/* Focus styling */
+.vaultquery-slickgrid:focus-within {
+    outline: none;
+}
+
+.vaultquery-slickgrid .slick-cell:focus {
+    outline: none;
+}
+
+/* Subgrid styling (for nested/expandable rows) */
+.vaultquery-subgrid .vaultquery-slickgrid {
+    border: none;
+    border-radius: 0;
+    min-height: 200px;
+    max-height: 400px;
+}
+
+/* Current/proposed column styling for write previews */
+.vaultquery-slickgrid .slick-header-column.vaultquery-current-column {
+    background: var(--background-modifier-hover);
+}
+
+.vaultquery-slickgrid .slick-header-column.vaultquery-proposed-column {
+    background: var(--background-modifier-hover);
+}

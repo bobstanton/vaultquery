@@ -1,0 +1,36 @@
+name: Plugin release
+
+on:
+    push:
+        tags:
+            - "*"
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                node-version: 20
+            - name: Clone dependencies
+              run: |
+                  git clone https://github.com/bobstanton/md-to-obsidian-dom.git ../md-to-obsidian-dom
+                  cd ../md-to-obsidian-dom && npm install && npm run build
+                  git clone https://github.com/bobstanton/placeholder-resolver.git ../placeholder-resolver
+                  cd ../placeholder-resolver && npm install --omit=dev --ignore-scripts && npm install typescript && npx tsc
+            - name: npm build
+              run: |
+                  npm install
+                  node ../md-to-obsidian-dom/dist/bin/generate.js ./help-md ./src/generated-help --prefix vaultquery-help
+                  npx tsc -noEmit -skipLibCheck
+                  node esbuild.config.mjs production
+                  mv main.css styles.css 2>/dev/null || true
+            - name: Create Release
+              # https://github.com/ncipollo/release-action
+              uses: ncipollo/release-action@v1.20.0
+              with:
+                  artifacts: "main.js,manifest.json,styles.css"
+                  token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,1186 @@
+.vaultquery-container {
+	margin: 0;
+	padding: 0;
+	background-color: transparent;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	gap: var(--size-4-3);
+	position: relative; 
+}
+
+.vaultquery-container + .vaultquery-container {
+	margin-top: 24px;
+}
+
+/* Table styles for markdown-rendered content in vaultquery-container */
+.vaultquery-container table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--font-ui-medium);
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	margin: 0;
+}
+
+.vaultquery-container table th {
+	background-color: var(--background-secondary);
+	font-weight: var(--font-weight-medium);
+	text-align: left;
+	padding: var(--size-4-2) var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-container table th:last-child {
+	border-right: none;
+}
+
+.vaultquery-container table td {
+	padding: var(--size-4-2) var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-container table td:last-child {
+	border-right: none;
+}
+
+.vaultquery-container table tr:last-child td {
+	border-bottom: none;
+}
+
+.vaultquery-container table tr:hover td {
+	background-color: var(--background-modifier-hover);
+}
+
+/* Specific styles for vaultquery-markdown rendered tables */
+.vaultquery-markdown-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--font-ui-medium);
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	margin: 0;
+}
+
+.vaultquery-markdown-table th {
+	background-color: var(--background-secondary);
+	font-weight: var(--font-weight-medium);
+	text-align: left;
+	padding: var(--size-4-2) var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-markdown-table th:last-child {
+	border-right: none;
+}
+
+.vaultquery-markdown-table td {
+	padding: var(--size-4-2) var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+	vertical-align: top;
+}
+
+.vaultquery-markdown-table td:last-child {
+	border-right: none;
+}
+
+.vaultquery-markdown-table tr:last-child td {
+	border-bottom: none;
+}
+
+.vaultquery-markdown-table tr:hover td {
+	background-color: var(--background-modifier-hover);
+}
+
+/* Table cell alignment classes */
+.vaultquery-markdown-table th.vaultquery-align-center,
+.vaultquery-markdown-table td.vaultquery-align-center {
+	text-align: center;
+}
+
+.vaultquery-markdown-table th.vaultquery-align-right,
+.vaultquery-markdown-table td.vaultquery-align-right {
+	text-align: right;
+}
+
+/* Markdown content within table cells */
+.vaultquery-markdown-table td p:first-child {
+	margin-top: 0;
+}
+
+.vaultquery-markdown-table td p:last-child {
+	margin-bottom: 0;
+}
+
+.vaultquery-markdown-table td ul,
+.vaultquery-markdown-table td ol {
+	margin: var(--size-4-1) 0;
+	padding-left: var(--size-4-5);
+}
+
+.vaultquery-markdown-table td h1,
+.vaultquery-markdown-table td h2,
+.vaultquery-markdown-table td h3,
+.vaultquery-markdown-table td h4,
+.vaultquery-markdown-table td h5,
+.vaultquery-markdown-table td h6 {
+	margin: var(--size-4-1) 0;
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-container + .vaultquery-preview-container,
+.vaultquery-container .vaultquery-preview-container {
+	margin-top: 0; 
+}
+
+.vaultquery-info {
+	margin: 0;
+	padding: var(--size-4-3);
+	font-size: var(--font-ui-medium);
+	color: var(--text-muted);
+	background-color: var(--background-primary);
+	border-top: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-count {
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-error {
+	color: var(--text-normal);
+	padding: var(--size-4-3);
+	background-color: var(--background-primary);
+	border-top: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-left: 2px solid var(--text-error);
+	margin: 0;
+	white-space: pre-wrap;
+	font-family: var(--font-interface);
+	line-height: var(--line-height-normal);
+}
+
+.vaultquery-message-header {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.vaultquery-message-icon {
+	display: flex;
+	align-items: center;
+}
+
+.vaultquery-message-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+.vaultquery-error .vaultquery-message-icon {
+	color: var(--text-error);
+}
+
+.vaultquery-success .vaultquery-message-icon {
+	color: var(--text-success);
+}
+
+.vaultquery-write-warning .vaultquery-message-icon {
+	color: var(--text-warning);
+}
+
+.vaultquery-empty {
+	color: var(--text-muted);
+	font-style: italic;
+	text-align: center;
+	padding: var(--size-4-3);
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	margin: 0;
+}
+
+.vaultquery-loading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--size-4-4);
+	min-height: 200px;
+	padding: var(--size-4-6);
+}
+
+.vaultquery-loading-spinner {
+	width: 32px;
+	height: 32px;
+	border: 3px solid var(--background-modifier-border);
+	border-top-color: var(--interactive-accent);
+	border-radius: 50%;
+	animation: vaultquery-spin 1s linear infinite;
+}
+
+@keyframes vaultquery-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.vaultquery-loading-text {
+	color: var(--text-muted);
+	font-size: var(--font-ui-medium);
+	text-align: center;
+}
+
+.vaultquery-progress-count {
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-progress-file {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+
+.vaultquery-floating-buttons {
+	position: absolute;
+	top: 4px; 
+	inset-inline-end: calc(var(--size-2-2) + 30px + var(--size-2-1));
+	display: flex;
+	gap: var(--size-2-1);
+	opacity: 0; 
+	transition: opacity 0.25s ease;
+	z-index: 1; 
+}
+
+.vaultquery-container:hover .vaultquery-floating-buttons {
+	opacity: 1;
+}
+
+.vaultquery-floating-buttons .vaultquery-floating-button {
+	padding: var(--size-2-2) var(--size-2-3); 
+	position: static;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	background: transparent;
+	border: none; 
+	box-shadow: none; 
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	opacity: 1; 
+	cursor: var(--cursor); 
+	transition: background-color 0.25s ease;
+}
+
+.vaultquery-floating-buttons .vaultquery-floating-button svg {
+	width: var(--icon-s); 
+	height: var(--icon-s);
+}
+
+.vaultquery-floating-buttons .vaultquery-floating-button:hover {
+	background: var(--background-modifier-hover);
+}
+
+.vaultquery-floating-button.vaultquery-refresh-spinning svg {
+	animation: spin 1s linear infinite;
+}
+
+.vaultquery-rendered-content {
+	font-size: var(--font-ui-medium);
+	line-height: var(--line-height-normal);
+}
+
+/* Markdown cell styles for SlickGrid */
+.vaultquery-markdown-cell {
+	font-size: var(--font-ui-medium);
+	line-height: var(--line-height-normal);
+	white-space: normal;
+}
+
+.vaultquery-markdown-cell p {
+	margin: var(--size-4-1) 0;
+}
+
+.vaultquery-markdown-cell p:first-child {
+	margin-top: 0;
+}
+
+.vaultquery-markdown-cell p:last-child {
+	margin-bottom: 0;
+}
+
+.vaultquery-markdown-cell h1,
+.vaultquery-markdown-cell h2,
+.vaultquery-markdown-cell h3,
+.vaultquery-markdown-cell h4,
+.vaultquery-markdown-cell h5,
+.vaultquery-markdown-cell h6 {
+	margin: var(--size-4-2) 0 var(--size-4-1) 0;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-semibold);
+}
+
+.vaultquery-markdown-cell ul,
+.vaultquery-markdown-cell ol {
+	margin: var(--size-4-1) 0;
+	padding-left: var(--size-4-6);
+}
+
+.vaultquery-markdown-cell li {
+	margin: var(--size-4-1) 0;
+}
+
+.vaultquery-markdown-cell code {
+	background-color: var(--code-background);
+	padding: var(--size-4-1) var(--size-4-1);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-markdown-cell blockquote {
+	border-left: var(--size-4-1) solid var(--text-accent);
+	padding-left: var(--size-4-2);
+	margin: var(--size-4-1) 0;
+	color: var(--text-muted);
+}
+
+.vaultquery-markdown-cell a.internal-link {
+	color: var(--link-color);
+	text-decoration: none;
+}
+
+.vaultquery-markdown-cell a.internal-link:hover {
+	color: var(--link-color-hover);
+	text-decoration: underline;
+}
+
+/* Override SlickGrid cell styles for cells containing markdown */
+.slick-cell.vaultquery-markdown-content-cell {
+	white-space: normal;
+	overflow: hidden !important;
+	text-overflow: clip;
+	align-items: flex-start;
+	padding: var(--size-4-2);
+	display: block;
+}
+
+.slick-cell.vaultquery-markdown-content-cell .vaultquery-markdown-cell {
+	max-height: 134px;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding-right: var(--size-4-1);
+}
+
+.vaultquery-rendered-content p {
+	margin: var(--size-4-1) 0;
+}
+
+.vaultquery-rendered-content h1,
+.vaultquery-rendered-content h2,
+.vaultquery-rendered-content h3,
+.vaultquery-rendered-content h4,
+.vaultquery-rendered-content h5,
+.vaultquery-rendered-content h6 {
+	margin: var(--size-4-2) 0 var(--size-4-1) 0;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-semibold);
+}
+
+.vaultquery-rendered-content ul,
+.vaultquery-rendered-content ol {
+	margin: var(--size-4-1) 0;
+	padding-left: var(--size-4-6);
+}
+
+.vaultquery-rendered-content li {
+	margin: var(--size-4-1) 0;
+}
+
+.vaultquery-rendered-content code {
+	background-color: var(--code-background);
+	padding: var(--size-4-1) var(--size-4-1);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-rendered-content blockquote {
+	border-left: var(--size-4-1) solid var(--text-accent);
+	padding-left: var(--size-4-2);
+	margin: var(--size-4-1) 0;
+	color: var(--text-muted);
+}
+
+.vaultquery-rendered-content a.internal-link {
+	color: var(--link-color);
+	text-decoration: none;
+}
+
+.vaultquery-rendered-content a.internal-link:hover {
+	color: var(--link-color-hover);
+	text-decoration: underline;
+}
+
+.vaultquery-stale-warning {
+	background-color: var(--background-secondary);
+	border-left: 2px solid var(--text-warning);
+	padding: var(--size-4-2) var(--size-4-3);
+	margin: 0 0 var(--size-4-2) 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.vaultquery-write-warning {
+	background-color: var(--background-primary);
+	border-left: 2px solid var(--text-error);
+	border-top: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-3);
+	margin: 0;
+}
+
+.vaultquery-write-preview {
+	margin: var(--size-4-4) 0;
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-write-preview h4 {
+	margin: 0 0 var(--size-4-2) 0;
+	color: var(--text-normal);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-write-preview h5 {
+	margin: var(--size-4-2) 0 var(--size-4-2) 0;
+	color: var(--text-muted);
+	font-weight: var(--font-weight-medium);
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-write-warning h3 {
+	margin: 0 0 var(--size-4-2) 0;
+	color: var(--text-error);
+}
+
+.vaultquery-write-details {
+	margin-bottom: var(--size-4-4);
+	padding: var(--size-4-2);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+}
+
+.vaultquery-write-details p {
+	margin: var(--size-4-1) 0;
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-write-query {
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-write-query h4 {
+	margin: 0 0 var(--size-4-2) 0;
+	color: var(--text-normal);
+}
+
+.vaultquery-write-query pre {
+	background-color: var(--code-background);
+	padding: var(--size-4-3);
+	border-radius: var(--radius-s);
+	overflow-x: auto;
+	margin: 0;
+}
+
+.vaultquery-write-query code {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-medium);
+	color: var(--code-normal);
+}
+
+.vaultquery-write-estimate {
+	margin: var(--size-4-2);
+	padding: var(--size-4-3);
+	background-color: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	border-left: 4px solid var(--text-accent);
+}
+
+.vaultquery-write-estimate p {
+	margin: 0;
+	font-weight: var(--font-weight-semibold);
+	color: var(--text-accent);
+}
+
+.vaultquery-write-buttons {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	margin: var(--size-4-2);
+}
+
+.vaultquery-write-buttons button {
+	margin-right: var(--size-4-2);
+}
+
+.vaultquery-write-buttons button:last-child {
+	margin-right: 0;
+}
+
+.vaultquery-write-status {
+	margin: var(--size-4-2);
+	padding: var(--size-4-4);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+	text-align: center;
+}
+
+.vaultquery-write-status h3 {
+	margin: 0 0 var(--size-4-4) 0;
+	color: var(--text-accent);
+}
+
+.vaultquery-write-status p {
+	margin: var(--size-4-2) 0;
+}
+
+.vaultquery-success {
+	color: var(--text-normal);
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border: 1px solid var(--text-success);
+	border-radius: var(--radius-s);
+	margin: 0;
+}
+
+.vaultquery-success h3 {
+	color: var(--text-success);
+	margin-top: 0;
+	margin-bottom: var(--size-4-2);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-success p {
+	margin: var(--size-4-1) 0;
+	color: var(--text-normal);
+}
+
+.vaultquery-error-list {
+	margin: var(--size-4-2) 0;
+	padding-left: var(--size-4-4);
+	list-style-type: disc;
+}
+
+.vaultquery-error-list li {
+	margin: var(--size-4-1) 0;
+	color: var(--text-error);
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-write-result-header {
+	margin-bottom: var(--size-4-4);
+}
+
+.vaultquery-write-result-header h3 {
+	margin: 0;
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-weight-semibold);
+}
+
+.vaultquery-write-changes {
+	margin: var(--size-4-2) 0;
+}
+
+.vaultquery-write-changes h4 {
+	margin: var(--size-4-2) 0;
+	color: var(--text-normal);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-before-after-section {
+	margin: var(--size-4-3) 0;
+}
+
+.vaultquery-before-after-section h5 {
+	margin: var(--size-4-2) 0 var(--size-4-1) 0;
+	color: var(--text-accent);
+	font-weight: var(--font-weight-medium);
+	font-size: var(--font-ui-medium);
+	padding-bottom: var(--size-4-1);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-write-errors {
+	margin-top: var(--size-4-4);
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border-left: 4px solid var(--text-error);
+}
+
+.vaultquery-write-errors h4 {
+	margin: 0 0 var(--size-4-2) 0;
+	color: var(--text-error);
+}
+
+/* Help documentation styles */
+.vaultquery-help {
+	padding: 0;
+	background-color: var(--background-primary);
+}
+
+.vaultquery-help h3 {
+	color: var(--text-normal);
+	margin: 0;
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-help-section {
+	margin: 0;
+	padding: var(--size-4-3);
+	background-color: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-help-example {
+	margin-bottom: var(--size-4-3);
+	padding: var(--size-4-2);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-help-example h4 {
+	color: var(--text-accent);
+	margin: 0 0 var(--size-4-2) 0;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-help-example pre {
+	background-color: var(--background-primary-alt);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-3);
+	overflow-x: auto;
+	margin: var(--size-4-2) 0;
+}
+
+.vaultquery-help-example code {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-normal);
+}
+
+.vaultquery-help-loading {
+	color: var(--text-muted);
+	font-style: italic;
+	padding: var(--size-4-2);
+}
+
+.vaultquery-help-footer {
+	margin: 0;
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-top: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	text-align: center;
+	font-size: var(--font-ui-smaller);
+	font-style: italic;
+}
+
+.vaultquery-help-hint {
+	margin-top: var(--size-4-2);
+	padding: var(--size-4-2);
+	background-color: var(--background-modifier-form-field);
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-style: italic;
+}
+
+.vaultquery-error-container {
+	margin: 0;
+}
+
+.vaultquery-error-query {
+	padding: var(--size-4-4);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-error-query h4 {
+	margin: 0 0 var(--size-4-2) 0;
+	font-size: var(--font-ui-medium);
+	color: var(--text-normal);
+}
+
+.vaultquery-markdown-output {
+	padding: var(--size-4-4);
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-m);
+	border: 1px solid var(--background-modifier-border);
+	position: relative; 
+}
+
+.vaultquery-markdown-output h4 {
+	margin: 0 0 var(--size-4-3) 0;
+	color: var(--text-normal);
+	font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-markdown-rendered {
+	margin-bottom: var(--size-4-3);
+}
+
+.vaultquery-markdown-rendered table {
+	width: 100%;
+	margin: 0;
+}
+
+.vaultquery-markdown-rendered p {
+	margin: 0;
+}
+
+.vaultquery-markdown-buttons {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+}
+
+.vaultquery-markdown-buttons button {
+	margin-left: var(--size-4-2);
+}
+
+.vaultquery-markdown-buttons button:first-child {
+	margin-left: 0;
+}
+
+.performance-stats-section {
+	margin-bottom: var(--size-4-4);
+}
+
+.performance-stats-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-3);
+}
+
+.performance-stat-item {
+	padding: var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+}
+
+.performance-stat-label {
+	font-weight: var(--font-weight-bold);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-bottom: var(--size-4-1);
+}
+
+.performance-stat-value {
+	font-size: var(--font-ui-medium);
+	color: var(--text-normal);
+}
+
+.performance-stats-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-top: var(--size-4-2);
+}
+
+.performance-stats-table th,
+.performance-stats-table td {
+	padding: var(--size-4-2) var(--size-4-3);
+	text-align: left;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.performance-stats-table th {
+	background: var(--background-secondary);
+	font-weight: var(--font-weight-bold);
+	color: var(--text-muted);
+}
+
+.performance-stats-table td {
+	color: var(--text-normal);
+}
+
+.performance-stats-table tr:hover {
+	background: var(--background-modifier-hover);
+}
+
+.performance-stats-table .internal-link {
+	text-decoration: none;
+	color: var(--text-accent);
+	cursor: pointer;
+}
+
+.performance-stats-table .internal-link:hover {
+	text-decoration: underline;
+}
+
+.vaultquery-write-container {
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	margin: 0;
+	overflow: hidden;
+}
+
+.vaultquery-write-container .vaultquery-write-query {
+	border: none;
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+}
+
+.vaultquery-preview-summary {
+	padding: var(--size-4-2) var(--size-4-3);
+	font-size: var(--font-ui-medium);
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	margin: 0;
+	line-height: var(--line-height-normal);
+	border-top: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-summary-insert {
+	color: var(--text-success);
+	background-color: var(--background-secondary);
+	border-left: 3px solid var(--text-success);
+}
+
+.vaultquery-summary-update {
+	color: var(--text-accent);
+	background-color: var(--background-secondary);
+	border-left: 3px solid var(--text-accent);
+}
+
+.vaultquery-summary-delete {
+	color: var(--text-error);
+	background-color: var(--background-secondary);
+	border-left: 3px solid var(--text-error);
+}
+
+.vaultquery-summary-multi {
+	color: var(--text-normal);
+	background-color: var(--background-secondary);
+	border-left: 3px solid var(--interactive-accent);
+}
+
+.vaultquery-preview-table {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	overflow: hidden;
+	margin: 0;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.vaultquery-preview-actions {
+	padding: var(--size-4-3);
+	background-color: var(--background-secondary);
+	border-top: 1px solid var(--background-modifier-border);
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--size-4-3);
+	margin: 0;
+}
+
+.vaultquery-modal-overlay,
+.vaultquery-preview-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+}
+
+.vaultquery-preview-overlay {
+	padding: var(--size-4-4);
+}
+
+.vaultquery-modal-content,
+.vaultquery-preview-modal {
+	background-color: var(--background-primary);
+	border-radius: var(--radius-l);
+	max-width: 90vw;
+	max-height: 90vh;
+	overflow: hidden;
+	box-shadow: var(--shadow-l);
+	display: flex;
+	flex-direction: column;
+}
+
+.vaultquery-modal-content {
+	padding: var(--size-4-4);
+	max-width: 400px;
+	margin: var(--size-4-4);
+}
+
+.vaultquery-preview-modal-header {
+	padding: var(--size-4-4);
+	border-bottom: 1px solid var(--background-modifier-border);
+	background-color: var(--background-secondary);
+}
+
+.vaultquery-preview-modal-content {
+	flex: 1;
+	overflow: auto;
+	padding: var(--size-4-4);
+}
+
+.vaultquery-preview-modal-footer,
+.vaultquery-modal-buttons {
+	padding: var(--size-4-4);
+	border-top: 1px solid var(--background-modifier-border);
+	background-color: var(--background-secondary);
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--size-4-2);
+}
+
+.vaultquery-file-link {
+	color: var(--link-color);
+	text-decoration: none;
+	cursor: pointer;
+	transition: color 0.2s ease;
+}
+
+.vaultquery-file-link:hover {
+	color: var(--link-color-hover);
+	text-decoration: underline;
+}
+
+.vaultquery-expand-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: var(--size-2-2);
+	border-radius: var(--radius-s);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.2s ease;
+	color: var(--text-muted);
+}
+
+.vaultquery-expand-btn:hover {
+	background-color: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.vaultquery-expand-icon {
+	transition: transform 0.2s ease;
+}
+
+.vaultquery-stats-time-error {
+	color: var(--text-error);
+	font-weight: var(--font-weight-bold);
+}
+
+.vaultquery-stats-time-warning {
+	color: var(--text-warning);
+}
+
+.vaultquery-stats-row-highlight {
+	background-color: var(--background-modifier-hover);
+}
+
+.vaultquery-refresh-spinning {
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.vaultquery-chart-canvas {
+	max-height: 400px;
+	width: 100%;
+}
+
+.vaultquery-icon-expanded {
+	transform: rotate(90deg);
+}
+
+.vaultquery-operation-details {
+    margin: var(--size-4-2) 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+}
+
+.vaultquery-subgrid-title {
+    padding: var(--size-4-2) var(--size-4-3);
+    background: var(--background-modifier-hover);
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-ui-medium);
+    color: var(--text-normal);
+}
+
+.vaultquery-subgrid {
+    margin: 0;
+    border-radius: 0 0 var(--radius-s) var(--radius-s);
+    overflow: hidden;
+}
+
+.vaultquery-current-value {
+    font-style: italic;
+    opacity: 0.8;
+}
+
+.vaultquery-proposed-value {
+    font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-preview-buttons {
+    display: flex;
+    gap: var(--size-4-3);
+    justify-content: flex-end;
+    align-items: center;
+    padding: var(--size-4-2) var(--size-4-3) var(--size-4-2) 0;
+    margin: 0;
+}
+
+.vaultquery-sql-preview-section {
+    margin: 0;
+}
+
+.vaultquery-sql-code-container {
+    margin: 0;
+}
+
+.vaultquery-sql-statement-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin: var(--size-4-2) 0 var(--size-4-1) 0;
+    font-weight: var(--font-weight-medium);
+}
+
+.vaultquery-sql-statement-label:first-child {
+    margin-top: 0;
+}
+
+.vaultquery-confirmation-modal {
+    text-align: center;
+}
+
+.vaultquery-confirmation-modal p {
+    margin-bottom: var(--size-4-4);
+    white-space: pre-wrap;
+}
+
+.vaultquery-confirmation-buttons {
+    display: flex;
+    gap: var(--size-4-3);
+    justify-content: center;
+    margin-top: var(--size-4-4);
+}
+
+.vaultquery-confirmation-buttons button {
+    min-width: 80px;
+}
+
+.vaultquery-inline-button {
+    display: inline-flex;
+    vertical-align: middle;
+    margin: 0 var(--size-2-1);
+}
+
+.vaultquery-inline-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.vaultquery-inline-button-loading {
+    position: relative;
+}
+
+.vaultquery-inline-button-loading::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: var(--size-2-2);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: var(--text-on-accent);
+    border-radius: 50%;
+    animation: vaultquery-inline-spin 0.6s linear infinite;
+}
+
+@keyframes vaultquery-inline-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.vaultquery-view-header {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.vaultquery-view-success {
+    color: var(--text-success);
+}
+
+.vaultquery-view-empty {
+    font-style: italic;
+}
+
+.vaultquery-view-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-ui-medium);
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-view-preview-table th {
+    background-color: var(--background-secondary);
+    font-weight: var(--font-weight-medium);
+    text-align: left;
+    padding: var(--size-4-2) var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vaultquery-view-preview-table td {
+    padding: var(--size-4-2) var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vaultquery-view-preview-table tr:hover td {
+    background-color: var(--background-modifier-hover);
+}
