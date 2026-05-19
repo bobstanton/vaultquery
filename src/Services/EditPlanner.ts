@@ -2,19 +2,15 @@ import { App, MetadataCache } from 'obsidian';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { ContentLocationService, type Range } from './ContentLocationService';
 import { TaskEditPlanner, HeadingEditPlanner, ListItemEditPlanner, TableEditPlanner, type TaskRow, type HeadingRow, type ListItemRow, type TableCellRow, type ReplaceRangeEdit, type FrontmatterEdit, type Edit, type FrontmatterValue, type FrontmatterData, type PropertyRow, type EntityPlannerContext } from '../EditPlanner';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('EditPlanner');
 
 export type {
   ReplaceRangeEdit,
   FrontmatterEdit,
   Edit,
-  FrontmatterValue,
-  FrontmatterData,
-  PropertyRow,
-  Range
 };
-
-export type CreateFileEdit = { type: "createFile"; path: string; text: string; reason?: string };
-export type DeleteFileEdit = { type: "deleteFile"; path: string; reason?: string };
 
 export interface EditPlan {
   edits: Edit[];
@@ -29,36 +25,9 @@ export interface EditPlan {
   };
 }
 
-export interface TableRowGroup {
-  path: string;
-  table_index: number;
-  block_id?: string | null;
-  table_start?: number | null;
-  table_end?: number | null;
-  line_number?: number | null;
-  header: string[];
-  rows: Array<Record<string, string>>;
-}
+import type { EditPlannerPreviewResult } from '../WriteSync/types';
 
-export interface EditPlannerPreviewResult {
-  sqlToApply: string[];
-  tasksAfter?: TaskRow[];
-  tasksToDelete?: TaskRow[];
-  headingsAfter?: HeadingRow[];
-  headingsToDelete?: HeadingRow[];
-  tableCellsAfter?: TableCellRow[];
-  propertiesAfter?: PropertyRow[];
-  propertiesToDelete?: PropertyRow[];
-  listItemsAfter?: ListItemRow[];
-  listItemsToDelete?: ListItemRow[];
-  fileHashes?: Record<string, string>;
-  fileMtimes?: Record<string, number>;
-  filesToCreate?: Array<{ path: string; content: string }>;
-  filesToDelete?: string[];
-  notesContentUpdates?: Array<{ path: string; content: string }>;
-}
-
-export interface EditPlannerDeps {
+interface EditPlannerDeps {
   app: App;
   metadataCache: MetadataCache;
   readFile: (path: string) => Promise<string>;
@@ -101,7 +70,6 @@ export class EditPlanner {
     const edits: Edit[] = [];
     const warnings: string[] = [];
 
-    // Handle file creations
     if (preview.filesToCreate) {
       for (const fileToCreate of preview.filesToCreate) {
         edits.push({
@@ -137,7 +105,7 @@ export class EditPlanner {
           existingContent = await this.deps.readFile(update.path);
         }
         catch (e) {
-          console.warn('[VaultQuery] EditPlanner: Failed to read file for content update', update.path, e);
+          logger.warn('Failed to read file for content update', update.path, e);
           warnings.push(`File not found or unreadable: ${update.path}`);
           continue;
         }
@@ -162,7 +130,7 @@ export class EditPlanner {
           content = await this.deps.readFile(path);
         }
         catch (e) {
-          console.warn('[VaultQuery] EditPlanner: Failed to read file', path, e);
+          logger.warn('Failed to read file', path, e);
           warnings.push(`File not found or unreadable: ${path}`);
           continue;
         }
@@ -220,22 +188,6 @@ export class EditPlanner {
     };
 
     return { edits, warnings, stats };
-  }
-
-  public emitTaskLine(base: TaskRow, completed: boolean, existing?: string): string {
-    return this.taskPlanner.emitTaskLine(base, completed, existing);
-  }
-
-  public emitHeadingLine(row: HeadingRow, existing?: string): string {
-    return this.headingPlanner.emitHeadingLine(row, existing);
-  }
-
-  public emitListItemLine(base: ListItemRow, existing?: string): string {
-    return this.listItemPlanner.emitListItemLine(base, existing);
-  }
-
-  public buildMarkdownTable(header: string[], rows: Array<Record<string, string>>): string {
-    return this.tablePlanner.buildMarkdownTable(header, rows);
   }
 
   private groupByPath(preview: EditPlannerPreviewResult): Map<string, PathGroups> {
@@ -326,7 +278,7 @@ export class EditPlanner {
           if (Array.isArray(parsed)) return parsed;
         }
         catch (e) {
-          console.warn('[VaultQuery] EditPlanner: Failed to parse array property value', value, e);
+          logger.warn('Failed to parse array property value', value, e);
           if (value.includes(',')) {
             return value.split(',').map(s => s.trim());
           }
@@ -340,7 +292,7 @@ export class EditPlanner {
           if (Array.isArray(parsed)) return parsed;
         }
         catch (e) {
-          console.warn('[VaultQuery] EditPlanner: Failed to parse tags/aliases property value', value, e);
+          logger.warn('Failed to parse tags/aliases property value', value, e);
           if (value.includes(',')) {
             return value.split(',').map(s => s.trim());
           }

@@ -3,6 +3,7 @@ import { TFile } from 'obsidian';
 declare global {
   const Prism: {
     highlightElement: (element: Element) => void;
+    highlight: (code: string, grammar: unknown, language: string) => string;
     languages: Record<string, unknown>;
   } | undefined;
 }
@@ -17,8 +18,6 @@ export interface NoteRecord {
   modified: number;
   size: number;
 }
-
-export type TableName = 'notes' | 'properties' | 'table_cells' | 'tasks' | 'headings' | 'links' | 'tags' | 'list_items';
 
 export interface IndexNoteData {
   note: NoteRecord;
@@ -60,6 +59,7 @@ export interface IndexNoteData {
   listItems?: ListItemData[];
   userViews?: UserViewData[];
   userFunctions?: UserFunctionData[];
+  userTriggers?: UserTriggerData[];
 }
 
 export interface IndexingProgress {
@@ -75,8 +75,11 @@ export interface IndexingStatus {
 
 export interface ParsedQuery {
   query: string;
+  output?: {
+    kind: 'table' | 'markdown' | 'chart' | 'calendar' | 'template';
+    options?: Record<string, unknown>;
+  };
   template?: string;
-  chart?: Record<string, unknown>;
 }
 
 export interface UserViewData {
@@ -87,6 +90,11 @@ export interface UserViewData {
 export interface UserFunctionData {
   function_name: string;
   source: string;
+}
+
+export interface UserTriggerData {
+  trigger_name: string;
+  trigger_sql: string;
 }
 
 export interface IndexingStats {
@@ -136,6 +144,26 @@ export interface TaskData {
   section_heading?: string;
 }
 
+export interface TaskMetadataFields {
+  priority: string | null;
+  due_date: string | null;
+  scheduled_date: string | null;
+  start_date: string | null;
+  created_date: string | null;
+  done_date: string | null;
+  cancelled_date: string | null;
+  recurrence: string | null;
+  on_completion: string | null;
+  task_id: string | null;
+  depends_on: string | null;
+  tags: string | null;
+  block_id: string | null;
+  anchor_hash: string | null;
+  start_offset: number | null;
+  end_offset: number | null;
+  section_heading: string | null;
+}
+
 export interface ListItemData {
   list_index: number;
   item_index: number;
@@ -145,12 +173,9 @@ export interface ListItemData {
   indent_level: number;
   line_number: number;
   block_id?: string;
-  start_offset: number;
-  end_offset: number;
+  start_offset?: number;
+  end_offset?: number;
   anchor_hash?: string;
 }
-
-export interface DatabaseTableCell extends TableCellData {}
-export interface DatabaseTask extends TaskData {}
 
 export {};

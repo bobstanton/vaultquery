@@ -1,4 +1,4 @@
-export const TABLE_DEFINITIONS = `
+const TABLE_DEFINITIONS = `
 CREATE TABLE IF NOT EXISTS notes (
   path TEXT PRIMARY KEY,
   title TEXT,
@@ -129,19 +129,40 @@ CREATE TABLE IF NOT EXISTS _user_views (
   view_name TEXT PRIMARY KEY,
   path TEXT NOT NULL,
   sql TEXT NOT NULL,
-  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+  sql_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS _user_functions (
   function_name TEXT PRIMARY KEY,
   path TEXT NOT NULL,
   source TEXT NOT NULL,
-  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+  source_hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS _user_triggers (
+  trigger_name TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
+  trigger_sql TEXT NOT NULL,
+  sql_hash TEXT,
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER DEFAULT (strftime('%s', 'now'))
 );
 `;
 
 const CORE_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_properties_key ON properties(key);
+CREATE INDEX IF NOT EXISTS idx_user_views_path ON _user_views(path);
+CREATE INDEX IF NOT EXISTS idx_user_functions_path ON _user_functions(path);
+CREATE INDEX IF NOT EXISTS idx_user_triggers_path ON _user_triggers(path);
+`;
+
+// Deduplication: remove duplicate rows before creating unique index (keeps row with lowest rowid)
+// Handles stale data from anchor_hash computation changes.
+const TASK_DEDUP = `
+DELETE FROM tasks WHERE rowid NOT IN (
+  SELECT MIN(rowid) FROM tasks WHERE COALESCE(block_id, anchor_hash) IS NOT NULL
+  GROUP BY path, COALESCE(block_id, anchor_hash)
+) AND COALESCE(block_id, anchor_hash) IS NOT NULL;
 `;
 
 const TASK_INDEXES = `
@@ -149,6 +170,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_path ON tasks(path);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_natural ON tasks(path, COALESCE(block_id, anchor_hash)) WHERE COALESCE(block_id, anchor_hash) IS NOT NULL;
+`;
+
+const HEADING_DEDUP = `
+DELETE FROM headings WHERE rowid NOT IN (
+  SELECT MIN(rowid) FROM headings WHERE COALESCE(block_id, anchor_hash) IS NOT NULL
+  GROUP BY path, COALESCE(block_id, anchor_hash)
+) AND COALESCE(block_id, anchor_hash) IS NOT NULL;
 `;
 
 const HEADING_INDEXES = `
@@ -164,6 +192,14 @@ CREATE INDEX IF NOT EXISTS idx_links_target ON links(link_target);
 const TAG_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_tags_path ON tags(path);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(tag_name);
+`;
+
+// Deduplication: remove duplicate rows before creating unique index
+const LIST_ITEM_DEDUP = `
+DELETE FROM list_items WHERE rowid NOT IN (
+  SELECT MIN(rowid) FROM list_items WHERE COALESCE(block_id, anchor_hash) IS NOT NULL
+  GROUP BY path, COALESCE(block_id, anchor_hash)
+) AND COALESCE(block_id, anchor_hash) IS NOT NULL;
 `;
 
 const LIST_ITEM_INDEXES = `
@@ -190,11 +226,11 @@ export interface EnabledFeatures {
 export function getIndexesForFeatures(features: EnabledFeatures): string {
   let sql = CORE_INDEXES;
 
-  if (features.indexTasks) sql += TASK_INDEXES;
-  if (features.indexHeadings) sql += HEADING_INDEXES;
+  if (features.indexTasks) sql += TASK_DEDUP + TASK_INDEXES;
+  if (features.indexHeadings) sql += HEADING_DEDUP + HEADING_INDEXES;
   if (features.indexLinks) sql += LINK_INDEXES;
   if (features.indexTags) sql += TAG_INDEXES;
-  if (features.indexListItems) sql += LIST_ITEM_INDEXES;
+  if (features.indexListItems) sql += LIST_ITEM_DEDUP + LIST_ITEM_INDEXES;
   if (features.indexTables) sql += TABLE_CELL_INDEXES;
 
   return sql;
@@ -218,6 +254,23 @@ CREATE INDEX IF NOT EXISTS ix_tables_path ON tables(path);
 INSERT OR IGNORE INTO tables(path, table_index, table_name)
 SELECT path, table_index, MIN(table_name) FROM table_cells GROUP BY path, table_index;
 
+-- Shadow table for table_rows user triggers (views don't support AFTER triggers)
+-- User triggers targeting table_rows are rewritten to target this table
+CREATE TABLE IF NOT EXISTS _table_row_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  table_index INTEGER NOT NULL DEFAULT 0,
+  row_index INTEGER,
+  row_json TEXT
+);
+-- Auto-cleanup: delete events after they're processed (triggers have fired)
+DROP TRIGGER IF EXISTS trg_table_row_events_cleanup;
+CREATE TRIGGER trg_table_row_events_cleanup
+AFTER INSERT ON _table_row_events
+BEGIN
+  DELETE FROM _table_row_events WHERE id = NEW.id;
+END;
+
 CREATE VIEW IF NOT EXISTS table_rows AS
 SELECT
   c.path,
@@ -235,7 +288,8 @@ SELECT c.path, c.table_index, json_group_array(DISTINCT c.column_name) AS column
 FROM table_cells c
 GROUP BY c.path, c.table_index;
 
-CREATE TRIGGER IF NOT EXISTS trg_table_rows_insert
+DROP TRIGGER IF EXISTS trg_table_rows_insert;
+CREATE TRIGGER trg_table_rows_insert
 INSTEAD OF INSERT ON table_rows
 BEGIN
   -- Insert or update the tables entry, storing line_number if provided
@@ -268,9 +322,24 @@ BEGIN
          value,
          'text'
   FROM json_each(NEW.row_json), next_row_idx;
+
+  -- Sync to file if triggers are enabled (handler registered)
+  -- Pass NULL for unused arg4 to match fixed arity
+  SELECT _vq_sync('add_table_row', NEW.path, COALESCE(NEW.table_index, 0), NEW.row_json, NULL);
+
+  -- Fire user triggers on _table_row_events (views don't support AFTER triggers)
+  -- The cleanup trigger auto-deletes after user triggers fire
+  INSERT INTO _table_row_events (path, table_index, row_index, row_json)
+  SELECT NEW.path,
+         COALESCE(NEW.table_index, 0),
+         COALESCE(NEW.row_index,
+           (SELECT MAX(tc.row_index) FROM table_cells tc
+            WHERE tc.path = NEW.path AND tc.table_index = COALESCE(NEW.table_index, 0))),
+         NEW.row_json;
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_table_rows_update
+DROP TRIGGER IF EXISTS trg_table_rows_update;
+CREATE TRIGGER trg_table_rows_update
 INSTEAD OF UPDATE ON table_rows
 BEGIN
   INSERT OR IGNORE INTO tables(path, table_index)
@@ -282,13 +351,21 @@ BEGIN
   INSERT INTO table_cells (path, table_index, row_index, column_name, cell_value, value_type)
   SELECT NEW.path, COALESCE(NEW.table_index, 0), NEW.row_index, key, value, 'text'
   FROM json_each(NEW.row_json);
+
+  -- Sync to file if triggers are enabled (handler registered)
+  SELECT _vq_sync('update_table_row', NEW.path, COALESCE(NEW.table_index, 0), NEW.row_index, NEW.row_json);
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_table_rows_delete
+DROP TRIGGER IF EXISTS trg_table_rows_delete;
+CREATE TRIGGER trg_table_rows_delete
 INSTEAD OF DELETE ON table_rows
 BEGIN
   DELETE FROM table_cells
   WHERE path = OLD.path AND table_index = COALESCE(OLD.table_index, 0) AND row_index = OLD.row_index;
+
+  -- Sync to file if triggers are enabled (handler registered)
+  -- Pass NULL for unused arg4 to match fixed arity
+  SELECT _vq_sync('delete_table_row', OLD.path, COALESCE(OLD.table_index, 0), OLD.row_index, NULL);
 END;
 
 CREATE VIEW IF NOT EXISTS headings_view AS
@@ -473,26 +550,8 @@ BEGIN
   );
 END;
 
--- Normalize tag_name on INSERT: strip leading # if present
--- This allows users to INSERT with '#project' or 'project' and get consistent results
-CREATE TRIGGER IF NOT EXISTS trg_tags_normalize_insert
-AFTER INSERT ON tags
-WHEN NEW.tag_name LIKE '#%'
-BEGIN
-  UPDATE tags
-  SET tag_name = SUBSTR(NEW.tag_name, 2)
-  WHERE id = NEW.id;
-END;
-
--- Normalize tag_name on UPDATE: strip leading # if present
-CREATE TRIGGER IF NOT EXISTS trg_tags_normalize_update
-AFTER UPDATE OF tag_name ON tags
-WHEN NEW.tag_name LIKE '#%'
-BEGIN
-  UPDATE tags
-  SET tag_name = SUBSTR(NEW.tag_name, 2)
-  WHERE id = NEW.id;
-END;
+-- Tags are stored with # prefix (e.g., '#project' not 'project')
+-- This matches how tags appear in markdown and Obsidian's metadata cache
 
 -- Auto-derive notes metadata on INSERT
 -- title: derived from path (filename without extension)
@@ -620,11 +679,15 @@ FROM notes;
 
   const updateStatements = sanitizedKeys.map(({original, sanitized}) => {
     const escapedKey = original.replace(/'/g, "''");
+    // Use UPSERT for proper trigger semantics:
+    // - New properties fire AFTER INSERT triggers
+    // - Updated properties fire AFTER UPDATE triggers
     return `  -- Update ${sanitized}
   DELETE FROM properties WHERE path = OLD.path AND key = '${escapedKey}' AND array_index IS NULL AND NEW.${sanitized} IS NULL;
-  INSERT OR REPLACE INTO properties (path, key, value, value_type, array_index)
+  INSERT INTO properties (path, key, value, value_type, array_index)
   SELECT OLD.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL;`;
+  WHERE NEW.${sanitized} IS NOT NULL
+  ON CONFLICT(path, key, array_index) DO UPDATE SET value = excluded.value, value_type = excluded.value_type;`;
   }).join('\n');
 
   const insertStatements = sanitizedKeys.map(({original, sanitized}) => {
@@ -717,11 +780,15 @@ SELECT DISTINCT path FROM properties;
 
   const updateStatements = sanitizedKeys.map(({original, sanitized}) => {
     const escapedKey = original.replace(/'/g, "''");
+    // Use UPSERT for proper trigger semantics:
+    // - New properties fire AFTER INSERT triggers
+    // - Updated properties fire AFTER UPDATE triggers
     return `  -- Update ${sanitized}
   DELETE FROM properties WHERE path = OLD.path AND key = '${escapedKey}' AND array_index IS NULL AND NEW.${sanitized} IS NULL;
-  INSERT OR REPLACE INTO properties (path, key, value, value_type, array_index)
+  INSERT INTO properties (path, key, value, value_type, array_index)
   SELECT OLD.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL;`;
+  WHERE NEW.${sanitized} IS NOT NULL
+  ON CONFLICT(path, key, array_index) DO UPDATE SET value = excluded.value, value_type = excluded.value_type;`;
   }).join('\n');
 
   const insertStatements = sanitizedKeys.map(({original, sanitized}) => {

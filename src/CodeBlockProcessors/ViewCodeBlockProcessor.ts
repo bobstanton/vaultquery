@@ -1,59 +1,58 @@
-import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
-import VaultQueryPlugin from '../main';
-import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
+import { App, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
+import { parseSQLObjectName, validateSQLObjectStart } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
+import { BaseRenderer } from '../Renderers/BaseRenderer';
 import type { RenderContext } from '../Renderers/BaseRenderer';
+import { logger as rootLogger } from '../utils/logger';
 
-export class ViewCodeBlockProcessor {
-  private component: Component;
+const logger = rootLogger.scope('ViewBlocks');
 
-  public constructor(private app: App, private plugin: VaultQueryPlugin) {
-    this.component = new Component();
-    this.component.load();
+export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
+  public constructor(app: App, plugin: VaultQueryPluginContext) {
+    super(app, plugin);
   }
 
-  public process(source: string, el: HTMLElement, _ctx: MarkdownPostProcessorContext): void {
-    el.empty();
-    const container = el.createDiv({ cls: 'vaultquery-container vaultquery-view' });
-
-    const ready = waitForIndexingWithProgress(
-      () => this.plugin.api,
-      container,
-      () => this.createView(container, source)
-    );
-
-    if (ready) {
-      void this.createView(container, source);
-    }
+  protected getContainerClass(): string {
+    return 'vaultquery-container vaultquery-view';
   }
 
-  private parseViewName(sql: string): string | null {
-    const match = sql.match(/CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?\s+AS/i);
-    return match ? match[1] : null;
-  }
-
-  private async createView(container: HTMLElement, source: string): Promise<void> {
+  protected async processContent(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext): Promise<void> {
     const sql = source.trim();
 
-    if (!sql.toUpperCase().startsWith('CREATE VIEW')) {
+    if (!validateSQLObjectStart(sql, 'VIEW')) {
       this.renderError(container, 'vaultquery-view blocks must start with a CREATE VIEW statement');
       return;
     }
 
-    const viewName = this.parseViewName(sql);
+    const viewName = parseSQLObjectName(sql, 'VIEW');
     if (!viewName) {
       this.renderError(container, 'Could not parse view name from CREATE VIEW statement');
       return;
     }
 
     try {
-      this.plugin.api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
-      this.plugin.api.execute(sql);
+      const duplicatePath = await this.findDuplicateViewPath(viewName, ctx.sourcePath);
+      if (duplicatePath) {
+        this.renderError(container, `Another vaultquery-view block already defines "${viewName}" in ${duplicatePath}`);
+        return;
+      }
+
+      const needsRecreation = await this.shouldCreateOrRecreateView(viewName, sql);
+      logger.debug(`view="${viewName}" needsRecreation=${needsRecreation} source="${ctx.sourcePath}"`);
+      if (needsRecreation) {
+        logger.debug(`dropping and recreating view "${viewName}"`);
+        await this.plugin.api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
+        await this.plugin.api.execute(sql);
+        logger.debug(`calling reindexNote for "${ctx.sourcePath}"`);
+        await this.plugin.api.reindexNote(ctx.sourcePath);
+        logger.debug(`reindexNote complete for "${ctx.sourcePath}"`);
+      }
 
       await this.renderViewPreview(container, viewName);
     }
-
     catch (error) {
       this.renderError(container, `Failed to create view: ${getErrorMessage(error)}`);
     }
@@ -62,7 +61,7 @@ export class ViewCodeBlockProcessor {
   private async renderViewPreview(container: HTMLElement, viewName: string): Promise<void> {
     try {
       const limit = this.plugin.settings.viewPreviewLimit;
-      
+
       const query = `SELECT * FROM "${viewName}" LIMIT ${Math.max(1, limit)}`;
       const results = await this.plugin.api.query(query);
 
@@ -84,7 +83,7 @@ export class ViewCodeBlockProcessor {
         parsed: { query },
         container,
         app: this.app,
-        openFile: (path: string) => this.app.workspace.openLinkText(path, ''),
+        openFile: (path: string) => { void this.app.workspace.openLinkText(path, ''); },
         MarkdownRenderer,
         pluginContext: this.component,
         settings: this.plugin.settings
@@ -92,18 +91,33 @@ export class ViewCodeBlockProcessor {
 
       SlickGridRenderer.render(renderContext);
     }
-
     catch (error) {
-      const errorDiv = container.createDiv({ cls: 'vaultquery-error' });
-      errorDiv.createEl('strong', { text: `View "${viewName}" created with errors` });
-      errorDiv.createEl('p', { text: getErrorMessage(error) });
+      BaseRenderer.renderError(container, {
+        title: `View "${viewName}" created with errors`,
+        message: getErrorMessage(error)
+      });
     }
   }
 
-  private renderError(container: HTMLElement, message: string): void {
-    container.createDiv({
-      cls: 'vaultquery-error',
-      text: message
-    });
+  private async findDuplicateViewPath(viewName: string, sourcePath: string): Promise<string | null> {
+    const views = await this.plugin.api.getAllUserViews();
+    const duplicate = views.find(view =>
+      view.view_name === viewName &&
+      view.path !== sourcePath
+    );
+
+    return duplicate?.path ?? null;
+  }
+
+  private async shouldCreateOrRecreateView(viewName: string, sql: string): Promise<boolean> {
+    if (this.plugin.api.viewNeedsRecreation(viewName, sql)) {
+      return true;
+    }
+
+    const existing = await this.plugin.api.query(
+      `SELECT name FROM sqlite_master WHERE type = 'view' AND name = "${viewName.replace(/"/g, '""')}" LIMIT 1`
+    );
+
+    return existing.length === 0;
   }
 }

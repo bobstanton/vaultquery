@@ -1,14 +1,18 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
-import VaultQueryPlugin from '../main';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { IndexingStatsModal } from '../Modals/IndexingStatsModal';
-import type { WasmSource } from './Settings';
+import type { ContentRenderingMode, WasmSource } from './Settings';
+import type { ConsoleLogLevel } from 'obsidian-debug-logger';
+import { logger as rootLogger } from '../utils/logger';
 
 declare const activeWindow: Window;
 
-export class VaultQuerySettingTab extends PluginSettingTab {
-  plugin: VaultQueryPlugin;
+const logger = rootLogger.scope('Settings');
 
-  public constructor(app: App, plugin: VaultQueryPlugin) {
+export class VaultQuerySettingTab extends PluginSettingTab {
+  plugin: VaultQueryPluginContext;
+
+  public constructor(app: App, plugin: VaultQueryPluginContext) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -35,7 +39,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Indexing mode')
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- intentional capitalization for "Rebuild index" button name
       .setDesc('Choose when to index notes. Real-time keeps the index always up-to-date, startup indexes once when the app starts, and manual requires clicking the "Rebuild index" button below.')
       .addDropdown(dropdown => dropdown
         .addOption('realtime', 'Real-time')
@@ -48,6 +51,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           if (value !== 'realtime') {
             this.plugin.settings.allowWriteOperations = false;
             this.plugin.settings.allowDeleteNotes = false;
+            this.plugin.settings.enableTriggers = false;
             this.plugin.settings.enableInlineButtons = false;
           }
 
@@ -56,7 +60,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- KB is a standard abbreviation
       .setName('Maximum file size (KB)')
       .setDesc('Files larger than this size in kilobytes will be skipped during indexing. Default is 1000 kb (1 mb).')
       .addText(text => text
@@ -66,7 +69,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           const size = parseInt(value);
           if (!isNaN(size) && size > 0) {
             this.plugin.settings.maxFileSizeKB = size;
-            void this.plugin.saveSettings();
+            void this.plugin.saveSettings({ requiresFullReindex: true });
           }
         }));
 
@@ -94,7 +97,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.enabledFeatures.indexFrontmatter)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexFrontmatter = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
     new Setting(containerEl)
@@ -104,7 +107,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.enabledFeatures.indexHeadings)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexHeadings = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
     new Setting(containerEl)
@@ -114,7 +117,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.enabledFeatures.indexLinks)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexLinks = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
     new Setting(containerEl)
@@ -124,18 +127,17 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.enabledFeatures.indexTags)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexTags = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
     new Setting(containerEl)
       .setName('Index list items')
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "Index tasks" refers to the setting name
       .setDesc('Index bulleted and numbered list items. Excludes task items (use Index tasks for those).')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.enabledFeatures.indexListItems)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexListItems = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
     new Setting(containerEl)
@@ -159,7 +161,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
               this.plugin.settings.enabledFeatures.indexTasks = false;
               this.plugin.settings.enableDynamicTableViews = false;
             }
-            void this.plugin.saveSettings();
+            void this.plugin.saveSettings({ requiresFullReindex: true });
             this.refreshDisplay();
           });
       });
@@ -172,20 +174,19 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setDisabled(!contentEnabled)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexTables = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
           this.refreshDisplay();
         }));
 
     new Setting(containerEl)
       .setName('Enable dynamic table views')
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "Index tables" is a setting name
       .setDesc('Automatically create simplified SQL views for each unique table structure. Requires "Index tables" to be enabled. A full reindex is needed for changes to take effect.')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.enableDynamicTableViews)
         .setDisabled(!contentEnabled || !this.plugin.settings.enabledFeatures.indexTables)
         .onChange((value) => {
           this.plugin.settings.enableDynamicTableViews = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         })
       );
 
@@ -197,7 +198,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setDisabled(!contentEnabled)
         .onChange((value) => {
           this.plugin.settings.enabledFeatures.indexTasks = value;
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
         }));
 
 
@@ -228,7 +229,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             text.inputEl.title = '';
 
             this.plugin.settings.excludePatterns[index] = value;
-            void this.plugin.saveSettings();
+            void this.plugin.saveSettings({ requiresFullReindex: true });
           });
         })
         .addButton(button => button
@@ -236,7 +237,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           .setWarning()
           .onClick(() => {
             this.plugin.settings.excludePatterns.splice(index, 1);
-            void this.plugin.saveSettings();
+            void this.plugin.saveSettings({ requiresFullReindex: true });
             this.refreshDisplay();
           }));
     });
@@ -247,7 +248,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setCta()
         .onClick(() => {
           this.plugin.settings.excludePatterns.push('\\.tmp$');
-          void this.plugin.saveSettings();
+          void this.plugin.saveSettings({ requiresFullReindex: true });
           this.refreshDisplay();
         }));
 
@@ -258,8 +259,11 @@ export class VaultQuerySettingTab extends PluginSettingTab {
     const isRealtimeIndexing = this.plugin.settings.indexingInterval === 'realtime';
     const writeEnabled = this.plugin.settings.allowWriteOperations;
 
-    const writeOperationsSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable write operations')
+      .setDesc(isRealtimeIndexing
+        ? 'Allow update and insert SQL commands to modify notes in the vault. There is no undo or version history built into VaultQuery. Use Obsidian Sync for version history.'
+        : 'Write operations require real-time indexing mode. Changes made to files must be immediately re-indexed to keep the database in sync. Switch to real-time indexing to enable this feature.')
       .addToggle(toggle => toggle
         .setValue(writeEnabled)
         .setDisabled(!isRealtimeIndexing)
@@ -269,18 +273,12 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           if (!value) {
             this.plugin.settings.enableInlineButtons = false;
             this.plugin.settings.allowDeleteNotes = false;
+            this.plugin.settings.enableTriggers = false;
           }
           void this.plugin.saveSettings();
           this.refreshDisplay();
         })
       );
-
-    if (isRealtimeIndexing) {
-      writeOperationsSetting.setDesc('Allow update and insert SQL commands to modify notes in the vault. There is no undo or version history built into VaultQuery. Use Obsidian Sync for version history.');
-    }
-    else {
-      writeOperationsSetting.setDesc('Write operations require real-time indexing mode. Changes made to files must be immediately re-indexed to keep the database in sync. Switch to real-time indexing to enable this feature.');
-    }
 
     const inlineButtonsEnabled = isRealtimeIndexing && writeEnabled && this.plugin.settings.enableInlineButtons;
 
@@ -314,7 +312,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Allow file deletion')
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- DELETE FROM is SQL syntax
       .setDesc('Allow DELETE FROM notes to delete files from the vault. This is a destructive operation. Files are moved to trash, not permanently deleted.')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.allowDeleteNotes)
@@ -325,26 +322,72 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         })
       );
 
-    // eslint-disable-next-line obsidianmd/settings-tab/no-problematic-settings-headings -- "Display options" doesn't contain "settings"
+    new Setting(containerEl)
+      .setName('Enable JavaScript SQL functions')
+      .setDesc('Allow vaultquery-function blocks to register user-authored JavaScript functions for SQL queries.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableJavaScriptFunctions)
+        .onChange((value) => {
+          this.plugin.settings.enableJavaScriptFunctions = value;
+          void this.plugin.saveSettings({ requiresFullReindex: true });
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Enable JavaScript rendering')
+      .setDesc('Allow vaultquery blocks to execute user-authored JavaScript rendering code from template sections.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableJavaScriptRendering)
+        .onChange((value) => {
+          this.plugin.settings.enableJavaScriptRendering = value;
+          void this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Enable triggers')
+      .setDesc('Allow vaultquery-trigger code blocks to register database triggers that can automatically modify files. Triggers can set properties, rename notes, and replace content when data changes.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableTriggers)
+        .setDisabled(!isRealtimeIndexing || !writeEnabled)
+        .onChange((value) => {
+          this.plugin.settings.enableTriggers = value;
+          void this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Third-party provider tables')
+      .setDesc('Allow third-party plugins to register third-party provider tables, discover provider definition code blocks, and refresh provider rows for SQL queries.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableThirdPartyProviderTables)
+        .onChange((value) => {
+          this.plugin.settings.enableThirdPartyProviderTables = value;
+          void this.plugin.saveSettings({ requiresFullReindex: true });
+        })
+      );
+
+    // eslint-disable-next-line obsidianmd/settings-tab/no-problematic-settings-headings -- section label
     new Setting(containerEl)
       .setName('Display options')
       .setHeading();
 
     new Setting(containerEl)
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- markdown is intentionally lowercase per sentence case rules
-      .setName('Enable markdown rendering in content')
-      .setDesc('Render Markdown formatting in the content column. Queries that return the current note will cause infinite recursion. When disabled, content is shown as plain text.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.enableMarkdownRendering)
+      .setName('Content column display')
+      .setDesc('Choose how note content is displayed in query results. Plain text is recommended because rendered Markdown can recurse when a query returns the current note.')
+      .addDropdown(dropdown => dropdown
+        .addOption('plain-text', 'Plain text (recommended)')
+        .addOption('rendered-markdown', 'Rendered Markdown')
+        .setValue(this.plugin.settings.contentRenderingMode)
         .onChange((value) => {
-          this.plugin.settings.enableMarkdownRendering = value;
+          this.plugin.settings.contentRenderingMode = value as ContentRenderingMode;
           void this.plugin.saveSettings();
         })
       );
 
     new Setting(containerEl)
       .setName('Auto-refresh on index change')
-      .setDesc('Automatically refresh query results when files are indexed. This keeps results up-to-date but may impact performance on large vaults with frequent changes.')
+      .setDesc('Automatically refresh query results when files are indexed. Keeps results up-to-date but may impact performance on large vaults with frequent changes.')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.autoRefreshOnIndexChange)
         .onChange((value) => {
@@ -372,10 +415,8 @@ export class VaultQuerySettingTab extends PluginSettingTab {
       .setHeading();
 
     new Setting(containerEl)
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- WASM is an acronym
-      .setName('WASM source')
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- WASM and CDN are acronyms
-      .setDesc('Where to load the SQLite WASM binary. Auto tries local first then CDN. Local requires the file to exist in the plugin folder or custom path. CDN always downloads from sql.js.org.')
+      .setName('SQL.js WASM source')
+      .setDesc('Controls how the SQLite WebAssembly binary is loaded. Auto uses a local file when present and falls back to sql.js.org. Local only never uses the network. CDN only always downloads from sql.js.org.')
       .addDropdown(dropdown => dropdown
         .addOption('auto', 'Auto (local, then CDN)')
         .addOption('local', 'Local only')
@@ -390,10 +431,8 @@ export class VaultQuerySettingTab extends PluginSettingTab {
     const showCacheOption = this.plugin.settings.wasm.source !== 'local';
     if (showCacheOption) {
       new Setting(containerEl)
-        // eslint-disable-next-line obsidianmd/ui/sentence-case -- WASM is an acronym
         .setName('Cache WASM locally')
-        // eslint-disable-next-line obsidianmd/ui/sentence-case -- WASM and CDN are acronyms
-        .setDesc('Save the WASM file to the plugin folder after downloading from CDN. This allows offline use after the first load.')
+        .setDesc('Saves a CDN-loaded SQL.js WASM binary to the plugin folder for later local loading.')
         .addToggle(toggle => toggle
           .setValue(this.plugin.settings.wasm.cacheLocally)
           .onChange((value) => {
@@ -405,9 +444,8 @@ export class VaultQuerySettingTab extends PluginSettingTab {
     const showCustomPath = this.plugin.settings.wasm.source !== 'cdn';
     if (showCustomPath) {
       new Setting(containerEl)
-        // eslint-disable-next-line obsidianmd/ui/sentence-case -- WASM is an acronym
         .setName('Custom WASM path')
-        .setDesc('Optional custom path to sql-wasm.wasm file. Leave empty to use the default plugin folder location. Supports absolute paths or paths relative to the vault.')
+        .setDesc('Optional path to sql-wasm.wasm. Empty uses the plugin folder. Absolute paths and vault-relative paths are supported.')
         .addText(text => text
           .setPlaceholder('Leave empty for default')
           .setValue(this.plugin.settings.wasm.customPath)
@@ -416,6 +454,35 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             void this.plugin.saveSettings();
           }));
     }
+
+    new Setting(containerEl)
+      .setName('Index on background thread')
+      .setDesc('Run initial indexing in a background thread to keep the UI responsive. After indexing completes, switches to main thread for fast queries. Requires restart to take effect.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.backgroundIndexing)
+        .onChange((value) => {
+          this.plugin.settings.backgroundIndexing = value;
+          void this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Debug')
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName('Console log level')
+      .setDesc('Controls which VaultQuery logs are written to the developer console. The copied debug log always includes all captured entries.')
+      .addDropdown(dropdown => dropdown
+        .addOption('none', 'None')
+        .addOption('error', 'Errors')
+        .addOption('warn', 'Warnings and errors')
+        .addOption('info', 'Info, warnings, and errors')
+        .addOption('debug', 'Debug and above')
+        .setValue(this.plugin.settings.debugConsoleLogLevel)
+        .onChange((value: string) => {
+          this.plugin.settings.debugConsoleLogLevel = value as ConsoleLogLevel;
+          void this.plugin.saveSettings();
+        }));
 
     new Setting(containerEl)
       .setName('Indexing actions')
@@ -450,7 +517,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
               button.setDisabled(false);
             }, 3000);
           }).catch((error: unknown) => {
-            console.error('Failed to rebuild index:', error);
+            logger.error('Failed to rebuild index', error);
             button.setButtonText('Error');
             activeWindow.setTimeout(() => {
               button.setButtonText('Rebuild index');

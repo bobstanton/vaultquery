@@ -30,8 +30,11 @@ export interface PreviewResult {
   table: string;
   before: Record<string, unknown>[];
   after: Record<string, unknown>[];
-  sqlToApply: Array<{ sql: string }>;
+  sqlToApply: Array<{ sql: string; params?: unknown[] }>;
   multiResults?: PreviewResult[];
+  pkCols?: string[];
+  ids?: unknown[][];
+  rowids?: number[];
 }
 
 export interface EntityHandlerContext {
@@ -56,18 +59,12 @@ export interface EntityHandler {
   /**
    * Convert a preview result for this entity type
    */
-  convertPreviewResult(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult>;
+  convertPreviewResult(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult>;
 
   /**
    * Handle INSERT operations for this entity type
    */
-  handleInsertOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult>;
+  handleInsertOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult>;
 }
 
 /**
@@ -79,6 +76,45 @@ export function createEmptyResult(sqlToApply: string[]): EditPlannerPreviewResul
     tasksAfter: [],
     headingsAfter: [],
     tableCellsAfter: []
+  };
+}
+
+export function createEntityResult(previewResult: PreviewResult, updates: Partial<EditPlannerPreviewResult> = {}): EditPlannerPreviewResult {
+  return {
+    sqlToApply: extractSql(previewResult),
+    tasksAfter: [],
+    headingsAfter: [],
+    tableCellsAfter: [],
+    ...updates
+  };
+}
+
+export function asStr(v: unknown): string;
+export function asStr(v: unknown, fallback: string): string;
+export function asStr(v: unknown, fallback: null): string | null;
+export function asStr(v: unknown, fallback: string | null = ''): string | null {
+  return typeof v === 'string' ? v : fallback;
+}
+
+export function asNum(v: unknown, fallback: number): number;
+export function asNum(v: unknown, fallback: null): number | null;
+export function asNum(v: unknown, fallback: number | null): number | null {
+  return typeof v === 'number' ? v : fallback;
+}
+
+export function readLocationFields(row: Record<string, unknown>): {
+  line_number: number | null;
+  block_id: string | null;
+  start_offset: number | null;
+  end_offset: number | null;
+  anchor_hash: string | null;
+} {
+  return {
+    line_number: asNum(row.line_number, null),
+    block_id: asStr(row.block_id, null),
+    start_offset: asNum(row.start_offset, null),
+    end_offset: asNum(row.end_offset, null),
+    anchor_hash: asStr(row.anchor_hash, null)
   };
 }
 

@@ -10,6 +10,8 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: write
+            id-token: write
+            attestations: write
         steps:
             - uses: actions/checkout@v4
             - uses: actions/setup-node@v4
@@ -21,16 +23,30 @@ jobs:
                   cd ../md-to-obsidian-dom && npm install && npm run build
                   git clone https://github.com/bobstanton/placeholder-resolver.git ../placeholder-resolver
                   cd ../placeholder-resolver && npm install --omit=dev --ignore-scripts && npm install typescript && npx tsc
+                  git clone https://github.com/bobstanton/obsidian-debug-logger.git ../obsidian-debug-logger
+                  cd ../obsidian-debug-logger && npm install && npm run build
+                  git clone https://github.com/bobstanton/user-template-renderer.git ../user-template-renderer
+                  cd ../user-template-renderer && npm install && npm run build
             - name: npm build
               run: |
-                  npm install
-                  node ../md-to-obsidian-dom/dist/bin/generate.js ./help-md ./src/generated-help --prefix vaultquery-help
-                  npx tsc -noEmit -skipLibCheck
-                  node esbuild.config.mjs production
-                  mv main.css styles.css 2>/dev/null || true
+                  npm ci
+                  npm run lint
+                  npm run typecheck
+                  npm run build --if-present
+            - name: Attest Release Assets
+              uses: actions/attest@v4
+              with:
+                  subject-path: |
+                      main.js
+                      manifest.json
+                      styles.css
+            - name: Generate Release Notes
+              run: |
+                  git log -1 --pretty=%B > release-notes.md
             - name: Create Release
               # https://github.com/ncipollo/release-action
               uses: ncipollo/release-action@v1.20.0
               with:
                   artifacts: "main.js,manifest.json,styles.css"
+                  bodyFile: release-notes.md
                   token: ${{ secrets.GITHUB_TOKEN }}

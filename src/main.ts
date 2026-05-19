@@ -1,23 +1,34 @@
-import { Plugin, loadPrism } from 'obsidian';
-import { VaultQueryAPI } from './VaultQueryAPI';
-import { VaultQuerySettings, DEFAULT_SETTINGS, validateSettings } from './Settings/Settings';
+import { MarkdownPostProcessorContext, MarkdownView, Plugin, loadPrism, Notice } from 'obsidian';
+import { normalizeConsoleLogLevel, registerCopyDebugLogCommand } from 'obsidian-debug-logger';
+import { VaultQueryAPI, type EventRef } from './VaultQueryAPI';
+import { VaultQuerySettings, DEFAULT_SETTINGS, normalizeSettings } from './Settings/Settings';
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
+import { DatabaseRecoveryManager } from './Managers/DatabaseRecoveryManager';
 import { IndexingStateManager } from './Managers/IndexingStateManager';
 import { QueryCodeBlockProcessor } from './CodeBlockProcessors/QueryCodeBlockProcessor';
 import { WriteCodeBlockProcessor } from './CodeBlockProcessors/WriteCodeBlockProcessor';
 import { ChartCodeBlockProcessor } from './CodeBlockProcessors/ChartCodeBlockProcessor';
+import { ChartHelpCodeBlockProcessor } from './CodeBlockProcessors/ChartHelpCodeBlockProcessor';
 import { HelpCodeBlockProcessor } from './CodeBlockProcessors/HelpCodeBlockProcessor';
 import { SchemaCodeBlockProcessor } from './CodeBlockProcessors/SchemaCodeBlockProcessor';
 import { MarkdownCodeBlockProcessor } from './CodeBlockProcessors/MarkdownCodeBlockProcessor';
+import { CalendarCodeBlockProcessor } from './CodeBlockProcessors/CalendarCodeBlockProcessor';
+import { CalendarHelpCodeBlockProcessor } from './CodeBlockProcessors/CalendarHelpCodeBlockProcessor';
 import { ViewCodeBlockProcessor } from './CodeBlockProcessors/ViewCodeBlockProcessor';
 import { FunctionCodeBlockProcessor } from './CodeBlockProcessors/FunctionCodeBlockProcessor';
 import { FunctionHelpCodeBlockProcessor } from './CodeBlockProcessors/FunctionHelpCodeBlockProcessor';
 import { ExamplesCodeBlockProcessor } from './CodeBlockProcessors/ExamplesCodeBlockProcessor';
 import { ApiGuideCodeBlockProcessor } from './CodeBlockProcessors/ApiGuideCodeBlockProcessor';
-import { sqlHighlightPlugin, disableAutoPairInVaultquery } from './Editor/SqlHighlightExtension';
+import { TriggerCodeBlockProcessor } from './CodeBlockProcessors/TriggerCodeBlockProcessor';
+import { TriggerHelpCodeBlockProcessor } from './CodeBlockProcessors/TriggerHelpCodeBlockProcessor';
+import { sqlHighlightPlugin, disableAutoPairInVaultquery, vaultQueryEditorAttributesExtension } from './Editor/SqlHighlightExtension';
+import { registerProviderDefinitionLanguage } from './Constants/EditorConstants';
 import { createInlineButtonExtension, processReadingViewInlineButtons } from './Editor/InlineButtonExtension';
+import { createVaultQueryCompletionExtension } from './Editor/VaultQueryCompletionExtension';
 import { renderIndexingProgress } from './utils/IndexingUtils';
+import { LifecycleManager } from './utils/LifecycleManager';
+import { logger as rootLogger } from './utils/logger';
 import { SQL_HIGHLIGHTED_LANGUAGES, JS_HIGHLIGHTED_LANGUAGES } from './Constants/EditorConstants';
 import type { IndexingStatus } from './types';
 import type { BlockProcessor } from './utils/IndexingUtils';
@@ -25,67 +36,264 @@ import type { BlockProcessor } from './utils/IndexingUtils';
 import './styles.css';
 import './slickgrid-obsidian-theme.css';
 
+export { getVaultQueryAPI, waitForVaultQueryAPI, registerVaultQueryTableProviders } from './helpers';
+export type {
+  ManagedVaultQueryTableProviderRegistration,
+  RegisterVaultQueryTableProvidersOptions,
+  VaultQueryAppLike,
+  VaultQueryProviderRegistrationLogger,
+  VaultQueryProviderRegistrationState,
+  WaitForAPIOptions,
+} from './helpers';
+
 declare const activeWindow: Window;
 
+type PrismGrammar = Record<string, unknown>;
+interface PrismApi {
+  languages: Record<string, PrismGrammar | undefined>;
+}
+
+const logger = {
+  lifecycle: rootLogger.scope('Lifecycle'),
+  provider: rootLogger.scope('ProviderTables'),
+};
+
+interface MarkdownBlockProcessor {
+  process(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): void | Promise<void>;
+}
+
+interface UnloadableProcessor {
+  unload(): void;
+}
+
+interface ProcessorRegistration {
+  language: string;
+  processor: MarkdownBlockProcessor;
+  pendingName?: string;
+  updateDuringIndexing?: boolean;
+  unloadOnPluginUnload?: boolean;
+}
+
+function mergeSettings(savedData: Partial<VaultQuerySettings>): VaultQuerySettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...savedData,
+    enabledFeatures: {
+      ...DEFAULT_SETTINGS.enabledFeatures,
+      ...savedData.enabledFeatures
+    },
+    wasm: {
+      ...DEFAULT_SETTINGS.wasm,
+      ...savedData.wasm
+    }
+  };
+}
+
 export default class VaultQueryPlugin extends Plugin {
-  public api: VaultQueryAPI;
-  public settings: VaultQuerySettings;
-  public indexingStateManager: IndexingStateManager;
-  private queryBlockProcessor: QueryCodeBlockProcessor;
-  private writeBlockProcessor: WriteCodeBlockProcessor;
-  private chartBlockProcessor: ChartCodeBlockProcessor;
-  private helpBlockProcessor: HelpCodeBlockProcessor;
-  private schemaBlockProcessor: SchemaCodeBlockProcessor;
-  private markdownBlockProcessor: MarkdownCodeBlockProcessor;
-  private viewBlockProcessor: ViewCodeBlockProcessor;
-  private functionBlockProcessor: FunctionCodeBlockProcessor;
-  private functionHelpCodeBlockProcessor: FunctionHelpCodeBlockProcessor;
-  private examplesBlockProcessor: ExamplesCodeBlockProcessor;
-  private apiGuideBlockProcessor: ApiGuideCodeBlockProcessor;
-  private progressUpdateInterval: number | null = null;
-  private gridRestoreInterval: number | null = null;
-  private scrollHandler: (() => void) | null = null;
+  private static readonly SETTINGS_REINDEX_DEBOUNCE_MS = 1000;
+  private static readonly SETTINGS_REINDEX_RETRY_MS = 1000;
+  private static readonly TIMER_SETTINGS_REINDEX = 'settings-reindex';
+  private static readonly TIMER_PROGRESS_UPDATE = 'progress-update';
+  private static readonly TIMER_GRID_RESTORE = 'grid-restore';
+  private static readonly TIMER_SCROLL_RESTORE = 'scroll-restore';
+
+  public api!: VaultQueryAPI;
+  public settings!: VaultQuerySettings;
+  public indexingStateManager!: IndexingStateManager;
+  private databaseRecoveryManager!: DatabaseRecoveryManager;
+  private invalidateCompletionSchemaCache: (() => void) | null = null;
+  private settingsReindexPending = false;
+  private registeredProviderBlockLanguages = new Set<string>();
+  private schemaEventRefs: EventRef[] = [];
+  private lifecycle = new LifecycleManager();
+  private processorRegistrations: ProcessorRegistration[] = [];
+  private pendingBlockProcessors: Array<{ name: string; processor: BlockProcessor }> = [];
+  private indexingProgressProcessors: BlockProcessor[] = [];
+  private unloadableProcessors: UnloadableProcessor[] = [];
 
   public async loadSettings() {
     const savedData = await this.loadData() || {};
 
-    this.settings = {
-      ...DEFAULT_SETTINGS,
-      ...savedData,
-      enabledFeatures: {
-        ...DEFAULT_SETTINGS.enabledFeatures,
-        ...(savedData.enabledFeatures || {})
-      },
-      wasm: {
-        ...DEFAULT_SETTINGS.wasm,
-        ...(savedData.wasm || {})
-      }
-    };
+    this.settings = mergeSettings(savedData);
 
-    validateSettings(this.settings);
+    this.settings.debugConsoleLogLevel = normalizeConsoleLogLevel(this.settings.debugConsoleLogLevel);
+    normalizeSettings(this.settings);
+    rootLogger.configure(this.settings.debugConsoleLogLevel);
   }
 
-  public async saveSettings() {
-    validateSettings(this.settings);
+  public async saveSettings(options: { requiresFullReindex?: boolean } = {}) {
+    this.settings.debugConsoleLogLevel = normalizeConsoleLogLevel(this.settings.debugConsoleLogLevel);
+    normalizeSettings(this.settings);
+    rootLogger.configure(this.settings.debugConsoleLogLevel);
     await this.saveData(this.settings);
+    this.api?.setThirdPartyProviderTablesEnabled(this.settings.enableThirdPartyProviderTables);
+
+    if (options.requiresFullReindex) {
+      this.scheduleSettingsReindex();
+    }
   }
 
-  private registerPrismLanguages(): void {
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises, @typescript-eslint/no-explicit-any -- Fire-and-forget Prism registration
-    loadPrism().then((Prism: any) => {
+  private scheduleSettingsReindex(delayMs: number = VaultQueryPlugin.SETTINGS_REINDEX_DEBOUNCE_MS): void {
+    this.settingsReindexPending = true;
 
-      if (Prism.languages['sql']) {
-        for (const lang of SQL_HIGHLIGHTED_LANGUAGES) {
-          Prism.languages[lang] = Prism.languages['sql'];
-        }
+    this.lifecycle.setTimeout(VaultQueryPlugin.TIMER_SETTINGS_REINDEX, () => {
+      void this.runPendingSettingsReindex();
+    }, delayMs);
+  }
+
+  private async runPendingSettingsReindex(): Promise<void> {
+    if (!this.settingsReindexPending) {
+      return;
+    }
+
+    if (!this.api || this.api.getIndexingStatus().isIndexing || this.indexingStateManager?.hasPendingFileModifications()) {
+      this.scheduleSettingsReindex(VaultQueryPlugin.SETTINGS_REINDEX_RETRY_MS);
+      return;
+    }
+
+    this.settingsReindexPending = false;
+    new Notice('VaultQuery: Rebuilding index for settings changes...', 4000);
+
+    try {
+      await this.api.forceReindexVault();
+      new Notice('VaultQuery: Settings rebuild complete', 3000);
+    }
+    catch (error) {
+      logger.lifecycle.error('Failed to rebuild index after settings change', error);
+      this.settingsReindexPending = true;
+      new Notice('VaultQuery: Failed to rebuild index after settings change', 6000);
+    }
+  }
+
+  private registerCodeBlockProcessors(): void {
+    const queryProcessor = new QueryCodeBlockProcessor(this.app, this);
+    const writeProcessor = new WriteCodeBlockProcessor(this.app, this, this.settings);
+    const chartProcessor = new ChartCodeBlockProcessor(this.app, this);
+    const chartHelpProcessor = new ChartHelpCodeBlockProcessor(this.app, this);
+    const helpProcessor = new HelpCodeBlockProcessor(this.app, this);
+    const schemaProcessor = new SchemaCodeBlockProcessor(this.app, this);
+    const markdownProcessor = new MarkdownCodeBlockProcessor(this.app, this);
+    const calendarProcessor = new CalendarCodeBlockProcessor(this.app, this);
+    const calendarHelpProcessor = new CalendarHelpCodeBlockProcessor(this.app, this);
+    const viewProcessor = new ViewCodeBlockProcessor(this.app, this);
+    const functionProcessor = new FunctionCodeBlockProcessor(this.app, this);
+    const functionHelpProcessor = new FunctionHelpCodeBlockProcessor(this.app, this);
+    const examplesProcessor = new ExamplesCodeBlockProcessor(this.app, this);
+    const apiGuideProcessor = new ApiGuideCodeBlockProcessor(this.app, this);
+    const triggerProcessor = new TriggerCodeBlockProcessor(this.app, this);
+    const triggerHelpProcessor = new TriggerHelpCodeBlockProcessor(this.app, this);
+
+    this.processorRegistrations = [
+      { language: 'vaultquery', processor: queryProcessor, pendingName: 'query', updateDuringIndexing: true },
+      { language: 'vaultquery-help', processor: helpProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-chart', processor: chartProcessor, pendingName: 'chart', updateDuringIndexing: true },
+      { language: 'vaultquery-chart-help', processor: chartHelpProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-write', processor: writeProcessor, pendingName: 'write', updateDuringIndexing: true },
+      { language: 'vaultquery-schema', processor: schemaProcessor },
+      { language: 'vaultquery-markdown', processor: markdownProcessor, pendingName: 'markdown', updateDuringIndexing: true },
+      { language: 'vaultquery-markdown-help', processor: helpProcessor },
+      { language: 'vaultquery-calendar', processor: calendarProcessor, pendingName: 'calendar', updateDuringIndexing: true },
+      { language: 'vaultquery-calendar-help', processor: calendarHelpProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-view', processor: viewProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-function', processor: functionProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-function-help', processor: functionHelpProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-examples', processor: examplesProcessor },
+      { language: 'vaultquery-api-help', processor: apiGuideProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-trigger', processor: triggerProcessor, unloadOnPluginUnload: true },
+      { language: 'vaultquery-trigger-help', processor: triggerHelpProcessor, unloadOnPluginUnload: true },
+    ];
+
+    this.pendingBlockProcessors = this.processorRegistrations
+      .filter((registration): registration is ProcessorRegistration & { pendingName: string; processor: BlockProcessor } =>
+        registration.pendingName !== undefined
+      )
+      .map(registration => ({ name: registration.pendingName, processor: registration.processor }));
+
+    this.indexingProgressProcessors = this.processorRegistrations
+      .filter((registration): registration is ProcessorRegistration & { processor: BlockProcessor } =>
+        registration.updateDuringIndexing === true
+      )
+      .map(registration => registration.processor);
+
+    this.unloadableProcessors = this.processorRegistrations
+      .filter((registration): registration is ProcessorRegistration & { processor: UnloadableProcessor } =>
+        registration.unloadOnPluginUnload === true
+      )
+      .map(registration => registration.processor);
+
+    for (const { language, processor } of this.processorRegistrations) {
+      this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) => processor.process(source, el, ctx));
+    }
+  }
+
+  private async registerPrismLanguages(): Promise<void> {
+    const Prism = await loadPrism() as PrismApi;
+
+    if (Prism.languages['sql']) {
+      for (const lang of SQL_HIGHLIGHTED_LANGUAGES) {
+        Prism.languages[lang] = Prism.languages['sql'];
       }
 
-      if (Prism.languages['javascript']) {
-        for (const lang of JS_HIGHLIGHTED_LANGUAGES) {
-          Prism.languages[lang] = Prism.languages['javascript'];
-        }
+      const sqlWithConfig = {
+        'config-section': {
+          pattern: /^config:[\s\S]*$/m,
+          inside: {
+            'config-delimiter': /^config:/m,
+            'config-key': {
+              pattern: /^[a-zA-Z][a-zA-Z0-9_-]*(?=\s*:)/m,
+              alias: 'property'
+            },
+            'config-value': {
+              pattern: /:\s*.+$/m,
+              inside: {
+                'punctuation': /^:/,
+                'color': /rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}/,
+                'number': /\b\d+(\.\d+)?(%|px|em|rem)?\b/,
+                'boolean': /\b(true|false)\b/i,
+                'string': /.+/
+              }
+            }
+          }
+        },
+        'template-section': {
+          pattern: /^template:[\s\S]*$/m,
+          inside: {
+            'template-delimiter': /^template:/m,
+            'template-code': /[\s\S]+/
+          }
+        },
+        ...Prism.languages['sql']
+      };
+
+      Prism.languages['vaultquery'] = sqlWithConfig;
+      Prism.languages['vaultquery-chart'] = sqlWithConfig;
+      Prism.languages['vaultquery-markdown'] = sqlWithConfig;
+      Prism.languages['vaultquery-calendar'] = sqlWithConfig;
+    }
+
+    if (Prism.languages['javascript']) {
+      for (const lang of JS_HIGHLIGHTED_LANGUAGES) {
+        Prism.languages[lang] = Prism.languages['javascript'];
       }
-    });
+    }
+  }
+
+  private async registerProviderDefinitionPrismLanguage(language: string): Promise<void> {
+    const Prism = await loadPrism() as PrismApi;
+
+    if (Prism.languages[language]) {
+      return;
+    }
+
+    Prism.languages[language] = {
+      comment: /#.*/,
+      property: /^[ \t]*[^:\n]+(?=\s*:)/m,
+      punctuation: /:/,
+      color: /rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}/,
+      boolean: /\b(true|false|yes|no)\b/i,
+      number: /\b\d+(\.\d+)?\b/,
+      string: /.+/
+    };
   }
 
   public async onload(): Promise<void> {
@@ -93,38 +301,35 @@ export default class VaultQueryPlugin extends Plugin {
       await this.loadSettings();
 
       this.registerEditorExtension(sqlHighlightPlugin);
+      this.registerEditorExtension(vaultQueryEditorAttributesExtension);
       this.registerEditorExtension(disableAutoPairInVaultquery);
       this.registerEditorExtension(createInlineButtonExtension(this));
+      const completion = createVaultQueryCompletionExtension(this);
+      this.invalidateCompletionSchemaCache = completion.invalidateSchemaCache;
+      this.registerEditorExtension(completion.extension);
 
-      this.registerPrismLanguages();
+      registerCopyDebugLogCommand(this, rootLogger, {
+        successMessage: entryCount => `VaultQuery: Debug log copied (${entryCount} entries)`,
+        failureMessage: () => 'VaultQuery: Failed to copy debug log',
+        notice: (message, timeout) => new Notice(message, timeout),
+      });
+
+      await this.registerPrismLanguages();
 
       this.addSettingTab(new VaultQuerySettingTab(this.app, this));
 
       this.indexingStateManager = new IndexingStateManager(this.app, this);
+      this.databaseRecoveryManager = new DatabaseRecoveryManager({
+        app: this.app,
+        settings: this.settings,
+        getApi: () => this.api ?? null,
+        setApi: (api) => { this.api = api; },
+        onApiRecreated: () => this.attachProviderIntegrationHooks(),
+        reindexVault: () => this.indexAllNotes(),
+        rerenderMarkdownPreviews: () => this.rerenderMarkdownPreviews(),
+      });
 
-      this.queryBlockProcessor = new QueryCodeBlockProcessor(this.app, this);
-      this.writeBlockProcessor = new WriteCodeBlockProcessor(this.app, this, this.settings);
-      this.chartBlockProcessor = new ChartCodeBlockProcessor(this.app, this);
-      this.helpBlockProcessor = new HelpCodeBlockProcessor(this.app, this);
-      this.schemaBlockProcessor = new SchemaCodeBlockProcessor(this.app, this);
-      this.markdownBlockProcessor = new MarkdownCodeBlockProcessor(this.app, this);
-      this.viewBlockProcessor = new ViewCodeBlockProcessor(this.app, this);
-      this.functionBlockProcessor = new FunctionCodeBlockProcessor(this.app, this);
-      this.functionHelpCodeBlockProcessor = new FunctionHelpCodeBlockProcessor(this.app, this);
-      this.examplesBlockProcessor = new ExamplesCodeBlockProcessor(this.app, this);
-      this.apiGuideBlockProcessor = new ApiGuideCodeBlockProcessor(this.app, this);
-
-      this.registerMarkdownCodeBlockProcessor('vaultquery', (source, el, ctx) => this.queryBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-help', (source, el, ctx) => this.helpBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-chart', (source, el, ctx) => this.chartBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-write', (source, el, ctx) => this.writeBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-schema', (source, el, ctx) => this.schemaBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-markdown', (source, el, ctx) => this.markdownBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-view', (source, el, ctx) => this.viewBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-function', (source, el, ctx) => this.functionBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-function-help', (source, el, ctx) => this.functionHelpCodeBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-examples', (source, el, ctx) => this.examplesBlockProcessor.process(source, el, ctx));
-      this.registerMarkdownCodeBlockProcessor('vaultquery-api-help', (source, el, ctx) => this.apiGuideBlockProcessor.process(source, el, ctx));
+      this.registerCodeBlockProcessors();
 
       this.registerMarkdownPostProcessor((element, context) => {
         processReadingViewInlineButtons(this, element, context.sourcePath);
@@ -137,19 +342,18 @@ export default class VaultQueryPlugin extends Plugin {
     }
 
     catch (error) {
-      console.error('Failed to load VaultQuery plugin:', error);
+      logger.lifecycle.error('Failed to load VaultQuery plugin', error);
     }
   }
 
 
   /**
    * Wait for Obsidian's metadata cache to be fully populated.
-   * This ensures we have access to cached headings, links, tags, etc.
-   * before starting indexing, which significantly improves performance.
+   * Indexing after this point can use cached headings, links, tags, etc.,
+   * which significantly improves performance.
    */
   private waitForMetadataCache(): Promise<void> {
     return new Promise((resolve) => {
-      // Check if already resolved (cache is ready)
       if (this.app.metadataCache.resolvedLinks) {
         const hasEntries = Object.keys(this.app.metadataCache.resolvedLinks).length > 0;
         if (hasEntries) {
@@ -158,7 +362,6 @@ export default class VaultQueryPlugin extends Plugin {
         }
       }
 
-      // Wait for the resolved event
       const eventRef = this.app.metadataCache.on('resolved', () => {
         this.app.metadataCache.offref(eventRef);
         resolve();
@@ -172,37 +375,72 @@ export default class VaultQueryPlugin extends Plugin {
     });
   }
 
+  private scheduleStartupIndexing(): void {
+    // Use a cancellable macrotask so Obsidian can finish layout work before indexing starts.
+    const timeout = activeWindow.setTimeout(async () => {
+      if (!this.api) return;
+
+      this.startUpdatingPendingCodeBlocks();
+      await this.indexAllNotes();
+      await this.processPendingCodeBlocks();
+      this.indexingStateManager.clearStartupIndexingTimeout();
+    }, 0);
+    this.indexingStateManager.setStartupIndexingTimeout(timeout);
+  }
+
   private async initializePlugin(): Promise<void> {
     try {
       this.api = await VaultQueryAPI.create(this.app, this.settings);
+      logger.lifecycle.info(`API created: thirdPartyProviderTablesEnabled=${this.settings.enableThirdPartyProviderTables}`);
+      this.attachProviderIntegrationHooks();
 
       this.indexingStateManager.setupFileWatchers();
 
       if (this.settings.indexingInterval === 'startup' || this.settings.indexingInterval === 'realtime') {
-        // Wait for metadata cache before indexing for better performance
         await this.waitForMetadataCache();
-
-        const timeout = activeWindow.setTimeout(async () => {
-          if (!this.api) return;
-
-          this.startUpdatingPendingCodeBlocks();
-          await this.indexAllNotes();
-          await this.processPendingCodeBlocks();
-          this.indexingStateManager.clearStartupIndexingTimeout();
-        }, 0);
-        this.indexingStateManager.setStartupIndexingTimeout(timeout);
+        this.scheduleStartupIndexing();
       }
       else {
         await this.processPendingCodeBlocks();
       }
 
       this.setupGridRestoration();
-
+      this.setupVisibilityHandler();
+      await this.databaseRecoveryManager.recordCurrentHealth();
     }
 
     catch (error) {
-      console.error('VaultQuery: Failed to initialize plugin:', error);
+      logger.lifecycle.error('Failed to initialize plugin', error);
     }
+  }
+
+  private registerProviderDefinitionBlockLanguage(language: string): void {
+    if (this.registeredProviderBlockLanguages.has(language)) {
+      logger.provider.debug(`Provider definition block language already registered: ${language}`);
+      return;
+    }
+
+    logger.provider.info(`Registering provider definition block language: ${language}`);
+    this.registeredProviderBlockLanguages.add(language);
+    registerProviderDefinitionLanguage(language);
+    this.invalidateCompletionSchemaCache?.();
+    void this.registerProviderDefinitionPrismLanguage(language);
+    this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) => {
+      logger.provider.debug(`Provider definition code block processor fired: language=${language}, sourcePath=${ctx.sourcePath}, sourceLength=${source.length}`);
+      void this.api.renderTableProviderDefinitionBlock(language, source, el, ctx);
+    });
+    this.rerenderMarkdownPreviews();
+  }
+
+  private rerenderMarkdownPreviews(): void {
+    let rerendered = 0;
+    for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+      if (leaf.view instanceof MarkdownView && leaf.view.getMode() === 'preview') {
+        leaf.view.previewMode.rerender(true);
+        rerendered++;
+      }
+    }
+    logger.provider.debug(`Rerendered ${rerendered} markdown preview(s) after provider language registration`);
   }
 
 
@@ -215,16 +453,16 @@ export default class VaultQueryPlugin extends Plugin {
         await processor.process(block.source, block.el, block.ctx);
       }
       catch (error) {
-        console.error(`[VaultQuery] Error processing pending ${processorName} block:`, error);
+        logger.lifecycle.error(`Error processing pending ${processorName} block`, error);
       }
     }
     processor.clearPendingBlocks();
   }
 
   private async processPendingCodeBlocks(): Promise<void> {
-    await this.processBlocksForProcessor(this.queryBlockProcessor, 'query');
-    await this.processBlocksForProcessor(this.writeBlockProcessor, 'write');
-    await this.processBlocksForProcessor(this.chartBlockProcessor, 'chart');
+    for (const { processor, name } of this.pendingBlockProcessors) {
+      await this.processBlocksForProcessor(processor, name);
+    }
   }
 
   private updateLoadingDiv(loadingDiv: HTMLElement, progress: { current: number; total: number; currentFile: string }): void {
@@ -242,90 +480,82 @@ export default class VaultQueryPlugin extends Plugin {
   }
 
   private startUpdatingPendingCodeBlocks(): void {
-    this.progressUpdateInterval = activeWindow.setInterval(() => {
+    this.lifecycle.setInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE, () => {
       if (!this.api) {
         return;
       }
 
       const indexingStatus = this.api.getIndexingStatus();
 
-      this.updateProcessorBlocks(this.queryBlockProcessor, indexingStatus);
-      this.updateProcessorBlocks(this.writeBlockProcessor, indexingStatus);
-      this.updateProcessorBlocks(this.chartBlockProcessor, indexingStatus);
+      for (const processor of this.indexingProgressProcessors) {
+        this.updateProcessorBlocks(processor, indexingStatus);
+      }
 
       if (!indexingStatus.isIndexing) {
-        if (this.progressUpdateInterval) {
-          activeWindow.clearInterval(this.progressUpdateInterval);
-          this.progressUpdateInterval = null;
-        }
+        this.lifecycle.clearInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE);
         void this.processPendingCodeBlocks();
       }
     }, 500);
   }
 
   private setupGridRestoration(): void {
-    let scrollTimeout: number | null = null;
-
-    this.scrollHandler = () => {
-      if (scrollTimeout) {
-        activeWindow.clearTimeout(scrollTimeout);
-      }
-      scrollTimeout = activeWindow.setTimeout(() => {
+    const scrollHandler = () => {
+      this.lifecycle.setTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE, () => {
         SlickGridRenderer.checkAndRestoreGrids();
       }, 150);
     };
 
     const workspaceEl = this.app.workspace.containerEl;
     if (workspaceEl) {
-      workspaceEl.addEventListener('scroll', this.scrollHandler, { capture: true, passive: true });
+      this.lifecycle.addDomEvent(workspaceEl, 'scroll', scrollHandler, { capture: true, passive: true });
     }
 
-    this.gridRestoreInterval = activeWindow.setInterval(() => {
+    this.lifecycle.setInterval(VaultQueryPlugin.TIMER_GRID_RESTORE, () => {
       SlickGridRenderer.checkAndRestoreGrids();
     }, 2000);
   }
 
   private cleanupGridRestoration(): void {
-    if (this.scrollHandler) {
-      const workspaceEl = this.app.workspace.containerEl;
-      if (workspaceEl) {
-        workspaceEl.removeEventListener('scroll', this.scrollHandler, { capture: true });
-      }
-      this.scrollHandler = null;
-    }
-
-    if (this.gridRestoreInterval) {
-      activeWindow.clearInterval(this.gridRestoreInterval);
-      this.gridRestoreInterval = null;
-    }
+    this.lifecycle.clearTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE);
+    this.lifecycle.clearInterval(VaultQueryPlugin.TIMER_GRID_RESTORE);
   }
 
-  public async onunload() {
+  private setupVisibilityHandler(): void {
+    this.lifecycle.addDomEvent(document, 'visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        void this.databaseRecoveryManager.handleResume();
+      }
+    });
+  }
+
+  private cleanupLifecycle(): void {
+    this.lifecycle.cleanup();
+  }
+
+  public onunload() {
     try {
       this.cleanupGridRestoration();
-
-      if (this.progressUpdateInterval) {
-        activeWindow.clearInterval(this.progressUpdateInterval);
-        this.progressUpdateInterval = null;
-      }
+      this.cleanupLifecycle();
 
       if (this.api) {
         this.api.setIndexingStatus(false);
       }
 
       this.indexingStateManager.cleanup();
+      this.schemaEventRefs.forEach(ref => this.api?.off(ref));
+      this.schemaEventRefs = [];
 
-      this.queryBlockProcessor.clearPendingBlocks();
-      this.writeBlockProcessor.clearPendingBlocks();
-      this.chartBlockProcessor.clearPendingBlocks();
-
-      try {
-        if (this.api) {
-          await this.api.close();
-        }
+      for (const { processor } of this.pendingBlockProcessors) {
+        processor.clearPendingBlocks();
       }
-      catch (error) {
-        console.error('VaultQuery: Error closing database:', error);
+
+      for (const processor of this.unloadableProcessors) {
+        processor.unload();
+      }
+      SlickGridRenderer.cleanup();
+
+      if (this.api) {
+        void this.api.close();
       }
 
       this.api = undefined!;
@@ -333,8 +563,38 @@ export default class VaultQueryPlugin extends Plugin {
     }
 
     catch (error) {
-      console.error('VaultQuery: Error during plugin unload:', error);
+      logger.lifecycle.error('Error during plugin unload', error);
     }
+  }
+
+  private setupAutocompleteSchemaInvalidation(): void {
+    if (!this.api || !this.invalidateCompletionSchemaCache) {
+      return;
+    }
+
+    this.schemaEventRefs.forEach(ref => this.api?.off(ref));
+    this.schemaEventRefs = [
+      this.api.on('vault-indexed', () => {
+        this.invalidateCompletionSchemaCache?.();
+      }),
+      this.api.on('file-indexed', () => {
+        this.invalidateCompletionSchemaCache?.();
+      }),
+      this.api.on('database-restored', () => {
+        this.invalidateCompletionSchemaCache?.();
+      }),
+    ];
+  }
+
+  private attachProviderIntegrationHooks(): void {
+    if (!this.api) {
+      return;
+    }
+
+    this.api.setProviderBlockLanguageRegistrar((language) => {
+      this.registerProviderDefinitionBlockLanguage(language);
+    });
+    this.setupAutocompleteSchemaInvalidation();
   }
 
   private async indexAllNotes() {

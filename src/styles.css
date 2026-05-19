@@ -13,123 +13,146 @@
 	margin-top: 24px;
 }
 
-/* Table styles for markdown-rendered content in vaultquery-container */
-.vaultquery-container table {
+/* Template output: reset flex layout so user has full control over HTML */
+.vaultquery-container.vaultquery-template-output {
+	display: block;
+}
+
+/* Shared table style for all VaultQuery-owned HTML tables.
+ * Keep aliases here so one visual system covers renderer, status, stats, and preview tables. */
+.vaultquery-table,
+.vaultquery-markdown-table,
+.vaultquery-schema table,
+:where(.vaultquery-markdown-rendered table),
+.vaultquery-help-table-wrapper table,
+:where(.performance-stats-table),
+:where(.vaultquery-view-preview-table) {
+	--vaultquery-table-row-height: 32px;
+	--vaultquery-table-header-height: 32px;
+	--vaultquery-table-cell-padding-y: 0;
+	--vaultquery-table-cell-padding-x: var(--size-4-2);
+	--vaultquery-table-border-color: var(--background-modifier-border);
+	--vaultquery-table-row-border-color: var(--table-border-color, var(--background-modifier-border));
+	--vaultquery-table-background: var(--background-primary);
+	--vaultquery-table-header-background: var(--background-secondary);
+	--vaultquery-table-row-hover-background: var(--background-modifier-hover);
 	width: 100%;
 	border-collapse: collapse;
+	font-family: var(--font-interface);
 	font-size: var(--font-ui-medium);
-	background-color: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
+	background-color: var(--vaultquery-table-background);
+	border: 1px solid var(--vaultquery-table-border-color);
 	margin: 0;
+	margin-block-start: 0;
+	margin-block-end: 0;
+	margin-inline-start: 0;
+	margin-inline-end: 0;
 }
 
-.vaultquery-container table th {
-	background-color: var(--background-secondary);
-	font-weight: var(--font-weight-medium);
+.vaultquery-table th,
+.vaultquery-markdown-table th,
+.vaultquery-schema table th,
+:where(.vaultquery-markdown-rendered table) th,
+.vaultquery-help-table-wrapper table th,
+:where(.performance-stats-table) th,
+:where(.vaultquery-view-preview-table) th {
+	background-color: var(--vaultquery-table-header-background);
+	color: var(--text-normal);
+	font-family: var(--font-interface);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-semibold);
 	text-align: left;
-	padding: var(--size-4-2) var(--size-4-3);
-	border-bottom: 1px solid var(--background-modifier-border);
-	border-right: 1px solid var(--background-modifier-border);
+	padding: 0 var(--vaultquery-table-cell-padding-x);
+	border-bottom: 1px solid var(--vaultquery-table-border-color);
+	border-right: 1px solid var(--vaultquery-table-border-color);
+	box-sizing: border-box;
+	height: var(--vaultquery-table-header-height);
+	line-height: var(--vaultquery-table-header-height);
+	vertical-align: middle;
 }
 
-.vaultquery-container table th:last-child {
+.vaultquery-table thead,
+.vaultquery-table thead tr,
+.vaultquery-table thead th,
+.vaultquery-markdown-table thead,
+.vaultquery-markdown-table thead tr,
+.vaultquery-markdown-table thead th,
+.vaultquery-schema table thead,
+.vaultquery-schema table thead tr,
+.vaultquery-schema table thead th,
+.vaultquery-markdown-rendered table thead,
+.vaultquery-markdown-rendered table thead tr,
+.vaultquery-markdown-rendered table thead th,
+.vaultquery-help-table-wrapper table thead,
+.vaultquery-help-table-wrapper table thead tr,
+.vaultquery-help-table-wrapper table thead th,
+.performance-stats-table thead,
+.performance-stats-table thead tr,
+.performance-stats-table thead th,
+.vaultquery-view-preview-table thead,
+.vaultquery-view-preview-table thead tr,
+.vaultquery-view-preview-table thead th {
+	background-color: var(--vaultquery-table-header-background);
+}
+
+.vaultquery-table th:last-child,
+.vaultquery-markdown-table th:last-child,
+.vaultquery-schema table th:last-child,
+:where(.vaultquery-markdown-rendered table) th:last-child,
+.vaultquery-help-table-wrapper table th:last-child,
+:where(.performance-stats-table) th:last-child,
+:where(.vaultquery-view-preview-table) th:last-child {
 	border-right: none;
 }
 
-.vaultquery-container table td {
-	padding: var(--size-4-2) var(--size-4-3);
-	border-bottom: 1px solid var(--background-modifier-border);
-	border-right: 1px solid var(--background-modifier-border);
+.vaultquery-table td,
+.vaultquery-markdown-table td,
+.vaultquery-schema table td,
+:where(.vaultquery-markdown-rendered table) td,
+.vaultquery-help-table-wrapper table td,
+:where(.performance-stats-table) td,
+:where(.vaultquery-view-preview-table) td {
+	color: var(--text-normal);
+	font-family: var(--font-text);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-weight-normal);
+	padding: var(--vaultquery-table-cell-padding-y) var(--vaultquery-table-cell-padding-x);
+	border-bottom: 1px solid var(--vaultquery-table-row-border-color);
+	border-right: 1px solid transparent;
+	box-sizing: border-box;
+	height: var(--vaultquery-table-row-height);
+	line-height: var(--vaultquery-table-row-height);
+	vertical-align: middle;
 }
 
-.vaultquery-container table td:last-child {
+.vaultquery-table td:last-child,
+.vaultquery-markdown-table td:last-child,
+.vaultquery-schema table td:last-child,
+:where(.vaultquery-markdown-rendered table) td:last-child,
+.vaultquery-help-table-wrapper table td:last-child,
+:where(.performance-stats-table) td:last-child,
+:where(.vaultquery-view-preview-table) td:last-child {
 	border-right: none;
 }
 
-.vaultquery-container table tr:last-child td {
+.vaultquery-table tr:last-child td,
+.vaultquery-markdown-table tr:last-child td,
+.vaultquery-schema table tr:last-child td,
+:where(.vaultquery-markdown-rendered table) tr:last-child td,
+.vaultquery-help-table-wrapper table tr:last-child td,
+:where(.performance-stats-table) tr:last-child td,
+:where(.vaultquery-view-preview-table) tr:last-child td {
 	border-bottom: none;
 }
 
-.vaultquery-container table tr:hover td {
-	background-color: var(--background-modifier-hover);
-}
-
-/* Specific styles for vaultquery-markdown rendered tables */
-.vaultquery-markdown-table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: var(--font-ui-medium);
-	background-color: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-	margin: 0;
-}
-
-.vaultquery-markdown-table th {
-	background-color: var(--background-secondary);
-	font-weight: var(--font-weight-medium);
-	text-align: left;
-	padding: var(--size-4-2) var(--size-4-3);
-	border-bottom: 1px solid var(--background-modifier-border);
-	border-right: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-markdown-table th:last-child {
-	border-right: none;
-}
-
-.vaultquery-markdown-table td {
-	padding: var(--size-4-2) var(--size-4-3);
-	border-bottom: 1px solid var(--background-modifier-border);
-	border-right: 1px solid var(--background-modifier-border);
-	vertical-align: top;
-}
-
-.vaultquery-markdown-table td:last-child {
-	border-right: none;
-}
-
-.vaultquery-markdown-table tr:last-child td {
-	border-bottom: none;
-}
-
-.vaultquery-markdown-table tr:hover td {
-	background-color: var(--background-modifier-hover);
-}
-
-/* Table cell alignment classes */
-.vaultquery-markdown-table th.vaultquery-align-center,
-.vaultquery-markdown-table td.vaultquery-align-center {
-	text-align: center;
-}
-
-.vaultquery-markdown-table th.vaultquery-align-right,
-.vaultquery-markdown-table td.vaultquery-align-right {
-	text-align: right;
-}
-
-/* Markdown content within table cells */
-.vaultquery-markdown-table td p:first-child {
-	margin-top: 0;
-}
-
-.vaultquery-markdown-table td p:last-child {
-	margin-bottom: 0;
-}
-
-.vaultquery-markdown-table td ul,
-.vaultquery-markdown-table td ol {
-	margin: var(--size-4-1) 0;
-	padding-left: var(--size-4-5);
-}
-
-.vaultquery-markdown-table td h1,
-.vaultquery-markdown-table td h2,
-.vaultquery-markdown-table td h3,
-.vaultquery-markdown-table td h4,
-.vaultquery-markdown-table td h5,
-.vaultquery-markdown-table td h6 {
-	margin: var(--size-4-1) 0;
-	font-size: var(--font-ui-medium);
+.vaultquery-table tbody tr:hover td,
+.vaultquery-markdown-table tbody tr:hover td,
+.vaultquery-schema table tbody tr:hover td,
+.vaultquery-markdown-rendered table tbody tr:hover td,
+.vaultquery-help-table-wrapper table tbody tr:hover td,
+.performance-stats-table tbody tr:hover td,
+.vaultquery-view-preview-table tbody tr:hover td {
+	background-color: var(--vaultquery-table-row-hover-background);
 }
 
 .vaultquery-container + .vaultquery-preview-container,
@@ -152,16 +175,40 @@
 }
 
 .vaultquery-error {
+	background-color: var(--color-base-10);
+	border-radius: 0;
+	border-left: 3px solid var(--text-error);
+	padding: var(--size-4-4);
 	color: var(--text-normal);
-	padding: var(--size-4-3);
-	background-color: var(--background-primary);
-	border-top: 1px solid var(--background-modifier-border);
-	border-bottom: 1px solid var(--background-modifier-border);
-	border-left: 2px solid var(--text-error);
 	margin: 0;
+}
+
+.vaultquery-error h3 {
+	margin-top: 0;
+	margin-bottom: var(--size-4-2);
+	color: var(--text-normal);
+	font-size: var(--font-ui-medium);
+}
+
+.vaultquery-error p {
+	margin-bottom: var(--size-4-2);
+	color: var(--text-normal);
+}
+
+.vaultquery-error p:last-child {
+	margin-bottom: 0;
+}
+
+.vaultquery-error-help {
+	background-color: var(--code-background);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-3);
+	margin: var(--size-4-2) 0 0 0;
+	font-family: var(--font-monospace);
+	font-size: var(--code-size);
+	color: var(--text-muted);
 	white-space: pre-wrap;
-	font-family: var(--font-interface);
-	line-height: var(--line-height-normal);
+	overflow-x: auto;
 }
 
 .vaultquery-message-header {
@@ -295,7 +342,7 @@
 	line-height: var(--line-height-normal);
 }
 
-/* Markdown cell styles for SlickGrid */
+/* Markdown cell styles for data-grid cells */
 .vaultquery-markdown-cell {
 	font-size: var(--font-ui-medium);
 	line-height: var(--line-height-normal);
@@ -331,6 +378,498 @@
 	padding-left: var(--size-4-6);
 }
 
+.vaultquery-calendar-root {
+	--vaultquery-calendar-day-min-height: 120px;
+	--vaultquery-calendar-surface: var(--background-primary);
+	--vaultquery-calendar-surface-muted: var(--background-primary-alt);
+	--vaultquery-calendar-border: var(--background-modifier-border);
+	--vaultquery-calendar-border-subtle: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+	--vaultquery-calendar-text-muted: var(--text-muted);
+	--vaultquery-calendar-today-bg: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+}
+
+.vaultquery-container.vaultquery-calendar-output {
+	padding-top: calc(var(--input-height) + var(--size-4-2));
+}
+
+.vaultquery-container.vaultquery-calendar-output .vaultquery-floating-buttons {
+	z-index: 3;
+}
+
+/* FullCalendar uses generic table, anchor, and button elements that Obsidian themes also target. */
+.vaultquery-calendar-root.fc {
+	--fc-border-color: var(--vaultquery-calendar-border-subtle);
+	--fc-page-bg-color: var(--vaultquery-calendar-surface);
+	--fc-neutral-bg-color: var(--vaultquery-calendar-surface-muted);
+	--fc-neutral-text-color: var(--vaultquery-calendar-text-muted);
+	--fc-today-bg-color: var(--vaultquery-calendar-today-bg);
+	--fc-button-bg-color: var(--interactive-normal);
+	--fc-button-border-color: var(--background-modifier-border);
+	--fc-button-text-color: var(--text-normal);
+	--fc-button-hover-bg-color: var(--interactive-hover);
+	--fc-button-hover-border-color: var(--background-modifier-border-hover);
+	--fc-button-active-bg-color: var(--interactive-accent);
+	--fc-button-active-border-color: var(--interactive-accent);
+	--fc-event-bg-color: var(--interactive-accent);
+	--fc-event-border-color: var(--interactive-accent);
+	--fc-event-text-color: var(--text-on-accent);
+	background: var(--vaultquery-calendar-surface);
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	color: var(--text-normal);
+	font-family: var(--font-interface);
+	font-size: var(--font-ui-medium);
+	padding: 0;
+	width: 100%;
+}
+
+.vaultquery-calendar-root.fc *,
+.vaultquery-calendar-root.fc *::before,
+.vaultquery-calendar-root.fc *::after {
+	box-sizing: border-box;
+}
+
+/* Scoped reset: prevents Obsidian link/button/table rules from changing FullCalendar chrome. */
+.vaultquery-calendar-root.fc :is(
+	a,
+	a:hover,
+	a:focus,
+	a:visited,
+	.fc-daygrid-day-number,
+	.fc-daygrid-day-number:hover,
+	.fc-daygrid-day-number:focus,
+	.fc-daygrid-day-number:visited,
+	.fc-col-header-cell-cushion,
+	.fc-col-header-cell-cushion:hover,
+	.fc-col-header-cell-cushion:focus,
+	.fc-col-header-cell-cushion:visited
+) {
+	color: inherit;
+	text-decoration: none;
+	box-shadow: none;
+}
+
+.vaultquery-calendar-root.fc :is(
+	table,
+	th,
+	td,
+	thead,
+	tbody,
+	tr,
+	tr:hover,
+	tbody:hover,
+	thead:hover,
+	tbody:hover tr,
+	thead:hover tr,
+	tr:hover th,
+	tr:hover td,
+	tbody:hover th,
+	tbody:hover td
+) {
+	background: transparent;
+}
+
+.vaultquery-calendar-root.fc table {
+	font-size: inherit;
+	margin: 0;
+	width: 100%;
+}
+
+.vaultquery-calendar-root.fc :is(th, td) {
+	border-color: var(--vaultquery-calendar-border-subtle);
+	font-size: inherit;
+	line-height: inherit;
+	padding: 0;
+	text-align: inherit;
+	vertical-align: top;
+}
+
+/* Toolbar */
+.vaultquery-calendar-root.fc .fc-toolbar.fc-header-toolbar {
+	align-items: center;
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-2);
+	padding: 0 var(--size-4-1);
+}
+
+.vaultquery-calendar-root.fc .fc-toolbar-chunk {
+	align-items: center;
+	display: flex;
+	gap: var(--size-4-1);
+}
+
+.vaultquery-calendar-root.fc .fc-button-group {
+	align-items: stretch;
+	display: inline-flex;
+}
+
+.vaultquery-calendar-root.fc .fc-toolbar-title {
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-weight-semibold);
+}
+
+.vaultquery-calendar-root.fc .fc-button {
+	all: unset;
+	align-items: center;
+	appearance: none;
+	background: var(--interactive-normal);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: none;
+	box-sizing: border-box;
+	color: var(--text-normal);
+	cursor: var(--cursor);
+	display: inline-flex;
+	font-weight: var(--font-weight-medium);
+	height: var(--input-height);
+	justify-content: center;
+	line-height: 1;
+	margin: 0;
+	min-height: var(--input-height);
+	padding: 0 var(--size-4-2);
+	text-transform: none;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-prev-button, .fc-next-button) {
+	padding: 0;
+	width: var(--input-height);
+}
+
+.vaultquery-calendar-root.fc .fc-icon {
+	align-items: center;
+	display: inline-flex;
+	height: 1em;
+	justify-content: center;
+	line-height: 1;
+	width: 1em;
+}
+
+.vaultquery-calendar-root.fc .fc-button:is(:hover, :focus) {
+	background: var(--interactive-hover);
+	border-color: var(--background-modifier-border-hover);
+	box-shadow: none;
+	color: var(--text-normal);
+}
+
+.vaultquery-calendar-root.fc .fc-button-primary:not(:disabled):is(.fc-button-active, :active) {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.vaultquery-calendar-root.fc .fc-button:disabled {
+	opacity: 0.65;
+}
+
+/* Calendar grid and border cleanup */
+.vaultquery-calendar-root.fc :is(
+	.fc-col-header-cell-cushion,
+	.fc-daygrid-day-number,
+	.fc-timegrid-axis-cushion,
+	.fc-timegrid-slot-label-cushion,
+	.fc-timegrid-col-frame
+) {
+	color: inherit;
+	text-decoration: none;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-scrollgrid, td, th) {
+	border-color: var(--vaultquery-calendar-border-subtle);
+}
+
+.vaultquery-calendar-root.fc .fc-scrollgrid {
+	background: var(--vaultquery-calendar-surface);
+	border: 1px solid var(--vaultquery-calendar-border);
+	border-radius: var(--radius-s);
+	box-shadow: none;
+	overflow: hidden;
+	width: 100%;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-scrollgrid > thead > tr:first-child > th, .fc-scrollgrid > tbody > tr:first-child > td) {
+	border-top: 0;
+}
+
+.vaultquery-calendar-root.fc .fc-scrollgrid > tbody > tr:last-child > td {
+	border-bottom: 0;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-scrollgrid-section > th, .fc-scrollgrid-section > td) {
+	border-left: 0;
+	border-right: 0;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-scrollgrid table tr > th:first-child, .fc-scrollgrid table tr > td:first-child) {
+	border-left: 0;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-scrollgrid table tr > th:last-child, .fc-scrollgrid table tr > td:last-child) {
+	border-right: 0;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-view-harness, .fc-view, .fc-scrollgrid-section, .fc-scrollgrid-section > td, .fc-scrollgrid-section > th) {
+	box-shadow: none;
+}
+
+/* Month/day grid */
+.vaultquery-calendar-root.fc .fc-col-header-cell {
+	background: var(--vaultquery-calendar-surface-muted);
+}
+
+.vaultquery-calendar-root.fc .fc-col-header-cell-cushion {
+	color: var(--vaultquery-calendar-text-muted);
+	display: block;
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: 0.04em;
+	padding: var(--size-4-2) var(--size-4-1);
+	text-transform: uppercase;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-day-frame {
+	min-height: var(--vaultquery-calendar-day-min-height);
+	padding: 6px;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-day {
+	background: var(--vaultquery-calendar-surface);
+	overflow: visible;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-day:hover {
+	background: color-mix(in srgb, var(--background-modifier-hover) 45%, var(--vaultquery-calendar-surface));
+}
+
+/* FullCalendar spans multi-day events by overflowing the starting day cell. */
+.vaultquery-calendar-root.fc :is(
+	.fc-daygrid-day-frame,
+	.fc-daygrid-day-events,
+	.fc-daygrid-event-harness,
+	.fc-daygrid-event-harness-abs
+) {
+	overflow: visible;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-day-top {
+	justify-content: flex-start;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-day-number {
+	align-items: center;
+	border-radius: 999px;
+	color: var(--text-normal);
+	display: inline-flex;
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-weight-medium);
+	justify-content: center;
+	min-height: 28px;
+	min-width: 28px;
+	padding: 0 8px;
+	text-decoration: none;
+}
+
+.vaultquery-calendar-root.fc .fc-day-today {
+	background: var(--vaultquery-calendar-today-bg);
+}
+
+.vaultquery-calendar-root.fc .fc-day-today .fc-daygrid-day-number {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.vaultquery-calendar-root.fc .fc-day-other .fc-daygrid-day-number {
+	color: color-mix(in srgb, var(--vaultquery-calendar-text-muted) 70%, transparent);
+}
+
+/* Events */
+.vaultquery-calendar-root.fc :is(.fc-daygrid-event, .fc-timegrid-event) {
+	border-radius: var(--radius-s);
+	border-width: 1px;
+	box-shadow: none;
+}
+
+/* FullCalendar adds margin-left: 2px to fc-event-start and margin-right: 2px to
+   fc-event-end events, causing single-day events to not span full cell width. */
+.vaultquery-calendar-root.fc.fc-direction-ltr .fc-daygrid-event.fc-event-start,
+.vaultquery-calendar-root.fc.fc-direction-rtl .fc-daygrid-event.fc-event-end {
+	margin-left: 0;
+}
+.vaultquery-calendar-root.fc.fc-direction-ltr .fc-daygrid-event.fc-event-end,
+.vaultquery-calendar-root.fc.fc-direction-rtl .fc-daygrid-event.fc-event-start {
+	margin-right: 0;
+}
+
+.vaultquery-calendar-root.fc :is(.fc-daygrid-event, .fc-daygrid-dot-event) {
+	padding: 2px 4px;
+}
+
+.vaultquery-calendar-root.fc .fc-daygrid-dot-event {
+	border-radius: var(--radius-s);
+}
+
+.vaultquery-calendar-root.fc .fc-event {
+	text-decoration: none;
+}
+
+.vaultquery-calendar-root.fc .vaultquery-calendar-event-clickable {
+	cursor: pointer;
+}
+
+.vaultquery-calendar-root.fc .vaultquery-calendar-event-static {
+	cursor: default;
+	text-decoration: none;
+}
+
+.vaultquery-calendar-root.fc .fc-event-main {
+	color: inherit;
+	font-size: var(--font-ui-smaller);
+	line-height: 1.25;
+}
+
+.vaultquery-calendar-root.fc .vaultquery-calendar-event-text-custom {
+	color: var(--vaultquery-calendar-event-text-color);
+}
+
+.vaultquery-calendar-root.fc .fc-more-link {
+	color: var(--text-muted);
+	text-decoration: none;
+}
+
+.vaultquery-calendar-root.fc .fc-more-link:hover {
+	color: var(--text-normal);
+	text-decoration: underline;
+}
+
+/* More-events popover */
+.vaultquery-calendar-root.fc .fc-popover {
+	background: var(--background-primary);
+	border: 1px solid var(--vaultquery-calendar-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-l);
+	color: var(--text-normal);
+	overflow: hidden;
+	z-index: 20;
+}
+
+.vaultquery-calendar-root.fc .fc-popover-header {
+	align-items: center;
+	background: var(--background-secondary);
+	border-bottom: 1px solid var(--vaultquery-calendar-border);
+	color: var(--text-normal);
+	display: flex;
+	padding: var(--size-4-1) var(--size-4-2);
+}
+
+.vaultquery-calendar-root.fc .fc-popover-title {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-weight-semibold);
+}
+
+.vaultquery-calendar-root.fc .fc-popover-close {
+	color: var(--text-muted);
+	opacity: 1;
+}
+
+.vaultquery-calendar-root.fc .fc-popover-body {
+	background: var(--background-primary);
+	padding: var(--size-4-2);
+}
+
+.vaultquery-calendar-root.fc .fc-popover-body .fc-daygrid-event {
+	margin: var(--size-2-1) 0;
+}
+
+.vaultquery-calendar-tooltip {
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-l);
+	color: var(--text-normal);
+	font-family: var(--font-interface);
+	font-size: var(--font-ui-smaller);
+	line-height: var(--line-height-normal);
+	max-width: min(360px, calc(100vw - 16px));
+	padding: var(--size-4-2) var(--size-4-3);
+	pointer-events: none;
+	position: fixed;
+	left: var(--vaultquery-calendar-tooltip-left, 0);
+	top: var(--vaultquery-calendar-tooltip-top, 0);
+	white-space: pre-wrap;
+	z-index: 1000;
+}
+
+/* Time-grid views */
+.vaultquery-calendar-root.fc :is(.fc-timegrid-slot, .fc-timegrid-axis) {
+	border-color: var(--vaultquery-calendar-border-subtle);
+}
+
+.vaultquery-calendar-root.fc :is(.fc-timegrid-slot-label-cushion, .fc-timegrid-axis-cushion) {
+	color: var(--vaultquery-calendar-text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.vaultquery-calendar-root.fc :is(.fc-timegrid-now-indicator-line, .fc-timegrid-now-indicator-arrow) {
+	border-color: var(--interactive-accent);
+}
+
+@media (max-width: 720px) {
+	.vaultquery-calendar-root.fc .fc-toolbar {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.vaultquery-calendar-root.fc .fc-toolbar-chunk {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--size-4-1);
+		justify-content: center;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] {
+		--vaultquery-calendar-day-min-height: 72px;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-toolbar.fc-header-toolbar {
+		gap: var(--size-4-1);
+		padding: 0;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-toolbar-title {
+		font-size: var(--font-ui-medium);
+		text-align: center;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-button {
+		min-width: 0;
+		padding: 0 10px;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-timegrid-axis {
+		width: 52px;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-timegrid-slot {
+		height: 2.75rem;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-timegrid-event-harness {
+		margin-inline: 2px;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-event-main {
+		font-size: var(--font-ui-small);
+		line-height: 1.35;
+		padding: 2px 4px;
+	}
+
+	.vaultquery-calendar-root.fc[data-vaultquery-calendar-layout="mobile"] .fc-daygrid-event {
+		margin-top: 4px;
+	}
+}
+
 .vaultquery-markdown-cell li {
 	margin: var(--size-4-1) 0;
 }
@@ -359,10 +898,10 @@
 	text-decoration: underline;
 }
 
-/* Override SlickGrid cell styles for cells containing markdown */
+/* Override grid-library cell styles for cells containing markdown */
 .slick-cell.vaultquery-markdown-content-cell {
 	white-space: normal;
-	overflow: hidden !important;
+	overflow: hidden;
 	text-overflow: clip;
 	align-items: flex-start;
 	padding: var(--size-4-2);
@@ -716,19 +1255,29 @@
 
 .vaultquery-error-container {
 	margin: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
 }
 
 .vaultquery-error-query {
-	padding: var(--size-4-4);
-	background-color: var(--background-secondary);
+	background-color: var(--code-background);
 	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-3);
+	margin: 0;
+	font-family: var(--font-monospace);
+	font-size: var(--code-size);
+	color: var(--text-muted);
+	white-space: pre-wrap;
+	overflow-x: auto;
 }
 
-.vaultquery-error-query h4 {
+.vaultquery-error-query h4,
+.vaultquery-error-template h4 {
 	margin: 0 0 var(--size-4-2) 0;
 	font-size: var(--font-ui-medium);
 	color: var(--text-normal);
+	font-family: var(--font-interface);
 }
 
 .vaultquery-markdown-output {
@@ -747,10 +1296,13 @@
 
 .vaultquery-markdown-rendered {
 	margin-bottom: var(--size-4-3);
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
 }
 
 .vaultquery-markdown-rendered table {
-	width: 100%;
+	width: max-content;
+	min-width: 100%;
 	margin: 0;
 }
 
@@ -803,30 +1355,7 @@
 }
 
 .performance-stats-table {
-	width: 100%;
-	border-collapse: collapse;
 	margin-top: var(--size-4-2);
-}
-
-.performance-stats-table th,
-.performance-stats-table td {
-	padding: var(--size-4-2) var(--size-4-3);
-	text-align: left;
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.performance-stats-table th {
-	background: var(--background-secondary);
-	font-weight: var(--font-weight-bold);
-	color: var(--text-muted);
-}
-
-.performance-stats-table td {
-	color: var(--text-normal);
-}
-
-.performance-stats-table tr:hover {
-	background: var(--background-modifier-hover);
 }
 
 .performance-stats-table .internal-link {
@@ -908,7 +1437,7 @@
 }
 
 .vaultquery-modal-overlay,
-.vaultquery-preview-overlay {
+:where(.vaultquery-preview-overlay) {
 	position: fixed;
 	top: 0;
 	left: 0;
@@ -937,7 +1466,7 @@
 	flex-direction: column;
 }
 
-.vaultquery-modal-content {
+:where(.vaultquery-modal-content) {
 	padding: var(--size-4-4);
 	max-width: 400px;
 	margin: var(--size-4-4);
@@ -1156,31 +1685,183 @@
     font-style: italic;
 }
 
-.vaultquery-view-preview-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--font-ui-medium);
-    background-color: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-view-preview-table th {
-    background-color: var(--background-secondary);
-    font-weight: var(--font-weight-medium);
-    text-align: left;
-    padding: var(--size-4-2) var(--size-4-3);
-    border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-view-preview-table td {
-    padding: var(--size-4-2) var(--size-4-3);
-    border-bottom: 1px solid var(--background-modifier-border);
+:where(.vaultquery-view-preview-table td) {
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.vaultquery-view-preview-table tr:hover td {
-    background-color: var(--background-modifier-hover);
+.vaultquery-stats-description {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    line-height: var(--line-height-normal);
+}
+
+.vaultquery-provider-definition-container {
+    position: relative;
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
+    overflow: hidden;
+}
+
+.vaultquery-provider-definition {
+    color: var(--text-normal);
+    font-size: var(--font-ui-medium);
+    line-height: var(--line-height-normal);
+}
+
+.vaultquery-provider-definition-header {
+    align-items: flex-start;
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    gap: var(--size-4-4);
+    justify-content: space-between;
+    padding: var(--size-4-3) var(--size-4-4);
+}
+
+.vaultquery-provider-definition-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-2-1);
+    min-width: 0;
+}
+
+.vaultquery-provider-definition h3 {
+    color: var(--text-normal);
+    font-size: var(--font-ui-large);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    margin: 0;
+}
+
+.vaultquery-provider-definition-subtitle {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.vaultquery-provider-definition-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-4-2);
+    justify-content: flex-end;
+}
+
+.vaultquery-provider-definition-meta-item {
+    align-items: flex-start;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 140px;
+    padding: var(--size-2-3) var(--size-4-2);
+}
+
+.vaultquery-provider-definition-meta-label {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+    text-transform: uppercase;
+}
+
+.vaultquery-provider-definition-meta-value {
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    line-height: var(--line-height-tight);
+    overflow-wrap: anywhere;
+}
+
+.vaultquery-provider-status-table-wrapper {
+    overflow-x: auto;
+    padding-top: var(--size-4-2);
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+}
+
+.vaultquery-provider-status-table-wrapper .vaultquery-provider-status-table {
+    width: max-content;
+    min-width: 100%;
+}
+
+.vaultquery-provider-status-table {
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    margin: 0;
+    margin-block-start: 0;
+    margin-block-end: 0;
+    margin-inline-start: 0;
+    margin-inline-end: 0;
+}
+
+.vaultquery-provider-status-table th:nth-child(2),
+.vaultquery-provider-status-table td:nth-child(2) {
+    text-align: right;
+    width: 1%;
+}
+
+.vaultquery-provider-status-table th:last-child,
+.vaultquery-provider-status-table td:last-child {
+    width: 1%;
+}
+
+.vaultquery-provider-status-badge {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+.vaultquery-provider-status-badge.is-ok {
+    background: color-mix(in srgb, var(--text-success) 12%, transparent);
+    border-color: color-mix(in srgb, var(--text-success) 35%, var(--background-modifier-border));
+    color: var(--text-success);
+}
+
+.vaultquery-provider-status-badge.is-error {
+    background: color-mix(in srgb, var(--text-error) 12%, transparent);
+    border-color: color-mix(in srgb, var(--text-error) 35%, var(--background-modifier-border));
+    color: var(--text-error);
+}
+
+.cm-tooltip-autocomplete .cm-completionIcon {
+    display: none;
+}
+
+.cm-tooltip-autocomplete .cm-completionLabel {
+    display: block;
+    color: var(--text-normal);
+    line-height: 1.3;
+}
+
+.cm-tooltip-autocomplete .cm-completionDetail {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    white-space: normal;
+}
+
+@media (max-width: 640px) {
+    .vaultquery-provider-definition-header {
+        flex-direction: column;
+    }
+
+    .vaultquery-provider-definition-meta {
+        justify-content: stretch;
+        width: 100%;
+    }
+
+    .vaultquery-provider-definition-meta-item {
+        flex: 1 1 100%;
+    }
 }

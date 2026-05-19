@@ -3,7 +3,7 @@ export { fast1a32hex as hashString } from 'fnv-plus';
 /**
  * Separator used for compound keys (e.g., path@@table_index)
  */
-export const KEY_SEPARATOR = '@@';
+const KEY_SEPARATOR = '@@';
 
 /**
  * Create a table key from path and table_index

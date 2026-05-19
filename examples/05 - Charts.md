@@ -5,6 +5,8 @@ category: visualization
 
 ## Chart Types
 
+`vaultquery-chart` renders query results as charts. `vaultquery-chart-help` shows the chart reference.
+
 | Type     | Config Value     | Best For                          |
 | -------- | ---------------- | --------------------------------- |
 | Bar      | `type: bar`      | Comparisons                       |
@@ -30,7 +32,7 @@ Charts require columns named `label` and `value` (or `x` and `y` for scatter plo
 ## Self-Contained Charts
 
 > [!important] Enable tag indexing
-> Tag queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tags
+> Tag queries are disabled by default. Enable at Settings → VaultQuery → Index tags.
 
 ### Tags bar chart
 
@@ -48,7 +50,7 @@ datasetLabel: Tag count
 ```
 
 > [!important] Enable task indexing
-> Task queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tasks
+> Task queries are disabled by default. Enable at Settings → VaultQuery → Index tasks.
 
 ### Task status pie chart
 
@@ -206,7 +208,7 @@ yLabel: Tasks Completed
 ```
 
 > [!important] Enable heading indexing
-> Heading queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index headings
+> Heading queries are disabled by default. Enable at Settings → VaultQuery → Index headings.
 
 ### Note size vs heading count
 
@@ -225,4 +227,3 @@ type: scatter
 xLabel: Size (KB)
 yLabel: Heading Count
 ```
-

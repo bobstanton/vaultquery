@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language';
-import { RangeSetBuilder, EditorState, Transaction } from '@codemirror/state';
+import { RangeSetBuilder, EditorState, Transaction, Prec } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
 import {
   Decoration,
@@ -8,7 +8,7 @@ import {
   ViewPlugin,
   ViewUpdate,
 } from '@codemirror/view';
-import { VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
+import { PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
 
 const SQL_KEYWORDS = new Set([
   'select', 'from', 'where', 'and', 'or', 'not', 'in', 'is', 'null',
@@ -62,115 +62,31 @@ const operatorMark = Decoration.mark({ class: 'cm-operator' });
 const commentMark = Decoration.mark({ class: 'cm-comment' });
 const propertyMark = Decoration.mark({ class: 'cm-propertyName' });
 const labelMark = Decoration.mark({ class: 'cm-meta' });
-
-function tokenizeSql(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
-  let pos = 0;
-  const len = text.length;
-
-  while (pos < len) {
-    const char = text[pos];
-
-    if (/\s/.test(char)) {
-      pos++;
-      continue;
-    }
-
-    if (char === '-' && text[pos + 1] === '-') {
-      const start = pos;
-      while (pos < len && text[pos] !== '\n') pos++;
-      builder.add(baseOffset + start, baseOffset + pos, commentMark);
-      continue;
-    }
-
-    if (char === '/' && text[pos + 1] === '*') {
-      const start = pos;
-      pos += 2;
-      while (pos < len - 1 && !(text[pos] === '*' && text[pos + 1] === '/')) pos++;
-      pos += 2;
-      builder.add(baseOffset + start, baseOffset + pos, commentMark);
-      continue;
-    }
-
-    if (char === "'") {
-      const start = pos;
-      pos++;
-      while (pos < len) {
-        if (text[pos] === "'" && text[pos + 1] === "'") {
-          pos += 2; // Escaped quote
-        }
-        else if (text[pos] === "'") {
-          pos++;
-          break;
-        }
-        else {
-          pos++;
-        }
-      }
-      builder.add(baseOffset + start, baseOffset + pos, stringMark);
-      continue;
-    }
-
-    if (char === '"') {
-      const start = pos;
-      pos++;
-      while (pos < len && text[pos] !== '"') pos++;
-      pos++;
-      builder.add(baseOffset + start, baseOffset + pos, propertyMark);
-      continue;
-    }
-
-    if (/\d/.test(char) || (char === '.' && /\d/.test(text[pos + 1] || ''))) {
-      const start = pos;
-      while (pos < len && /[\d.eE+-]/.test(text[pos])) pos++;
-      builder.add(baseOffset + start, baseOffset + pos, numberMark);
-      continue;
-    }
-
-    if (/[a-zA-Z_]/.test(char)) {
-      const start = pos;
-      while (pos < len && /[a-zA-Z0-9_]/.test(text[pos])) pos++;
-      const word = text.slice(start, pos);
-      const lowerWord = word.toLowerCase();
-
-      if (SQL_KEYWORDS.has(lowerWord)) {
-        builder.add(baseOffset + start, baseOffset + pos, keywordMark);
-      }
-      else if (SQL_FUNCTIONS.has(lowerWord)) {
-        builder.add(baseOffset + start, baseOffset + pos, functionMark);
-      }
-      else if (SQL_TYPES.has(lowerWord)) {
-        builder.add(baseOffset + start, baseOffset + pos, typeMark);
-      }
-      else {
-        builder.add(baseOffset + start, baseOffset + pos, propertyMark);
-      }
-      continue;
-    }
-
-    if (char === '{' && text[pos + 1] === '{') {
-      const start = pos;
-      pos += 2;
-      while (pos < len - 1 && !(text[pos] === '}' && text[pos + 1] === '}')) pos++;
-      pos += 2;
-      builder.add(baseOffset + start, baseOffset + pos, stringMark);
-      continue;
-    }
-
-    if (SQL_OPERATORS.has(char)) {
-      const start = pos;
-      const twoChar = text.slice(pos, pos + 2);
-      if (SQL_OPERATORS.has(twoChar)) {
-        pos += 2;
-      }
-      else {
-        pos++;
-      }
-      builder.add(baseOffset + start, baseOffset + pos, operatorMark);
-      continue;
-    }
-
-    pos++;
+const noSpellcheckMark = Decoration.mark({
+  attributes: {
+    spellcheck: 'false',
+    autocorrect: 'off',
+    autocapitalize: 'off',
+    'data-vaultquery-codeblock-text': 'true',
   }
+});
+const codeBlockLineMark = Decoration.line({
+  attributes: {
+    spellcheck: 'false',
+    autocorrect: 'off',
+    autocapitalize: 'off',
+    'data-vaultquery-codeblock-line': 'true',
+  }
+});
+
+interface TokenSink {
+  add(start: number, end: number, mark: Decoration): void;
+}
+
+function builderTokenSink(baseOffset: number, builder: RangeSetBuilder<Decoration>): TokenSink {
+  return {
+    add: (start, end, mark) => builder.add(baseOffset + start, baseOffset + end, mark)
+  };
 }
 
 interface DecorationRange {
@@ -179,305 +95,381 @@ interface DecorationRange {
   mark: Decoration;
 }
 
-function tokenizeJavaScriptCollect(text: string, baseOffset: number, ranges: DecorationRange[]): void {
-  let pos = 0;
-  const len = text.length;
+function rangeTokenSink(baseOffset: number, ranges: DecorationRange[]): TokenSink {
+  return {
+    add: (start, end, mark) => ranges.push({ from: baseOffset + start, to: baseOffset + end, mark })
+  };
+}
 
-  while (pos < len) {
+function skipWhitespace(text: string, pos: number): number {
+  while (pos < text.length && /\s/.test(text[pos])) pos++;
+  return pos;
+}
+
+function consumeLineComment(text: string, pos: number): number {
+  while (pos < text.length && text[pos] !== '\n') pos++;
+  return pos;
+}
+
+function consumeBlockComment(text: string, pos: number): number {
+  pos += 2;
+  while (pos < text.length - 1 && !(text[pos] === '*' && text[pos + 1] === '/')) pos++;
+  return Math.min(pos + 2, text.length);
+}
+
+function consumeEscapedString(text: string, pos: number, quote: string): number {
+  pos++;
+  while (pos < text.length) {
+    if (text[pos] === '\\' && pos + 1 < text.length) {
+      pos += 2;
+    }
+    else if (text[pos] === quote) {
+      pos++;
+      break;
+    }
+    else {
+      pos++;
+    }
+  }
+  return pos;
+}
+
+function consumeSqlSingleQuotedString(text: string, pos: number): number {
+  pos++;
+  while (pos < text.length) {
+    if (text[pos] === "'" && text[pos + 1] === "'") {
+      pos += 2;
+    }
+    else if (text[pos] === "'") {
+      pos++;
+      break;
+    }
+    else {
+      pos++;
+    }
+  }
+  return pos;
+}
+
+function consumeUntilChar(text: string, pos: number, terminator: string): number {
+  pos++;
+  while (pos < text.length && text[pos] !== terminator) pos++;
+  return Math.min(pos + 1, text.length);
+}
+
+function consumeWhile(text: string, pos: number, pattern: RegExp): number {
+  while (pos < text.length && pattern.test(text[pos])) pos++;
+  return pos;
+}
+
+function tokenizeComment(text: string, pos: number, sink: TokenSink, linePrefix: string): number | null {
+  if (text.startsWith(linePrefix, pos)) {
+    const end = consumeLineComment(text, pos);
+    sink.add(pos, end, commentMark);
+    return end;
+  }
+
+  if (text[pos] === '/' && text[pos + 1] === '*') {
+    const end = consumeBlockComment(text, pos);
+    sink.add(pos, end, commentMark);
+    return end;
+  }
+
+  return null;
+}
+
+function addJsIdentifier(text: string, start: number, end: number, sink: TokenSink): void {
+  const word = text.slice(start, end);
+
+  if (JS_KEYWORDS.has(word)) {
+    sink.add(start, end, keywordMark);
+  }
+  else if (JS_BUILTINS.has(word)) {
+    sink.add(start, end, typeMark);
+  }
+  else {
+    const lookAhead = skipWhitespace(text, end);
+    sink.add(start, end, text[lookAhead] === '(' ? functionMark : propertyMark);
+  }
+}
+
+function addSqlIdentifier(text: string, start: number, end: number, sink: TokenSink): void {
+  const lowerWord = text.slice(start, end).toLowerCase();
+
+  if (SQL_KEYWORDS.has(lowerWord)) {
+    sink.add(start, end, keywordMark);
+  }
+  else if (SQL_FUNCTIONS.has(lowerWord)) {
+    sink.add(start, end, functionMark);
+  }
+  else if (SQL_TYPES.has(lowerWord)) {
+    sink.add(start, end, typeMark);
+  }
+  else {
+    sink.add(start, end, propertyMark);
+  }
+}
+
+type TokenRule = (text: string, pos: number, sink: TokenSink) => number | null;
+
+function tokenizeCharacterStream(text: string, sink: TokenSink, rules: TokenRule[]): void {
+  let pos = 0;
+
+  while (pos < text.length) {
+    if (/\s/.test(text[pos])) {
+      pos++;
+      continue;
+    }
+
+    const next = rules.reduce<number | null>((matched, rule) => matched ?? rule(text, pos, sink), null);
+    pos = next ?? pos + 1;
+  }
+}
+
+function commentRule(linePrefix: string): TokenRule {
+  return (text, pos, sink) => tokenizeComment(text, pos, sink, linePrefix);
+}
+
+function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => boolean, numberPattern: RegExp, identifierStartPattern: RegExp, identifierPattern: RegExp, addIdentifier: (text: string, start: number, end: number, sink: TokenSink) => void): TokenRule {
+  return (text, pos, sink) => {
     const char = text[pos];
 
-    if (/\s/.test(char)) {
-      pos++;
-      continue;
-    }
-
-    if (char === '/' && text[pos + 1] === '/') {
+    if (isNumberStart(text, pos)) {
       const start = pos;
-      while (pos < len && text[pos] !== '\n') pos++;
-      ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: commentMark });
-      continue;
+      const end = consumeWhile(text, pos, numberPattern);
+      sink.add(start, end, numberMark);
+      return end;
     }
 
-    if (char === '/' && text[pos + 1] === '*') {
+    if (identifierStartPattern.test(char)) {
+      const start = pos;
+      const end = consumeWhile(text, pos, identifierPattern);
+      addIdentifier(text, start, end, sink);
+      return end;
+    }
+
+    return null;
+  };
+}
+
+function tokenizeSql(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+  tokenizeCharacterStream(text, builderTokenSink(baseOffset, builder), [
+    commentRule('--'),
+    (source, pos, sink) => {
+      if (source[pos] !== "'") return null;
+      const start = pos;
+      const end = consumeSqlSingleQuotedString(source, pos);
+      sink.add(start, end, stringMark);
+      return end;
+    },
+    (source, pos, sink) => {
+      if (source[pos] !== '"') return null;
+      const start = pos;
+      const end = consumeUntilChar(source, pos, '"');
+      sink.add(start, end, propertyMark);
+      return end;
+    },
+    numberOrIdentifierRule((source, pos) => /\d/.test(source[pos]) || (source[pos] === '.' && /\d/.test(source[pos + 1] || '')), /[\d.eE+-]/, /[a-zA-Z_]/, /[a-zA-Z0-9_]/, addSqlIdentifier),
+    (source, pos, sink) => {
+      if (source[pos] !== '{' || source[pos + 1] !== '{') return null;
       const start = pos;
       pos += 2;
-      while (pos < len - 1 && !(text[pos] === '*' && text[pos + 1] === '/')) pos++;
-      pos += 2;
-      ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: commentMark });
-      continue;
-    }
-
-    if (char === "'" || char === '"' || char === '`') {
-      const quote = char;
+      while (pos < source.length - 1 && !(source[pos] === '}' && source[pos + 1] === '}')) pos++;
+      pos = Math.min(pos + 2, source.length);
+      sink.add(start, pos, stringMark);
+      return pos;
+    },
+    (source, pos, sink) => {
+      if (!SQL_OPERATORS.has(source[pos])) return null;
       const start = pos;
-      pos++;
-      while (pos < len) {
-        if (text[pos] === '\\' && pos + 1 < len) {
-          pos += 2;
-        }
-        else if (text[pos] === quote) {
-          pos++;
-          break;
-        }
-        else {
-          pos++;
-        }
-      }
-      ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: stringMark });
-      continue;
-    }
-
-    if (/\d/.test(char)) {
-      const start = pos;
-      while (pos < len && /[\d.eExXa-fA-F_]/.test(text[pos])) pos++;
-      ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: numberMark });
-      continue;
-    }
-
-    if (/[a-zA-Z_$]/.test(char)) {
-      const start = pos;
-      while (pos < len && /[a-zA-Z0-9_$]/.test(text[pos])) pos++;
-      const word = text.slice(start, pos);
-
-      if (JS_KEYWORDS.has(word)) {
-        ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: keywordMark });
-      }
-      else if (JS_BUILTINS.has(word)) {
-        ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: typeMark });
+      const twoChar = source.slice(pos, pos + 2);
+      if (SQL_OPERATORS.has(twoChar)) {
+        pos += 2;
       }
       else {
-        let lookAhead = pos;
-        while (lookAhead < len && /\s/.test(text[lookAhead])) lookAhead++;
-        if (text[lookAhead] === '(') {
-          ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: functionMark });
-        }
-        else {
-          ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: propertyMark });
-        }
+        pos++;
       }
-      continue;
+      sink.add(start, pos, operatorMark);
+      return pos;
     }
+  ]);
+}
 
-    if (char === '=' && text[pos + 1] === '>') {
-      ranges.push({ from: baseOffset + pos, to: baseOffset + pos + 2, mark: operatorMark });
-      pos += 2;
-      continue;
-    }
+function tokenizeJavaScriptCollect(text: string, baseOffset: number, ranges: DecorationRange[]): void {
+  tokenizeJavaScriptTokens(text, rangeTokenSink(baseOffset, ranges), false);
+}
 
-    if (/[+\-*/%=<>!&|?:.]/.test(char)) {
+function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates: boolean): void {
+  const templateRule: TokenRule = (source, pos, tokenSink) => {
+    if (!parseTemplates || source[pos] !== '`') return null;
+    return tokenizeTemplateString(source, pos, tokenSink);
+  };
+
+  tokenizeCharacterStream(text, sink, [
+    commentRule('//'),
+    templateRule,
+    (source, pos, tokenSink) => {
+      const quote = source[pos];
+      if (quote !== "'" && quote !== '"' && quote !== '`') return null;
+      const start = pos;
+      const end = consumeEscapedString(source, pos, quote);
+      tokenSink.add(start, end, stringMark);
+      return end;
+    },
+    numberOrIdentifierRule((source, pos) => /\d/.test(source[pos]), /[\d.eExXa-fA-F_]/, /[a-zA-Z_$]/, /[a-zA-Z0-9_$]/, addJsIdentifier),
+    (source, pos, tokenSink) => {
+      if (source[pos] === '=' && source[pos + 1] === '>') {
+        tokenSink.add(pos, pos + 2, operatorMark);
+        return pos + 2;
+      }
+
+      if (!/[+\-*/%=<>!&|?:.]/.test(source[pos])) return null;
       const start = pos;
       pos++;
-      while (pos < len && /[+\-*/%=<>!&|?:]/.test(text[pos])) pos++;
-      ranges.push({ from: baseOffset + start, to: baseOffset + pos, mark: operatorMark });
-      continue;
+      while (pos < source.length && /[+\-*/%=<>!&|?:]/.test(source[pos])) pos++;
+      tokenSink.add(start, pos, operatorMark);
+      return pos;
     }
+  ]);
+}
 
-    pos++;
+function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): number {
+  const len = text.length;
+  const templateRanges: Array<{ from: number; to: number; mark: Decoration }> = [];
+  let stringStart = pos;
+  pos++;
+
+  while (pos < len) {
+    if (text[pos] === '\\' && pos + 1 < len) {
+      pos += 2;
+    }
+    else if (text[pos] === '$' && text[pos + 1] === '{') {
+      if (pos > stringStart) {
+        templateRanges.push({ from: stringStart, to: pos, mark: stringMark });
+      }
+      templateRanges.push({ from: pos, to: pos + 2, mark: operatorMark });
+      pos += 2;
+
+      let braceDepth = 1;
+      const exprStart = pos;
+      while (pos < len && braceDepth > 0) {
+        if (text[pos] === '{') braceDepth++;
+        else if (text[pos] === '}') braceDepth--;
+        if (braceDepth > 0) pos++;
+      }
+
+      if (pos > exprStart) {
+        const exprRanges: DecorationRange[] = [];
+        tokenizeJavaScriptCollect(text.slice(exprStart, pos), exprStart, exprRanges);
+        templateRanges.push(...exprRanges.map(r => ({ from: r.from, to: r.to, mark: r.mark })));
+      }
+
+      if (pos < len && text[pos] === '}') {
+        templateRanges.push({ from: pos, to: pos + 1, mark: operatorMark });
+        pos++;
+      }
+      stringStart = pos;
+    }
+    else if (text[pos] === '`') {
+      pos++;
+      if (pos > stringStart) {
+        templateRanges.push({ from: stringStart, to: pos, mark: stringMark });
+      }
+      break;
+    }
+    else {
+      pos++;
+    }
   }
+
+  templateRanges.sort((a, b) => a.from - b.from);
+  for (const range of templateRanges) {
+    sink.add(range.from, range.to, range.mark);
+  }
+  return pos;
 }
 
 function tokenizeJavaScript(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
-  let pos = 0;
-  const len = text.length;
-
-  while (pos < len) {
-    const char = text[pos];
-
-    if (/\s/.test(char)) {
-      pos++;
-      continue;
-    }
-
-    if (char === '/' && text[pos + 1] === '/') {
-      const start = pos;
-      while (pos < len && text[pos] !== '\n') pos++;
-      builder.add(baseOffset + start, baseOffset + pos, commentMark);
-      continue;
-    }
-
-    if (char === '/' && text[pos + 1] === '*') {
-      const start = pos;
-      pos += 2;
-      while (pos < len - 1 && !(text[pos] === '*' && text[pos + 1] === '/')) pos++;
-      pos += 2;
-      builder.add(baseOffset + start, baseOffset + pos, commentMark);
-      continue;
-    }
-
-    if (char === '`') {
-      const templateRanges: Array<{ from: number; to: number; mark: Decoration }> = [];
-      let stringStart = pos;
-      pos++; 
-
-      while (pos < len) {
-        if (text[pos] === '\\' && pos + 1 < len) {
-          pos += 2; 
-        }
-        else if (text[pos] === '$' && text[pos + 1] === '{') {
-          // Add string segment before ${
-          if (pos > stringStart) {
-            templateRanges.push({ from: baseOffset + stringStart, to: baseOffset + pos, mark: stringMark });
-          }
-          // Add ${ operator
-          templateRanges.push({ from: baseOffset + pos, to: baseOffset + pos + 2, mark: operatorMark });
-          pos += 2;
-
-          // Find matching } and collect interpolation content
-          let braceDepth = 1;
-          const exprStart = pos;
-          while (pos < len && braceDepth > 0) {
-            if (text[pos] === '{') braceDepth++;
-            else if (text[pos] === '}') braceDepth--;
-            if (braceDepth > 0) pos++;
-          }
-
-          if (pos > exprStart) {
-            const exprRanges: Array<{ from: number; to: number; mark: Decoration }> = [];
-            tokenizeJavaScriptCollect(text.slice(exprStart, pos), baseOffset + exprStart, exprRanges);
-            templateRanges.push(...exprRanges);
-          }
-
-          // Add closing }
-          if (pos < len && text[pos] === '}') {
-            templateRanges.push({ from: baseOffset + pos, to: baseOffset + pos + 1, mark: operatorMark });
-            pos++;
-          }
-
-          // Start new string segment
-          stringStart = pos;
-        }
-        else if (text[pos] === '`') {
-          // Add final string segment including closing backtick
-          pos++;
-          if (pos > stringStart) {
-            templateRanges.push({ from: baseOffset + stringStart, to: baseOffset + pos, mark: stringMark });
-          }
-          break;
-        }
-        else {
-          pos++;
-        }
-      }
-
-      templateRanges.sort((a, b) => a.from - b.from);
-      for (const range of templateRanges) {
-        builder.add(range.from, range.to, range.mark);
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      const quote = char;
-      const start = pos;
-      pos++;
-      while (pos < len) {
-        if (text[pos] === '\\' && pos + 1 < len) {
-          pos += 2;
-        }
-        else if (text[pos] === quote) {
-          pos++;
-          break;
-        }
-        else {
-          pos++;
-        }
-      }
-      builder.add(baseOffset + start, baseOffset + pos, stringMark);
-      continue;
-    }
-
-    if (/\d/.test(char)) {
-      const start = pos;
-      while (pos < len && /[\d.eExXa-fA-F_]/.test(text[pos])) pos++;
-      builder.add(baseOffset + start, baseOffset + pos, numberMark);
-      continue;
-    }
-
-    if (/[a-zA-Z_$]/.test(char)) {
-      const start = pos;
-      while (pos < len && /[a-zA-Z0-9_$]/.test(text[pos])) pos++;
-      const word = text.slice(start, pos);
-
-      if (JS_KEYWORDS.has(word)) {
-        builder.add(baseOffset + start, baseOffset + pos, keywordMark);
-      }
-      else if (JS_BUILTINS.has(word)) {
-        builder.add(baseOffset + start, baseOffset + pos, typeMark);
-      }
-      else {
-        let lookAhead = pos;
-        while (lookAhead < len && /\s/.test(text[lookAhead])) lookAhead++;
-        if (text[lookAhead] === '(') {
-          builder.add(baseOffset + start, baseOffset + pos, functionMark);
-        }
-        else {
-          builder.add(baseOffset + start, baseOffset + pos, propertyMark);
-        }
-      }
-      continue;
-    }
-
-    if (char === '=' && text[pos + 1] === '>') {
-      builder.add(baseOffset + pos, baseOffset + pos + 2, operatorMark);
-      pos += 2;
-      continue;
-    }
-
-    if (/[+\-*/%=<>!&|?:.]/.test(char)) {
-      const start = pos;
-      pos++;
-      while (pos < len && /[+\-*/%=<>!&|?:]/.test(text[pos])) pos++;
-      builder.add(baseOffset + start, baseOffset + pos, operatorMark);
-      continue;
-    }
-
-    pos++;
-  }
+  tokenizeJavaScriptTokens(text, builderTokenSink(baseOffset, builder), true);
 }
-
-const CHART_CONFIG_KEYS = new Set([
-  'type', 'title', 'xlabel', 'ylabel', 'datasetlabel',
-  'datasetbackgroundcolor', 'datasetbordercolor',
-  'xLabel', 'yLabel', 'datasetLabel', 'datasetBackgroundColor', 'datasetBorderColor',
-]);
 
 const CHART_TYPE_VALUES = new Set([
   'bar', 'line', 'pie', 'doughnut', 'scatter',
 ]);
 
-function tokenizeYamlConfig(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+interface YamlEntry {
+  key: string;
+  keyStart: number;
+  keyEnd: number;
+  colonIndex: number;
+  value: string;
+  valueStart: number;
+}
+
+function parseYamlEntry(text: string): YamlEntry | null {
   const colonIndex = text.indexOf(':');
-  if (colonIndex === -1) return;
+  if (colonIndex === -1) return null;
 
   let keyStart = 0;
   while (keyStart < colonIndex && /\s/.test(text[keyStart])) keyStart++;
   const keyEnd = colonIndex;
   const key = text.slice(keyStart, keyEnd).trim().toLowerCase();
 
-  if (key && CHART_CONFIG_KEYS.has(key)) {
-    builder.add(baseOffset + keyStart, baseOffset + keyEnd, propertyMark);
-  }
-  else if (key) {
-    builder.add(baseOffset + keyStart, baseOffset + keyEnd, propertyMark);
-  }
-
-  builder.add(baseOffset + colonIndex, baseOffset + colonIndex + 1, operatorMark);
-
   let valueStart = colonIndex + 1;
   while (valueStart < text.length && /\s/.test(text[valueStart])) valueStart++;
-  const valueEnd = text.length;
-  const value = text.slice(valueStart, valueEnd).trim();
+  const value = text.slice(valueStart).trim();
 
-  if (!value) return;
+  return { key, keyStart, keyEnd, colonIndex, value, valueStart };
+}
 
-  if (key === 'type' && CHART_TYPE_VALUES.has(value.toLowerCase())) {
-    builder.add(baseOffset + valueStart, baseOffset + valueStart + value.length, keywordMark);
+function addYamlEntryScaffold(entry: YamlEntry, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+  if (entry.keyStart < entry.keyEnd) {
+    builder.add(baseOffset + entry.keyStart, baseOffset + entry.keyEnd, propertyMark);
   }
-  else if (/^\d+(\.\d+)?$/.test(value)) {
-    builder.add(baseOffset + valueStart, baseOffset + valueStart + value.length, numberMark);
+
+  builder.add(baseOffset + entry.colonIndex, baseOffset + entry.colonIndex + 1, operatorMark);
+}
+
+function addYamlValue(entry: YamlEntry, baseOffset: number, builder: RangeSetBuilder<Decoration>, mark: Decoration): void {
+  builder.add(baseOffset + entry.valueStart, baseOffset + entry.valueStart + entry.value.length, mark);
+}
+
+function tokenizeYamlConfig(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+  const entry = parseYamlEntry(text);
+  if (!entry) return;
+
+  addYamlEntryScaffold(entry, baseOffset, builder);
+  if (!entry.value) return;
+
+  if (entry.key === 'type' && CHART_TYPE_VALUES.has(entry.value.toLowerCase())) {
+    addYamlValue(entry, baseOffset, builder, keywordMark);
+  }
+  else if (/^\d+(\.\d+)?$/.test(entry.value)) {
+    addYamlValue(entry, baseOffset, builder, numberMark);
   }
   else {
-    builder.add(baseOffset + valueStart, baseOffset + valueStart + value.length, stringMark);
+    addYamlValue(entry, baseOffset, builder, stringMark);
+  }
+}
+
+function tokenizeGenericYamlConfig(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+  const entry = parseYamlEntry(text);
+  if (!entry) return;
+
+  addYamlEntryScaffold(entry, baseOffset, builder);
+  if (!entry.value) return;
+
+  if (/^(true|false|yes|no)$/i.test(entry.value)) {
+    addYamlValue(entry, baseOffset, builder, keywordMark);
+  }
+  else if (/^\d+(\.\d+)?$/.test(entry.value)) {
+    addYamlValue(entry, baseOffset, builder, numberMark);
+  }
+  else if (/^rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}$/.test(entry.value)) {
+    addYamlValue(entry, baseOffset, builder, stringMark);
+  }
+  else {
+    addYamlValue(entry, baseOffset, builder, stringMark);
   }
 }
 
@@ -509,43 +501,37 @@ function buildDecorations(view: EditorView): DecorationSet {
 
       if (node.name.includes('HyperMD-codeblock-end')) {
         if (currentBlock && currentBlock.lines.length > 0) {
-          const isChartBlock = currentBlock.language === 'vaultquery-chart';
+          const isProviderDefinitionBlock = PROVIDER_DEFINITION_LANGUAGES.has(currentBlock.language);
+          const isConfigCapableBlock = currentBlock.language === 'vaultquery' ||
+            currentBlock.language === 'vaultquery-chart' ||
+            currentBlock.language === 'vaultquery-markdown' ||
+            currentBlock.language === 'vaultquery-calendar';
           const isQueryBlock = currentBlock.language === 'vaultquery';
 
           let inTemplate = false;
           let inConfig = false;
-          let inChartYamlHeader = isChartBlock;
 
           for (const line of currentBlock.lines) {
             const content = doc.sliceString(line.from, line.to);
             const trimmed = content.trim();
-            const trimmedUpper = trimmed.toUpperCase();
+            builder.add(line.from, line.from, codeBlockLineMark);
+            if (line.from < line.to) {
+              builder.add(line.from, line.to, noSpellcheckMark);
+            }
 
-            if (isChartBlock && trimmed.startsWith('config:')) {
+            if (isProviderDefinitionBlock) {
+              tokenizeGenericYamlConfig(content, line.from, builder);
+              continue;
+            }
+
+            if (isConfigCapableBlock && trimmed.startsWith('config:')) {
               const configStart = content.indexOf('config:');
               builder.add(line.from + configStart, line.from + configStart + 7, labelMark);
               inConfig = true;
-              inChartYamlHeader = false; // No longer in header
               continue;
             }
 
             if (inConfig) {
-              tokenizeYamlConfig(content, line.from, builder);
-              continue;
-            }
-
-            if (inChartYamlHeader) {
-              const sqlStart = trimmedUpper.startsWith('SELECT') ||
-                               trimmedUpper.startsWith('WITH') ||
-                               trimmedUpper.startsWith('INSERT') ||
-                               trimmedUpper.startsWith('UPDATE') ||
-                               trimmedUpper.startsWith('DELETE');
-              if (sqlStart) {
-                inChartYamlHeader = false;
-                tokenizeSql(content, line.from, builder);
-                continue;
-              }
-
               tokenizeYamlConfig(content, line.from, builder);
               continue;
             }
@@ -602,6 +588,23 @@ export const sqlHighlightPlugin = ViewPlugin.fromClass(
   }
 );
 
+const vaultQueryEditorAttributes = Prec.highest(EditorView.editorAttributes.of({
+  spellcheck: 'false',
+}));
+
+const vaultQueryContentAttributes = Prec.highest(EditorView.contentAttributes.of({
+  spellcheck: 'false',
+  autocorrect: 'off',
+  autocapitalize: 'off',
+  writingsuggestions: 'false',
+  translate: 'no',
+}));
+
+export const vaultQueryEditorAttributesExtension = [
+  vaultQueryEditorAttributes,
+  vaultQueryContentAttributes,
+];
+
 function isInsideVaultqueryBlock(state: EditorState, pos: number): boolean {
   const tree = syntaxTree(state);
   const doc = state.doc;
@@ -641,7 +644,6 @@ export const disableAutoPairInVaultquery = EditorState.transactionFilter.of((tr:
   let asteriskInsertPos = -1;
 
   tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-    // eslint-disable-next-line obsidianmd/no-object-to-string -- inserted is CodeMirror Text object with proper toString()
     const insertedText = inserted.toString();
     if (insertedText === '**' && fromA === toA) {
       hasAutoPairedAsterisk = true;

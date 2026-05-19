@@ -1,6 +1,9 @@
 import { TFile } from 'obsidian';
 import { PERFORMANCE_MESSAGES } from '../utils/ErrorMessages';
 import type { IndexingStats } from '../types';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('Performance');
 
 export interface IndexingTimings {
   fmTime: number;
@@ -74,26 +77,8 @@ export class PerformanceMonitor {
     return this.lastStats;
   }
 
-  public reset(): void {
-    this.currentSlowFiles = [];
-    this.totalFilesProcessed = 0;
-    this.operationStartTime = 0;
-  }
-
   public getLastStats(): IndexingStats | null {
     return this.lastStats;
-  }
-
-  public isSlowFile(processingTimeMs: number): boolean {
-    return processingTimeMs > PerformanceMonitor.SLOW_THRESHOLD_MS;
-  }
-
-  public getSlowThreshold(): number {
-    return PerformanceMonitor.SLOW_THRESHOLD_MS;
-  }
-
-  public getVerySlowThreshold(): number {
-    return PerformanceMonitor.VERY_SLOW_THRESHOLD_MS;
   }
 
   private buildDetailedInfo(timings: IndexingTimings, needsContentProcessing: boolean): string {
@@ -115,8 +100,6 @@ export class PerformanceMonitor {
     const timeMs = totalTime.toFixed(0);
     const details = needsContentProcessing ? 'content+metadata' : 'metadata-only';
 
-    console.warn(
-      `🐌 [VaultQuery] ${PERFORMANCE_MESSAGES.SLOW_FILE(file.path, sizeKB, timeMs, details)}`
-    );
+    logger.warn(PERFORMANCE_MESSAGES.SLOW_FILE(file.path, sizeKB, timeMs, details));
   }
 }

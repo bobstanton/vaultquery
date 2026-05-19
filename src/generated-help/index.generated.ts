@@ -7,15 +7,21 @@ export type { RenderContext } from './types.generated';
 import * as api_guide from './api-guide.generated';
 import * as examples_functions from './examples-functions.generated';
 import * as examples_views from './examples-views.generated';
+import * as vaultquery_calendar_help from './vaultquery-calendar-help.generated';
+import * as vaultquery_chart_help from './vaultquery-chart-help.generated';
 import * as vaultquery_function_help from './vaultquery-function-help.generated';
 import * as vaultquery_help from './vaultquery-help.generated';
+import * as vaultquery_trigger_help from './vaultquery-trigger-help.generated';
 
 export const pages = {
   [api_guide.pageId]: api_guide,
   [examples_functions.pageId]: examples_functions,
   [examples_views.pageId]: examples_views,
+  [vaultquery_calendar_help.pageId]: vaultquery_calendar_help,
+  [vaultquery_chart_help.pageId]: vaultquery_chart_help,
   [vaultquery_function_help.pageId]: vaultquery_function_help,
   [vaultquery_help.pageId]: vaultquery_help,
+  [vaultquery_trigger_help.pageId]: vaultquery_trigger_help,
 };
 
 export type PageId = keyof typeof pages;

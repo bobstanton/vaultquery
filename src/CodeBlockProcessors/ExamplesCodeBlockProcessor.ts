@@ -1,5 +1,5 @@
 import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
-import VaultQueryPlugin from '../main';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
 import * as examplesFunctions from '../generated-help/examples-functions.generated';
 import * as examplesViews from '../generated-help/examples-views.generated';
 import type { RenderContext } from '../generated-help/index.generated';
@@ -9,7 +9,7 @@ type ExamplePage = 'functions' | 'views';
 export class ExamplesCodeBlockProcessor {
   private component: Component;
 
-  public constructor(private app: App, private _plugin: VaultQueryPlugin) {
+  public constructor(private app: App, private _plugin: VaultQueryPluginContext) {
     this.component = new Component();
     this.component.load();
   }
@@ -45,18 +45,13 @@ Usage:
 functions
 \`\`\`
 `;
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    MarkdownRenderer.render(this.app, markdown, container, '', this.component);
+    void MarkdownRenderer.render(this.app, markdown, container, '', this.component);
   }
 
   private createRenderContext(): RenderContext {
     return {
-      renderCode: (parent: HTMLElement, language: string, code: string) => {
-        const wrapper = parent.createDiv();
-        const codeBlockMarkdown = '```' + language + '\n' + code + '\n```';
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget render in sync callback
-        MarkdownRenderer.render(this.app, codeBlockMarkdown, wrapper, '', this.component);
-      },
+      app: this.app,
+      component: this.component,
       renderDynamic: (parent: HTMLElement, key: string) => {
         parent.createDiv({
           cls: 'vaultquery-help-error',

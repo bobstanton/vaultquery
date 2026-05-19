@@ -15,7 +15,7 @@ tags:
 ---
 
 > [!important] Enable frontmatter indexing
-> Frontmatter queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index frontmatter
+> Frontmatter queries are disabled by default. Enable at Settings → VaultQuery → Index frontmatter.
 
 # Working with Properties
 
@@ -23,7 +23,7 @@ Query and modify frontmatter properties from notes in the vault.
 
 ## The notes_with_properties View
 
-VaultQuery automatically creates a `notes_with_properties` view that pivots all property keys into columns. This is the easiest way to query properties.
+`notes_with_properties` pivots property keys into columns.
 
 ```vaultquery
 SELECT path, title, status, priority, project, manager
@@ -161,7 +161,7 @@ FROM notes_with_properties
 ## Write Operations
 
 > [!important] Enable write operations
-> Write operations are disabled by default. To enable go to Settings → VaultQuery → Write operations → Enable write operations
+> Write operations are disabled by default. Enable at Settings → VaultQuery → Enable write operations.
 
 ### Update a property value
 
@@ -257,7 +257,7 @@ LIMIT 20
 
 ### Array Properties
 
-Array properties have an `array_index` value (0-based). The `notes_with_properties` view only shows scalar properties, so use the `properties` table for arrays:
+Array properties have an `array_index` value (0-based). The `notes_with_properties` view only shows scalar properties; array queries need the `properties` table:
 
 ```vaultquery
 -- All tags array values for current note

@@ -61,16 +61,28 @@ export class TableEditPlanner {
 
   private groupCellsToTables(cells: TableCellRow[]): TableRowGroup[] {
     const byKey = new Map<string, { header: Set<string>; rows: Map<number, Record<string, string>>; line_number: number | null }>();
+
     for (const c of cells ?? []) {
       const key = createTableKey(c.path, c.table_index);
-      const existing = byKey.get(key);
-      const g = existing ?? (byKey.set(key, { header: new Set(), rows: new Map(), line_number: null }), byKey.get(key)!);
-      g.header.add(c.column_name);
-      const row = g.rows.get(c.row_index) ?? (g.rows.set(c.row_index, {}), g.rows.get(c.row_index)!);
+
+      let group = byKey.get(key);
+      if (!group) {
+        group = { header: new Set(), rows: new Map(), line_number: null };
+        byKey.set(key, group);
+      }
+
+      group.header.add(c.column_name);
+
+      let row = group.rows.get(c.row_index);
+      if (!row) {
+        row = {};
+        group.rows.set(c.row_index, row);
+      }
+
       row[c.column_name] = c.cell_value ?? "";
 
-      if (g.line_number === null && c.line_number != null) {
-        g.line_number = c.line_number;
+      if (group.line_number === null && c.line_number != null) {
+        group.line_number = c.line_number;
       }
     }
 
@@ -116,7 +128,6 @@ export class TableEditPlanner {
     let header: string[];
     if (existingTable?.header && existingTable.header.length > 0) {
       header = [...existingTable.header];
-      // Add any new columns from newTable that don't exist in existing
       for (const col of newTable.header) {
         if (!header.includes(col)) {
           header.push(col);

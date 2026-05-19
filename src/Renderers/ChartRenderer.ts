@@ -1,7 +1,9 @@
 import { Chart, ChartConfiguration, ChartDataset, registerables, Colors } from 'chart.js';
+import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
+import { BaseRenderer } from './BaseRenderer';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyDataset = ChartDataset<any, any>;
+type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null;
+type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
 
 let isRegistered = false;
 function ensureChartRegistration(): void {
@@ -10,9 +12,9 @@ function ensureChartRegistration(): void {
   isRegistered = true;
 }
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'doughnut' | 'scatter';
+type ChartType = 'bar' | 'line' | 'pie' | 'doughnut' | 'scatter';
 
-export interface ChartConfig {
+interface ChartConfig {
   type: ChartType;
   title?: string;
   xLabel?: string;
@@ -29,10 +31,47 @@ export interface ChartContext {
 }
 
 export class ChartRenderer {
+  private static instances = new WeakMap<HTMLElement, Chart>();
+
+  static parseConfig(options?: Record<string, unknown>): ChartConfig {
+    const type = typeof options?.type === 'string' ? options.type.toLowerCase() : '';
+    const config: Partial<ChartConfig> = {};
+
+    if (type && ['bar', 'line', 'pie', 'doughnut', 'scatter'].includes(type)) {
+      config.type = type as ChartType;
+    }
+
+    if (typeof options?.title === 'string') config.title = options.title;
+    if (typeof options?.xlabel === 'string') config.xLabel = options.xlabel;
+    if (typeof options?.ylabel === 'string') config.yLabel = options.ylabel;
+    if (typeof options?.datasetlabel === 'string') config.datasetLabel = options.datasetlabel;
+    if (typeof options?.datasetbackgroundcolor === 'string') config.datasetBackgroundColor = options.datasetbackgroundcolor;
+    if (typeof options?.datasetbordercolor === 'string') config.datasetBorderColor = options.datasetbordercolor;
+
+    return config as ChartConfig;
+  }
+
   static renderChart(context: ChartContext): void {
     const { results, container, config } = context;
+
+    const existingChart = this.instances.get(container);
+    if (existingChart) {
+      existingChart.destroy();
+      this.instances.delete(container);
+    }
+
     container.empty();
     ensureChartRegistration();
+
+    if (!results.length) {
+      container.createDiv({
+        cls: 'vaultquery-empty',
+        text: 'No results to display'
+      });
+      return;
+    }
+
+    this.validateResults(results, config);
 
     const canvas = container.createEl('canvas');
     canvas.addClass('vaultquery-chart-canvas');
@@ -41,13 +80,32 @@ export class ChartRenderer {
     const chartConfig = this.createChartConfig(config, chartData);
 
     try {
-      new Chart(canvas, chartConfig);
+      const chart = new Chart(canvas, chartConfig);
+      this.instances.set(container, chart);
     }
     catch (error) {
-      container.createDiv({
-        cls: 'vaultquery-error',
-        text: `Chart rendering failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      BaseRenderer.renderError(container, {
+        title: 'Chart Error',
+        message: `Chart rendering failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
+    }
+  }
+
+  private static validateResults(results: Record<string, unknown>[], config: Partial<ChartConfig>): asserts config is ChartConfig {
+    if (!config.type) {
+      throw new Error('Chart type required. Add config: with type: bar, line, pie, doughnut, or scatter.');
+    }
+
+    const firstRow = results[0];
+    if (config.type === 'scatter') {
+      if (!('x' in firstRow) || !('y' in firstRow)) {
+        throw new Error('Scatter charts require x and y columns.');
+      }
+      return;
+    }
+
+    if (!('label' in firstRow) || !('value' in firstRow)) {
+      throw new Error('Charts require label and value columns (or x and y for scatter).');
     }
   }
 
@@ -63,6 +121,17 @@ export class ChartRenderer {
     }
 
     return this.prepareSingleSeriesData(results, config);
+  }
+
+  private static parseChartType(value: unknown): ChartType | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const chartType = value.toLowerCase();
+    return ['bar', 'line', 'pie', 'doughnut', 'scatter'].includes(chartType)
+      ? chartType as ChartType
+      : undefined;
   }
 
   private static prepareScatterData(results: Record<string, unknown>[], config: ChartConfig): ChartConfiguration['data'] {
@@ -133,7 +202,7 @@ export class ChartRenderer {
 
     interface SeriesData {
       values: Map<string, number>;
-      chartType?: string;
+      chartType?: ChartType;
       backgroundColor?: string;
       borderColor?: string;
     }
@@ -149,7 +218,7 @@ export class ChartRenderer {
       if (!seriesMap.has(series)) {
         seriesMap.set(series, {
           values: new Map(),
-          chartType: row.chartType ? String(row.chartType) : undefined,
+          chartType: this.parseChartType(row.chartType),
           backgroundColor: row.backgroundColor ? String(row.backgroundColor) : undefined,
           borderColor: row.borderColor ? String(row.borderColor) : undefined
         });

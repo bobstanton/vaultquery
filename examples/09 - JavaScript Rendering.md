@@ -4,12 +4,12 @@ priority: medium
 category: documentation
 ---
 
-Render query results using custom HTML templates instead of the SlickGrid view.
+JavaScript rendering returns custom HTML instead of a SlickGrid table. JavaScript rendering must be enabled in VaultQuery settings.
 
 
 ## Basic syntax
 
-End the query with a semicolon (`;`), then add `template:` followed by JavaScript that returns an HTML string.
+End the query with a semicolon (`;`), then add `template:` and JavaScript that returns an HTML string.
 
 ### Variables
 
@@ -29,9 +29,9 @@ End the query with a semicolon (`;`), then add `template:` followed by JavaScrip
 | `h.formatDate(timestamp)`   | Format a timestamp as a localized date string|
 
 
-## List example
+## List
 
-Display notes as a bulleted list with clickable links:
+Bulleted note links:
 
 ```vaultquery
 SELECT title, path FROM notes LIMIT 5;
@@ -41,9 +41,9 @@ return `<ul>
 </ul>`
 ```
 
-## Card layout example
+## Card layout
 
-Display notes as styled cards with truncated content preview:
+Cards with truncated content previews:
 
 ```vaultquery
 SELECT title, path, content FROM notes WHERE content IS NOT NULL LIMIT 3;
@@ -58,9 +58,9 @@ return `<div style="display: grid; gap: 1em;">
 </div>`
 ```
 
-## Summary statistics example
+## Summary statistics
 
-Show task status breakdown with counts:
+Task status counts:
 
 ```vaultquery
 SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status ORDER BY cnt DESC;
@@ -73,7 +73,7 @@ return `<div>
 </div>`
 ```
 
-## Table with custom styling example
+## Styled table
 
 
 ```vaultquery
@@ -98,9 +98,9 @@ return `<table style="width: 100%; border-collapse: collapse;">
 ```
 
 
-## Tags cloud example
+## Tag cloud
 
-Display tags with size based on frequency:
+Tag size based on frequency:
 
 ```vaultquery
 SELECT tag_name, COUNT(*) as cnt FROM tags GROUP BY tag_name ORDER BY cnt DESC LIMIT 10;
@@ -116,9 +116,9 @@ return `<div style="display: flex; flex-wrap: wrap; gap: 0.5em; align-items: cen
 
 ---
 
-## Conditional rendering example
+## Conditional rendering
 
-Show different content based on results:
+Result-dependent output:
 
 ```vaultquery
 SELECT task_text, status, priority FROM tasks WHERE status != 'DONE' ORDER BY priority LIMIT 5;

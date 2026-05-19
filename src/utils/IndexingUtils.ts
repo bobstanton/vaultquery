@@ -4,6 +4,8 @@ import type { IndexingProgress } from '../types';
 
 declare const activeWindow: Window;
 
+export const VAULTQUERY_DATABASE_PREPARING_MESSAGE = 'Preparing VaultQuery database...';
+
 export interface PendingBlock {
   container: HTMLElement;
   source: string;
@@ -42,12 +44,11 @@ export function renderIndexingProgress(loadingDiv: HTMLElement, progress?: Index
   const textContainer = loadingDiv.createDiv({ cls: 'vaultquery-loading-text' });
 
   if (!progress || progress.total === 0) {
-    textContainer.textContent = progress?.currentFile || 'Initializing database...';
+    textContainer.textContent = progress?.currentFile || VAULTQUERY_DATABASE_PREPARING_MESSAGE;
   }
   else {
     const progressText = textContainer.createDiv({ cls: 'vaultquery-progress-count' });
-    // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- This is UI progress text, not YAML construction
-    progressText.textContent = `Indexing: ${progress.current}/${progress.total} files`;
+    progressText.textContent = "Indexing: " + progress.current + "/" + progress.total + " files";
 
     if (progress.currentFile && progress.currentFile !== 'Starting...' && progress.currentFile !== 'Complete') {
       const currentFile = textContainer.createDiv({ cls: 'vaultquery-progress-file' });
@@ -58,11 +59,11 @@ export function renderIndexingProgress(loadingDiv: HTMLElement, progress?: Index
   loadingDiv.createDiv({ cls: 'vaultquery-loading-spinner' });
 }
 
-export interface IndexingCheckResult {
+interface IndexingCheckResult {
   ready: boolean;
 }
 
-export interface IndexingCheckOptions {
+interface IndexingCheckOptions {
   getApi: () => VaultQueryAPI | null;
   container: HTMLElement;
   pendingBlocks: Set<PendingBlock>;
@@ -78,11 +79,10 @@ export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, 
     return true;
   }
 
-  const loading = createLoadingIndicator(container, 'Waiting for database...');
+  const loading = createLoadingIndicator(container, VAULTQUERY_DATABASE_PREPARING_MESSAGE);
   const indexingStatus = api?.getIndexingStatus();
   if (indexingStatus?.progress) {
-    // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- UI status text, not YAML
-    loading.setText(`Indexing: ${indexingStatus.progress.current}/${indexingStatus.progress.total} files`);
+    loading.setText("Indexing: " + indexingStatus.progress.current + "/" + indexingStatus.progress.total + " files");
   }
 
   const checkInterval = activeWindow.setInterval(() => {
@@ -101,8 +101,7 @@ export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, 
       void Promise.resolve(onReady());
     }
     else if (status.progress) {
-      // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- UI status text, not YAML
-      loading.setText(`Indexing: ${status.progress.current}/${status.progress.total} files`);
+      loading.setText("Indexing: " + status.progress.current + "/" + status.progress.total + " files");
     }
   }, 500);
 
@@ -127,7 +126,7 @@ export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingChe
     renderIndexingProgress(loadingDiv, currentApi.getIndexingStatus().progress);
   }
   else {
-    renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: 'Initializing database...' });
+    renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE });
   }
   pendingBlocks.add(blockInfo);
 

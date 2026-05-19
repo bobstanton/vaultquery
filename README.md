@@ -1,25 +1,27 @@
 # VaultQuery Plugin
 
-Execute SELECT, INSERT, UPDATE, and DELETE statements on notes, properties, tasks, tables, headings and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/) or custom HTML.
+Execute SELECT, INSERT, UPDATE, and DELETE statements on notes, properties, tasks, tables, headings and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/) or JavaScript rendering.
 
 ## Features
 
-- **Indexing**: Indexes notes content, frontmatter, tables, tasks, headings, links, and tags into a SQLite database
-- **Real-time Updates**: Database updates automatically when files are created, modified, renamed, or deleted
-- **Advanced Querying**: Use standard SQL syntax with support for complex joins and aggregations
-- **Multiple Output Formats**: Display results as a table, custom HTML templates, or charts
-- **Write Operations**: Update, insert, and delete data with preview showing before and after states
-- **Custom Views**: Create [SQL views](https://www.sqlite.org/lang_createview.html) for use in other queries
-- **Custom Functions**: Define [scalar SQL functions](https://sql.js.org/documentation/Database.html#%5B%22create_function%22%5D) in JavaScript for extended query capabilities
+- **Indexing**: Notes, frontmatter, tables, tasks, headings, links, and tags stored in SQLite
+- **Live updates**: File create, modify, rename, and delete events update the index
+- **SQL queries**: Standard SQLite syntax, joins, aggregations, views, and custom functions
+- **Output formats**: SlickGrid tables, Markdown tables, Chart.js charts, FullCalendar calendars, and JavaScript rendering
+- **Write operations**: INSERT, UPDATE, and DELETE previews with database-to-file sync
 
 ## Code Blocks
 
 | Code Block                 | Description                                                      |
 | -------------------------- | ---------------------------------------------------------------- |
-| `vaultquery`               | Execute SQL queries, display results in SlickGrid or custom HTML |
+| `vaultquery`               | Execute SQL queries, display results in SlickGrid or JavaScript rendering |
 | `vaultquery-write`         | Execute INSERT, UPDATE, DELETE with before/after preview         |
 | `vaultquery-chart`         | Render query results as Chart.js visualizations                  |
+| `vaultquery-chart-help`    | Display chart output reference and examples                      |
+| `vaultquery-calendar`      | Render query results as FullCalendar calendars                   |
 | `vaultquery-markdown`      | Render query results as markdown tables                          |
+| `vaultquery-markdown-help` | Display markdown output reference and examples                   |
+| `vaultquery-calendar-help` | Display calendar output reference and examples                   |
 | `vaultquery-schema`        | Display database schema documentation                            |
 | `vaultquery-view`          | Define reusable SQL views                                        |
 | `vaultquery-function`      | Define custom SQL functions in JavaScript                        |
@@ -144,22 +146,22 @@ A convenience view for row-based table operations. Columns:
 
 ## Usage
 
-Create a code block with the language `vaultquery` and write a SQL query:
+Add a `vaultquery` code block with a SQL query:
 
 ```vaultquery
-SELECT title, path, modified FROM notes 
-WHERE content LIKE '%important%' 
-ORDER BY modified DESC 
+SELECT title, path, modified FROM notes
+WHERE content LIKE '%important%'
+ORDER BY modified DESC
 LIMIT 10
 ```
 
-This will display results in a sortable, scrollable SlickGrid grid.
+Results render in a sortable SlickGrid table.
 
 ### Write Operations (INSERT, UPDATE, DELETE)
 
-> **Important**: Write operations permanently modify vault files. There is no undo or version history built into VaultQuery. Use [Obsidian Sync](https://obsidian.md/sync) for version history. Write operations must be enabled in the plugin settings before using the following queries.
+> **Important**: Write operations permanently modify vault files. VaultQuery has no built-in undo or version history. [Obsidian Sync](https://obsidian.md/sync) provides version history. Write operations require the plugin setting to be enabled.
 
-The plugin supports write operations with automatic file synchronization using the `vaultquery-write` code block:
+`vaultquery-write` runs write statements with file synchronization:
 
 ```vaultquery-write
 -- Add a new note
@@ -191,7 +193,7 @@ INSERT INTO table_rows (path, table_index, row_json, table_line_number)
 VALUES ('Condo Notes.md', 1, json('{"Vendor": "", "Price": ""}'), 5);
 ```
 
-CTEs (Common Table Expressions) can be used for more complex inserts. 
+CTEs support multi-step inserts.
 
 ```vaultquery-write
 WITH
@@ -218,7 +220,7 @@ FROM flattenedLinks;
 
 #### UPDATE Operations
 
-Use `vaultquery-write` to modify existing records:
+Existing records can be modified with `vaultquery-write`:
 
 ```vaultquery-write
 UPDATE notes
@@ -228,7 +230,7 @@ WHERE path = 'Condo Notes.md'
 
 #### DELETE Operations
 
-Use `vaultquery-write` to remove records:
+Records can be removed with `vaultquery-write`:
 
 ```vaultquery-write
 DELETE FROM notes
@@ -237,7 +239,7 @@ WHERE path = 'Condo Notes.md'
 
 ### Markdown Table Export
 
-Use `vaultquery-markdown` to generate exportable markdown tables:
+`vaultquery-markdown` generates exportable Markdown tables:
 
 ```vaultquery-markdown
 SELECT title, path, modified FROM notes 
@@ -265,9 +267,9 @@ Available config options:
 
 > **Tip**: Format dates directly in SQL using `datetime()` functions.
 
-### Custom Templates
+### JavaScript Rendering
 
-A JavaScript template can be provided for complete control over formatting:
+JavaScript rendering can be enabled in settings for complete control over formatting. Rendering code is user-authored JavaScript and runs with the plugin's permissions. HTML template execution is handled by the local [user-template-renderer](../user-template-renderer) package.
 
 ```vaultquery
 SELECT title, path, modified FROM notes 
@@ -291,7 +293,7 @@ return `
 `;
 ```
 
-Templates receive these variables:
+JavaScript rendering code receives these variables:
 - `results` - Array of query result rows
 - `query` - The SQL query that was executed
 - `count` - Number of results
@@ -424,13 +426,13 @@ The `h` object provides 50+ utility functions from [placeholder-resolver](../pla
 - `tags` INSERT adds to frontmatter when no `line_number` specified, or inserts inline with `insert_position`
 - `links` INSERT appends to end of file when no `line_number` specified, or inserts at position with `insert_position`
 - `table_cells` and `table_rows` INSERT can use `line_number`/`table_line_number` to create tables at specific positions
-- Use `notes_with_properties` view to create files with frontmatter in one operation
-- Use `note_properties` view for properties-only queries (path + property columns, no notes columns)
-- Use `table_rows` view for easier table row manipulation with JSON
+- `notes_with_properties` creates files with frontmatter in one operation
+- `note_properties` handles properties-only queries (path + property columns, no notes columns)
+- `table_rows` handles table row manipulation with JSON
 
 ## Chart Rendering
 
-VaultQuery supports rendering query results as interactive charts using Chart.js. Use the `vaultquery-chart` code block type.
+`vaultquery-chart` renders query results with Chart.js.
 
 Charts require columns named `label` and `value` (or `x` and `y` for scatter plots). Add a `series` column for multiple datasets.
 
@@ -446,7 +448,7 @@ Charts require columns named `label` and `value` (or `x` and `y` for scatter plo
 | `datasetBackgroundColor` | Fill color for bars/points                            |
 | `datasetBorderColor`     | Border color for bars/points                          |
 
-#### SQL Columns for Advanced Customization
+#### SQL Columns for Customization
 
 | Column            | Description                                        |
 | ----------------- | -------------------------------------------------- |
@@ -599,7 +601,7 @@ datasetBackgroundColor: rgba(54, 162, 235, 0.6)
 ```
 
 
-### Advanced Template Examples
+### Template Examples
 
 #### Task List Grouped by Status
 ```vaultquery
@@ -666,7 +668,7 @@ return `
 
 ## Usage for Developers
 
-VaultQuery exposes an API for third-party Obsidian plugins. The API includes the ability to execute SQL queries, register custom functions, custom views, and write operations are also available assuming the user has enabled the "Allow write operations" setting.
+VaultQuery exposes an API for third-party Obsidian plugins. The API includes the ability to execute SQL queries, register custom functions, custom views, write operations when "Allow write operations" is enabled, and managed third-party provider table registration.
 
 ```typescript
 // Get the VaultQuery API
@@ -683,13 +685,11 @@ if (vaultQuery?.api) {
 }
 ```
 
-For complete API documentation, use the `vaultquery-api-help` code block in any note.
+For third-party provider tables, prefer `registerVaultQueryTableProviders()` from `vaultquery/api`. It handles mobile-safe API waiting, capability checks, retry, database recovery, and cleanup.
+
+The `vaultquery-api-help` code block provides complete API documentation in any note.
 
 ## Settings and Configuration
-
-### Database Storage Options
-- **Memory Storage** (default): Fast, rebuilds on startup, no persistent storage
-- **Disk Storage**: Persistent between sessions
 
 ### Indexing Features (Configurable)
 - **Content Indexing**: Index note content for full-text search
@@ -700,21 +700,21 @@ For complete API documentation, use the `vaultquery-api-help` code block in any 
 - **Link Indexing**: Index internal and external links
 - **Tag Indexing**: Index hashtags throughout notes
 
-### Performance Settings  
+### Performance Settings
 - **File Size Limit**: Maximum file size to index (default: 1MB)
 - **Exclude Patterns**: Regex patterns for files to skip
 - **Batch Size**: Number of files to process at once
 
 ### Write Operations
 - **Enable Write Operations**: Allow UPDATE, INSERT, DELETE queries (disabled by default)
-- **Auto File Sync**: Automatically update vault files when database is modified
+- **Auto File Sync**: Update vault files when database rows change
 
-The database is stored in Obsidian's [Configuration Folder](https://help.obsidian.md/configuration-folder) in `/plugins/vaultquery/database.db` when using disk storage. 
+The database is stored in Obsidian's [Configuration Folder](https://help.obsidian.md/configuration-folder) in `/plugins/vaultquery/database.db` when using disk storage.
 
 
 ### Known Issues
 
-- **Grid refresh after scrolling**: Obsidian's DOM virtualization may detach grid elements when scrolling long notes. Click the refresh button to restore the grid, the plugin will attempt to auto-restore grids periodically.
+- **Grid refresh after scrolling**: Obsidian's DOM virtualization may detach grid elements when scrolling long notes. The refresh button restores the grid, and the plugin attempts periodic auto-restore.
 
 - **Block references for updates**: Task and heading updates work best when content has explicit block references (e.g., `^task-1`). Without them, the plugin uses content hashing which is not as accurate.
 
@@ -722,23 +722,54 @@ The database is stored in Obsidian's [Configuration Folder](https://help.obsidia
 
 ## Network Requests
 
-This plugin makes the following network requests:
+VaultQuery has one network-capable code path: loading the SQL.js WebAssembly binary when a local binary is not available or when CDN loading is selected.
 
-| URL | Purpose | When |
-| --- | ------- | ---- |
-| `https://sql.js.org/dist/sql-wasm.wasm` | Downloads the SQL.js WebAssembly binary required for SQLite functionality | Only when WASM source is set to "CDN", or when set to "Auto" and local loading fails. The plugin ships with a bundled copy (`sql-wasm.wasm`) to avoid network requests by default. |
+| Package | URL | Purpose |
+| ------- | --- | ------- |
+| VaultQuery | `https://sql.js.org/dist/sql-wasm.wasm` | Loads the SQL.js WebAssembly binary required for the local SQLite database when CDN loading is selected or local loading falls back to CDN. |
+
+SQL.js loading modes:
+
+| Mode | Behavior | Network activity |
+| ---- | -------- | ---------------- |
+| `Auto` | Tries a local `sql-wasm.wasm` file first, then falls back to the SQL.js CDN. | Only if the local file is missing. |
+| `Local only` | Loads `sql-wasm.wasm` from the plugin folder or custom path. | None. Initialization fails if the file is unavailable. |
+| `CDN only` | Downloads `sql-wasm.wasm` from `sql.js.org`. | One request during database initialization. |
+
+When local caching is enabled, a CDN-loaded binary is saved to the plugin folder for later use.
+
+## Background Tasks
+
+VaultQuery uses timers for local indexing, rendering, and UI coordination. Timers are not used for telemetry and do not periodically transmit vault data.
+
+| Timed event | Timing | Purpose | Network activity |
+| ----------- | ------ | ------- | ---------------- |
+| File modification debounce | 300 ms after the latest file change | Groups rapid vault file events before indexing an individual file. | None. |
+| Indexing queue delay | 200 ms | Batches queued file paths before local index updates. | None. |
+| Pending block progress polling | 500 ms while indexing is active | Updates loading/progress text for query and help blocks, then renders pending blocks after indexing finishes. | None. |
+| Settings reindex debounce | 1 second, with 1 second retry while indexing is busy | Delays full reindexing after settings changes that affect indexed data. | None. |
+| Grid restoration interval | 2 seconds while the plugin is loaded | Restores rendered SlickGrid tables that Obsidian DOM virtualization may detach during scrolling or view changes. | None. |
+| Scroll restoration delay | 150 ms after workspace scroll events | Runs a local grid restoration pass after scroll activity settles. | None. |
+| Rebuild button progress polling | 500 ms during a manual rebuild | Updates the settings button text while a user-initiated index rebuild is running. | None. |
+| API availability retry | Exponential backoff for third-party integrations waiting for VaultQuery | Allows dependent plugins to wait for the VaultQuery API during startup. | None. |
+| Provider registration retry | Default 5 seconds after failed provider registration | Retries local registration of third-party provider tables after startup or database recovery. | VaultQuery calls provider registration callbacks only. Network behavior, if any, belongs to the provider plugin. |
+| Render and layout scheduling | 0-50 ms for grid, chart, calendar, and JavaScript-rendered output | Allows Obsidian and browser layout to complete before measuring or rendering UI elements. | None. |
+
+SQL.js WASM loading is not scheduled by a timer. It occurs during database initialization according to the SQL.js loading mode described above.
 
 ## Dependencies
 
-| Package                                                    | Description                                                                  |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [sql.js](https://github.com/sql-js/sql.js)                 | SQLite compiled to WebAssembly, enabling SQL queries in the browser/Obsidian |
-| [SlickGrid](https://github.com/6pac/SlickGrid)             | High-performance interactive data grid for displaying query results          |
-| [Chart.js](https://github.com/chartjs/Chart.js)            | Flexible charting library for rendering query results as visualizations      |
-| [markdown-table](https://github.com/wooorm/markdown-table) | Utility for generating properly formatted markdown tables                    |
-| [fnv-plus](https://github.com/tjwebb/fnv-plus)             | Fast non-cryptographic hash function for content change detection            |
-| [placeholder-resolver](../placeholder-resolver)            | Template variable resolution with helper functions (local package)           |
+| Package                                                     | Description                                                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [sql.js](https://github.com/sql-js/sql.js)                  | SQLite database engine compiled to WebAssembly                               |
+| [SlickGrid](https://github.com/6pac/SlickGrid)              | Data grid for query results                                                  |
+| [Chart.js](https://github.com/chartjs/Chart.js)             | Chart rendering for `vaultquery-chart` blocks                                |
+| [FullCalendar](https://github.com/fullcalendar/fullcalendar) | Calendar rendering for `vaultquery-calendar` blocks                          |
+| [markdown-table](https://github.com/wooorm/markdown-table)  | Markdown table output formatting                                             |
+| [fnv-plus](https://github.com/tjwebb/fnv-plus)              | Non-cryptographic hashes for change detection                                |
+| [placeholder-resolver](../placeholder-resolver)             | Template variable resolution and helper functions                            |
+| [user-template-renderer](../user-template-renderer)          | Shared local renderer for trusted user-authored HTML templates               |
 
 ## Similar Plugins
 
-- [Dataview](https://github.com/blacksmithgu/obsidian-dataview) - Dataview's DQL syntax is simpler and easier to learn than SQL. Dataview and its successor [Datacore](https://github.com/blacksmithgu/datacore) are read-only will index faster than VaultQuery; VaultQuery supports writes and may query faster when using custom views or indexes. However, these differnces are likely marginal. Perfer Dataview or Datacore for read-only workloads, especially when prioritizing indexing performance. Prefer VaultQuery for write operations or when standard SQL syntax is preferred. 
+- [Dataview](https://github.com/blacksmithgu/obsidian-dataview) - Dataview's DQL syntax is simpler than SQL. Dataview and its successor [Datacore](https://github.com/blacksmithgu/datacore) are read-only and may index faster than VaultQuery. VaultQuery supports write operations, SQLite-backed queries, custom views, JavaScript SQL functions, and provider tables. Dataview or Datacore fit read-only workloads, especially when indexing speed is the main requirement. VaultQuery fits write workflows or cases where standard SQL syntax is preferred.

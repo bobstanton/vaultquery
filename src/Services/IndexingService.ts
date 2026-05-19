@@ -1,18 +1,32 @@
 import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, normalizePath } from 'obsidian';
 import { VaultDatabase } from '../Database/DatabaseService';
+import { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { ContentLocationService } from './ContentLocationService';
 import { PerformanceMonitor, IndexingTimings } from './PerformanceMonitor';
-import { ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
-import type { IndexNoteData, NoteRecord, IndexingStats, IndexingProgress, IndexingStatus, TableCellData, TaskData, ListItemData, UserViewData, UserFunctionData } from '../types';
+import { ERROR_MESSAGES, WARNING_MESSAGES } from '../utils/ErrorMessages';
+import { getIndexedFilesFromDatabase } from '../Database/IndexedFiles';
+import { extractAllCodeBlocks, parseSQLObjectName, parseFunctionName } from '../utils/SQLParsingUtils';
+import { logger as rootLogger } from '../utils/logger';
+import type { IndexNoteData, NoteRecord, IndexingStats, IndexingProgress, IndexingStatus, TableCellData, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
 
 declare const activeWindow: Window;
 
-export interface IndexingEventEmitter {
+const logger = rootLogger.scope('Indexing');
+
+interface IndexingEventEmitter {
   emitFileIndexed: (path: string, isUpdate: boolean) => void;
   emitFileRemoved: (path: string) => void;
   emitVaultIndexed: (filesIndexed: number, filesRemoved: number, isForced: boolean) => void;
+  onBeforeVaultIndexed?: () => Promise<void>;
+}
+
+interface ProviderDefinitionBlockHandler {
+  hasProviderDefinitionDiscovery(): boolean;
+  indexProviderDefinitionBlocks(path: string, content: string): Promise<void>;
+  removeProviderDefinitionBlocks(path: string): void;
+  clearProviderDefinitionBlocks(): void;
 }
 
 export class IndexingService {
@@ -22,12 +36,24 @@ export class IndexingService {
   private isIndexing = false;
   private indexingCallbacks: Array<() => void> = [];
 
-  private readonly BATCH_SIZE = 200;
+  /** Maximum files per batch */
+  private readonly BATCH_SIZE_FILES = 200;
+  /** Maximum total file size per batch (10MB) - prevents memory issues with large files */
+  private readonly BATCH_SIZE_BYTES = 10 * 1024 * 1024;
+  /** Maximum concurrent file reads/preparations within a batch */
+  private readonly PREPARE_CONCURRENCY = 24;
   private excludeRegexps: RegExp[] = [];
 
   private eventEmitter: IndexingEventEmitter | null = null;
+  private providerDefinitionBlockHandler: ProviderDefinitionBlockHandler | null = null;
 
-  public constructor(private app: App, private database: VaultDatabase, private settings: VaultQuerySettings) {
+  // After initial indexing completes, we don't need to extract views/functions/triggers
+  // from file content anymore - they're only registered when code blocks render.
+  // Also used by waitForIndexing() to wait for first indexing on startup.
+  private initialIndexingComplete = false;
+  private firstIndexingCallbacks: Array<() => void> = [];
+
+  public constructor(private app: App, private database: VaultDatabase | WorkerDatabase, private settings: VaultQuerySettings) {
     this.performanceMonitor = new PerformanceMonitor();
     this.updateExcludePatterns();
   }
@@ -36,18 +62,32 @@ export class IndexingService {
     this.eventEmitter = emitter;
   }
 
+  public setProviderDefinitionBlockHandler(handler: ProviderDefinitionBlockHandler): void {
+    this.providerDefinitionBlockHandler = handler;
+  }
+
+  public setDatabase(database: VaultDatabase | WorkerDatabase): void {
+    this.database = database;
+  }
+
   private updateExcludePatterns(): void {
     this.excludeRegexps = this.settings.excludePatterns.map(p => new RegExp(p));
   }
   
   private needsContentProcessing(): boolean {
-    return this.settings.enabledFeatures.indexContent ||
+    return Boolean(this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) ||
+         !this.initialIndexingComplete ||
+         this.settings.enabledFeatures.indexContent ||
          this.settings.enabledFeatures.indexTables ||
          this.settings.enabledFeatures.indexTasks ||
          this.settings.enabledFeatures.indexListItems;
   }
 
   private shouldProcessFileContent(file: TFile): boolean {
+    if (this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) return true;
+
+    if (!this.initialIndexingComplete) return true;
+
     if (this.settings.enabledFeatures.indexContent) return true;
 
     const cache = this.app.metadataCache.getFileCache(file);
@@ -82,6 +122,7 @@ export class IndexingService {
       let toRemove: string[] = [];
 
       if (force) {
+        this.initialIndexingComplete = false;
         await this.clearAllNotes();
         toIndex = this.app.vault.getMarkdownFiles().filter(file => this.shouldIndexFile(file));
       }
@@ -96,6 +137,13 @@ export class IndexingService {
         }
 
         if (toIndex.length === 0) {
+          if (filesRemoved > 0) {
+            await this.rebuildDerivedDatabaseStructures();
+          }
+
+          this.setIndexingProgress(0, 0, 'Complete');
+          this.performanceMonitor.finishOperation(0);
+          await this.finalizeIndexing();
           this.eventEmitter?.emitVaultIndexed(0, filesRemoved, force);
           return;
         }
@@ -104,20 +152,69 @@ export class IndexingService {
       await this.processFilesInBatches(toIndex, force);
       filesIndexed = toIndex.length;
 
-      this.database.createIndexes(this.settings.enabledFeatures);
-
-      await this.database.saveToDisk();
-
-      this.database.rebuildPropertiesView();
-      this.database.rebuildTableViews(this.settings.enableDynamicTableViews);
+      await this.rebuildDerivedDatabaseStructures();
 
       this.setIndexingProgress(toIndex.length, toIndex.length, 'Complete');
 
       this.performanceMonitor.finishOperation(toIndex.length);
 
+      await this.finalizeIndexing();
       this.eventEmitter?.emitVaultIndexed(filesIndexed, filesRemoved, force);
     } finally {
       this.setIndexingStatus(false);
+    }
+  }
+
+  private async finalizeIndexing(): Promise<void> {
+    if (this.eventEmitter?.onBeforeVaultIndexed) {
+      await this.eventEmitter.onBeforeVaultIndexed();
+    }
+
+    // Mark initial indexing as complete - after this, we skip extracting views/functions/triggers
+    // from file content during realtime indexing (they're registered when code blocks render)
+    this.initialIndexingComplete = true;
+
+    const firstCallbacks = this.firstIndexingCallbacks.splice(0);
+    firstCallbacks.forEach(callback => callback());
+  }
+
+  private async rebuildDerivedDatabaseStructures(): Promise<void> {
+    await this.database.createIndexes(this.settings.enabledFeatures);
+    await this.database.schema.rebuildPropertiesView();
+    await this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
+    await this.database.saveToDisk();
+  }
+
+  private async getScalarPropertyKeySet(): Promise<Set<string>> {
+    if (!this.settings.enabledFeatures.indexFrontmatter) {
+      return new Set();
+    }
+
+    return new Set(await this.database.schema.getAllPropertyKeys());
+  }
+
+  private propertyKeySetsEqual(before: Set<string>, after: Set<string>): boolean {
+    if (before.size !== after.size) {
+      return false;
+    }
+
+    for (const key of before) {
+      if (!after.has(key)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async rebuildPropertiesViewIfKeySetChanged(before: Set<string>): Promise<void> {
+    if (!this.settings.enabledFeatures.indexFrontmatter) {
+      return;
+    }
+
+    const after = await this.getScalarPropertyKeySet();
+    if (!this.propertyKeySetsEqual(before, after)) {
+      await this.database.schema.rebuildPropertiesView();
     }
   }
 
@@ -126,7 +223,10 @@ export class IndexingService {
 
     const content = this.needsContentProcessing() ? await this.app.vault.cachedRead(file) : '';
     const indexData = await this.prepareNoteForIndexing(file, content);
+    const propertyKeysBefore = await this.getScalarPropertyKeySet();
+
     await this.database.indexNote(indexData);
+    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
 
     this.eventEmitter?.emitFileIndexed(file.path, true);
   }
@@ -135,17 +235,14 @@ export class IndexingService {
     const existingResults = await this.database.all('SELECT 1 FROM notes WHERE path = ? LIMIT 1', [file.path]);
     const isUpdate = existingResults.length > 0;
 
-    let actualContent = content;
-    if (!actualContent && this.shouldProcessFileContent(file)) {
-      actualContent = await this.app.vault.cachedRead(file);
-    }
-    else if (!actualContent) {
-      actualContent = '';
-    }
+    const actualContent = content ||
+      (this.shouldProcessFileContent(file) ? await this.app.vault.cachedRead(file) : '');
 
     const indexData = await this.prepareNoteForIndexing(file, actualContent);
+    const propertyKeysBefore = await this.getScalarPropertyKeySet();
 
     await this.database.indexNote(indexData);
+    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
 
     this.eventEmitter?.emitFileIndexed(file.path, isUpdate);
   }
@@ -158,7 +255,7 @@ export class IndexingService {
   }
 
   public waitForIndexing(timeoutMs?: number): Promise<void> {
-    if (!this.isIndexing) {
+    if (this.initialIndexingComplete && !this.isIndexing) {
       return Promise.resolve();
     }
 
@@ -172,15 +269,24 @@ export class IndexingService {
         resolve();
       };
 
-      this.indexingCallbacks.push(callback);
+      if (this.isIndexing) {
+        this.indexingCallbacks.push(callback);
+      }
+      else if (!this.initialIndexingComplete) {
+        this.firstIndexingCallbacks.push(callback);
+      }
 
       if (timeoutMs !== undefined) {
         timeoutId = activeWindow.setTimeout(() => {
-          const index = this.indexingCallbacks.indexOf(callback);
+          let index = this.indexingCallbacks.indexOf(callback);
           if (index !== -1) {
             this.indexingCallbacks.splice(index, 1);
           }
-          console.warn('[VaultQuery] Timed out waiting for indexing to complete');
+          index = this.firstIndexingCallbacks.indexOf(callback);
+          if (index !== -1) {
+            this.firstIndexingCallbacks.splice(index, 1);
+          }
+          logger.warn('Timed out waiting for indexing to complete');
           resolve();
         }, timeoutMs);
       }
@@ -211,13 +317,19 @@ export class IndexingService {
     this.indexingProgress = { current, total, currentFile };
   }
 
-  public removeNote(notePath: string): void {
-    this.database.runWithPreparedStatement('DELETE FROM notes WHERE path = ?', [notePath]);
+  public async removeNote(notePath: string): Promise<void> {
+    this.providerDefinitionBlockHandler?.removeProviderDefinitionBlocks(notePath);
+    const propertyKeysBefore = await this.getScalarPropertyKeySet();
+
+    await this.database.run('DELETE FROM notes WHERE path = ?', [notePath]);
+    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
+
     this.eventEmitter?.emitFileRemoved(notePath);
   }
 
-  public clearAllNotes(): void {
-    this.database.run('DELETE FROM notes');
+  public async clearAllNotes(): Promise<void> {
+    this.providerDefinitionBlockHandler?.clearProviderDefinitionBlocks();
+    await this.database.run('DELETE FROM notes');
   }
 
   public shouldIndexFile(file: TFile): boolean {
@@ -244,14 +356,18 @@ export class IndexingService {
   private async getFilesToProcess(): Promise<{ toIndex: TFile[], toRemove: string[] }> {
     const files = this.app.vault.getMarkdownFiles();
     const indexedFiles = await this.getIndexedFiles();
-    
+
     const indexedFileMap = new Map<string, number>();
-    indexedFiles.forEach(indexedFile => {
+    for (const indexedFile of indexedFiles) {
       indexedFileMap.set(indexedFile.path, indexedFile.modified);
-    });
-    
+    }
+
+    const currentFilePaths = new Set<string>();
     const filesToIndex: TFile[] = [];
+
     for (const file of files) {
+      currentFilePaths.add(file.path);
+
       if (this.shouldIndexFile(file)) {
         const indexedModified = indexedFileMap.get(file.path);
         if (indexedModified === undefined || file.stat.mtime !== indexedModified) {
@@ -260,34 +376,34 @@ export class IndexingService {
       }
     }
 
-    const currentFilePaths = new Set(files.map(f => f.path));
     const filesToRemove: string[] = [];
     for (const indexedFile of indexedFiles) {
       if (!currentFilePaths.has(indexedFile.path)) {
         filesToRemove.push(indexedFile.path);
       }
     }
-    
+
     return { toIndex: filesToIndex, toRemove: filesToRemove };
   }
 
   private async getIndexedFiles(): Promise<Array<{ path: string; modified: number }>> {
-    try {
-      const results = await this.database.all('SELECT path, modified FROM notes');
-      return results.map(row => ({
-        path: row.path as string,
-        modified: row.modified as number
-      }));
-    }
-    catch (error) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.INDEXED_FILES_ERROR}:`, error);
-      return [];
-    }
+    return getIndexedFilesFromDatabase(this.database);
   }
 
-  private removeDeletedFiles(filePaths: string[]): void {
+  private async removeDeletedFiles(filePaths: string[]): Promise<void> {
+    if (filePaths.length === 0) return;
+
+    // Batch delete in chunks to avoid SQLite parameter limits (max ~999)
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
+      const chunk = filePaths.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      await this.database.run(`DELETE FROM notes WHERE path IN (${placeholders})`, chunk);
+    }
+
     for (const pathToRemove of filePaths) {
-      this.removeNote(pathToRemove);
+      this.providerDefinitionBlockHandler?.removeProviderDefinitionBlocks(pathToRemove);
+      this.eventEmitter?.emitFileRemoved(pathToRemove);
     }
   }
 
@@ -299,15 +415,47 @@ export class IndexingService {
 
     this.setIndexingProgress(0, totalToIndex, 'Starting...');
 
-    for (let i = 0; i < files.length; i += this.BATCH_SIZE) {
-      const batch = files.slice(i, i + this.BATCH_SIZE);
+    const batches = this.createMemoryAwareBatches(files);
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
 
       indexed = await this.processSingleBatch(batch, indexed, totalToIndex, isInitialIndexing);
 
       this.updateProgressAfterBatch(indexed, totalToIndex);
 
-      await this.delayBetweenBatches(i, files.length);
+      await this.delayBetweenBatches(batchIndex, batches.length);
     }
+  }
+
+  /**
+   * Creates batches that respect both file count and total size limits.
+   * Keeps memory bounded when processing many large files.
+   */
+  private createMemoryAwareBatches(files: TFile[]): TFile[][] {
+    const batches: TFile[][] = [];
+    let currentBatch: TFile[] = [];
+    let currentBatchSize = 0;
+
+    for (const file of files) {
+      const fileSize = file.stat.size;
+
+      if (currentBatch.length >= this.BATCH_SIZE_FILES ||
+          (currentBatchSize + fileSize > this.BATCH_SIZE_BYTES && currentBatch.length > 0)) {
+        batches.push(currentBatch);
+        currentBatch = [];
+        currentBatchSize = 0;
+      }
+
+      currentBatch.push(file);
+      currentBatchSize += fileSize;
+    }
+
+    if (currentBatch.length > 0) {
+      batches.push(currentBatch);
+    }
+
+    return batches;
   }
 
   private detectDuplicateFiles(files: TFile[]): void {
@@ -324,7 +472,7 @@ export class IndexingService {
     }
 
     if (duplicates.length > 0) {
-      console.warn(`[VaultQuery] ${WARNING_MESSAGES.DUPLICATE_FILES_IN_INPUT(duplicates)}`);
+      logger.warn(WARNING_MESSAGES.DUPLICATE_FILES_IN_INPUT(duplicates));
     }
   }
 
@@ -346,7 +494,7 @@ export class IndexingService {
   }
 
   private async processBatchIndividually(batch: TFile[], currentIndexed: number, totalToIndex: number): Promise<number> {
-    console.warn(`[VaultQuery] ${WARNING_MESSAGES.DUPLICATE_FILES_IN_BATCH}`);
+    logger.warn(WARNING_MESSAGES.DUPLICATE_FILES_IN_BATCH);
 
     let indexed = currentIndexed;
 
@@ -363,17 +511,50 @@ export class IndexingService {
   }
 
   private async prepareBatchData(batch: TFile[], currentIndexed: number, totalToIndex: number): Promise<IndexNoteData[]> {
-    return await Promise.all(
-      batch.map(async (file) => {
-        this.setIndexingProgress(currentIndexed + 1, totalToIndex, file.path);
+    let completed = 0;
 
-        const content = this.shouldProcessFileContent(file)
-          ? await this.app.vault.cachedRead(file)
-          : '';
+    return await this.mapWithConcurrency(batch, this.PREPARE_CONCURRENCY, async (file) => {
+      const content = this.shouldProcessFileContent(file)
+        ? await this.app.vault.cachedRead(file)
+        : '';
 
-        return await this.prepareNoteForIndexing(file, content);
-      })
-    );
+      const indexData = await this.prepareNoteForIndexing(file, content);
+
+      completed++;
+      this.setIndexingProgress(currentIndexed + completed, totalToIndex, file.path);
+
+      return indexData;
+    });
+  }
+
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    const executing = new Set<Promise<void>>();
+    const concurrencyLimit = Math.min(Math.max(1, concurrency), items.length);
+
+    for (const [index, item] of items.entries()) {
+      const task = (async () => {
+        results[index] = await mapper(item, index);
+      })();
+
+      executing.add(task);
+      task.then(
+        () => executing.delete(task),
+        () => executing.delete(task)
+      );
+
+      if (executing.size >= concurrencyLimit) {
+        await Promise.race(executing);
+      }
+    }
+
+    await Promise.all(executing);
+
+    return results;
   }
 
   private updateProgressAfterBatch(indexed: number, totalToIndex: number): void {
@@ -382,15 +563,24 @@ export class IndexingService {
     }
   }
 
-  private async delayBetweenBatches(currentIndex: number, totalFiles: number): Promise<void> {
-    if (currentIndex + this.BATCH_SIZE < totalFiles) {
-      await new Promise(resolve => activeWindow.setTimeout(resolve, 0));
+  private async delayBetweenBatches(currentBatchIndex: number, totalBatches: number): Promise<void> {
+    if (currentBatchIndex + 1 < totalBatches) {
+      await this.yieldToEventLoop();
     }
   }
 
-  private prepareNoteForIndexing(file: TFile, content: string): IndexNoteData {
+  private async yieldToEventLoop(): Promise<void> {
+    // Use a macrotask yield so rendering and input can run between indexing batches.
+    await new Promise(resolve => activeWindow.setTimeout(resolve, 0));
+  }
+
+  private async prepareNoteForIndexing(file: TFile, content: string): Promise<IndexNoteData> {
     const startTime = performance.now();
     const cache = this.app.metadataCache.getFileCache(file);
+
+    if (this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) {
+      await this.providerDefinitionBlockHandler.indexProviderDefinitionBlocks(file.path, content);
+    }
 
     const { contentWithoutFrontmatter, fmTime } = this.extractContentWithoutFrontmatter(content, cache);
     const note = this.createNoteRecord(file, contentWithoutFrontmatter);
@@ -485,6 +675,7 @@ export class IndexingService {
       listItems: IndexNoteData['listItems'];
       userViews: IndexNoteData['userViews'];
       userFunctions: IndexNoteData['userFunctions'];
+      userTriggers: IndexNoteData['userTriggers'];
     };
     timings: {
       tablesTime: number;
@@ -510,22 +701,29 @@ export class IndexingService {
     const contentOffset = frontmatterOffset + trimmedOffset;
 
     const fullLines = content ? content.split('\n') : [];
-    const contentLines = contentWithoutFrontmatter ? contentWithoutFrontmatter.split('\n') : [];
+    const lineStartOffsets = this.buildLineStartOffsets(fullLines);
 
-    let lineOffset = 0;
+    let contentLines: string[];
     if (contentOffset > 0 && fullLines.length > 0) {
       let charCount = 0;
+      let firstContentLine = 0;
       for (let i = 0; i < fullLines.length; i++) {
-        charCount += fullLines[i].length + 1; // +1 for newline
+        charCount += fullLines[i].length + 1;
         if (charCount >= contentOffset) {
-          lineOffset = i + 1;
+          firstContentLine = i + 1;
           break;
         }
       }
+      contentLines = fullLines.slice(firstContentLine);
+    } else {
+      contentLines = fullLines;
     }
+
+    const lineOffset = fullLines.length - contentLines.length;
 
     const { tables, tableCells, time: tablesTime } = this.processTablesFeature(
       contentWithoutFrontmatter,
+      contentLines,
       contentOffset,
       lineOffset,
       cache,
@@ -536,14 +734,12 @@ export class IndexingService {
     const { tasks, time: tasksTime } = this.processTasksFeature(
       content,
       fullLines,
-      contentLines,
-      contentOffset,
-      lineOffset,
+      lineStartOffsets,
       cache
     );
     timings.tasksTime = tasksTime;
 
-    const { headings, time: headingsTime } = this.processHeadingsFeature(content, fullLines, cache);
+    const { headings, time: headingsTime } = this.processHeadingsFeature(content, fullLines, lineStartOffsets, cache);
     timings.headingsTime = headingsTime;
 
     const { links, time: linksTime } = this.processLinksFeature(cache, file.path);
@@ -555,8 +751,17 @@ export class IndexingService {
     const { listItems, time: listItemsTime } = this.processListItemsFeature(content, fullLines, cache);
     timings.listItemsTime = listItemsTime;
 
-    const userViews = this.extractUserViews(content);
-    const userFunctions = this.extractUserFunctions(content);
+    let userViews: UserViewData[] | undefined;
+    let userFunctions: UserFunctionData[] | undefined;
+    let userTriggers: UserTriggerData[] | undefined;
+
+    if (!this.initialIndexingComplete) {
+      const { views, functions, triggers } = this.extractAllUserDefinedObjects(content);
+
+      userViews = views.length > 0 ? views : undefined;
+      userFunctions = this.settings.enableJavaScriptFunctions && functions.length > 0 ? functions : undefined;
+      userTriggers = triggers.length > 0 ? triggers : undefined;
+    }
 
     return {
       results: {
@@ -567,14 +772,15 @@ export class IndexingService {
         links,
         tags,
         listItems,
-        userViews: userViews.length > 0 ? userViews : undefined,
-        userFunctions: userFunctions.length > 0 ? userFunctions : undefined
+        userViews,
+        userFunctions,
+        userTriggers
       },
       timings
     };
   }
 
-  private processTablesFeature(contentWithoutFrontmatter: string, contentOffset: number, lineOffset: number, cache: CachedMetadata | null, noteTitle: string): {
+  private processTablesFeature(contentWithoutFrontmatter: string, contentLines: string[], contentOffset: number, lineOffset: number, cache: CachedMetadata | null, noteTitle: string): {
     tables: IndexNoteData['tables'];
     tableCells: IndexNoteData['tableCells'];
     time: number;
@@ -590,13 +796,13 @@ export class IndexingService {
 
     const startTime = performance.now();
     const tables = MarkdownTableUtils.detectAllTables(contentWithoutFrontmatter, contentOffset, noteTitle);
-    const tableCells = this.parseAndIndexTables(contentWithoutFrontmatter, lineOffset, contentOffset, tables ?? []);
+    const tableCells = this.parseAndIndexTables(contentWithoutFrontmatter, contentLines, lineOffset, contentOffset, tables ?? []);
     const time = performance.now() - startTime;
 
     return { tables, tableCells, time };
   }
 
-  private processTasksFeature(fullContent: string, fullLines: string[], contentLines: string[], contentOffset: number, lineOffset: number, cache: CachedMetadata | null): {
+  private processTasksFeature(fullContent: string, fullLines: string[], lineStartOffsets: number[], cache: CachedMetadata | null): {
     tasks: IndexNoteData['tasks'];
     time: number;
   } {
@@ -610,13 +816,13 @@ export class IndexingService {
     }
 
     const startTime = performance.now();
-    const tasks = this.parseTasksFromCache(fullContent, fullLines, contentLines, lineOffset, taskItems, cache);
+    const tasks = this.parseTasksFromCache(fullContent, fullLines, lineStartOffsets, taskItems, cache);
     const time = performance.now() - startTime;
 
     return { tasks, time };
   }
 
-  private processHeadingsFeature(content: string, lines: string[], cache: CachedMetadata | null): {
+  private processHeadingsFeature(content: string, lines: string[], lineStartOffsets: number[], cache: CachedMetadata | null): {
     headings: IndexNoteData['headings'];
     time: number;
   } {
@@ -626,18 +832,15 @@ export class IndexingService {
 
     const startTime = performance.now();
 
+    const contextOccurrences = new Map<string, number>();
+
     const headings = cache?.headings?.map((heading: HeadingCache) => {
       const lineIndex = heading.position.start.line;
-      const { start, end } = ContentLocationService.getLineOffsets(content, lineIndex);
-      const anchorHash = ContentLocationService.computeAnchorHash(content, lineIndex, lines);
+      const { start, end } = this.getLineRange(content, lines, lineStartOffsets, lineIndex);
 
-      let blockId: string | undefined;
-      if (lineIndex < lines.length - 1) {
-        const nextLineBlockMatch = lines[lineIndex + 1]?.match(/^\s*\^([\w-]+)\s*$/);
-        if (nextLineBlockMatch) {
-          blockId = nextLineBlockMatch[1];
-        }
-      }
+      const occurrence = this.getNextContextOccurrence(contextOccurrences, lineIndex, lines);
+      const anchorHash = ContentLocationService.computeAnchorHash(lineIndex, lines, occurrence);
+      const blockId = ContentLocationService.extractBlockId(lines, lineIndex);
 
       return {
         level: heading.level,
@@ -688,7 +891,8 @@ export class IndexingService {
 
     const startTime = performance.now();
     const tags = cache?.tags?.map((tag: TagCache) => ({
-      tag_name: tag.tag,
+      // Normalize: always store tags with # prefix (Obsidian's cache may omit it for frontmatter tags)
+      tag_name: tag.tag.startsWith('#') ? tag.tag : '#' + tag.tag,
       line_number: tag.position.start.line + 1
     })) || [];
 
@@ -716,6 +920,7 @@ export class IndexingService {
     let lastRootLineNumber = -1;
 
     const lineNumberToItemIndex = new Map<number, number>();
+    const contextOccurrences = new Map<string, number>();
 
     const nonTaskItems = cacheListItems
       .map((item, index) => ({ item, cacheIndex: index }))
@@ -745,10 +950,8 @@ export class IndexingService {
           indentLevel += 1;
         }
         else if (char === ' ') {
-          // Accumulate spaces - every 2 spaces = 1 indent level
         }
       }
-      // Add space-based indentation (2 spaces per level)
       const spaceCount = (leadingWhitespace.match(/ /g) || []).length;
       indentLevel += Math.floor(spaceCount / 2);
 
@@ -764,23 +967,20 @@ export class IndexingService {
         itemContent = genericMatch?.[1] || line.trim();
       }
 
-      let blockId: string | undefined;
       const blockMatch = line.match(/\^([\w-]+)\s*$/);
+      let blockId: string | undefined;
       if (blockMatch) {
         blockId = blockMatch[1];
         itemContent = itemContent.replace(/\s*\^[\w-]+\s*$/, '');
-      }
-      else if (lineIndex < lines.length - 1) {
-        const nextLineBlockMatch = lines[lineIndex + 1].match(/^\s*\^([\w-]+)\s*$/);
-        if (nextLineBlockMatch) {
-          blockId = nextLineBlockMatch[1];
-        }
+      } else {
+        blockId = ContentLocationService.extractBlockId(lines, lineIndex, line);
       }
 
       const startOffset = item.position.start.offset;
       const endOffset = item.position.end.offset;
 
-      const anchorHash = ContentLocationService.computeAnchorHash(content, lineIndex, lines);
+      const occurrence = this.getNextContextOccurrence(contextOccurrences, lineIndex, lines);
+      const anchorHash = ContentLocationService.computeAnchorHash(lineIndex, lines, occurrence);
 
       let parentIndex: number | null = null;
       if (item.parent >= 0) {
@@ -793,7 +993,6 @@ export class IndexingService {
         // This is expected behavior when tasks have non-task children
       }
 
-      // Map this item's line number to its index for child lookups
       lineNumberToItemIndex.set(lineIndex, listItems.length);
 
       const listItemData: ListItemData = {
@@ -803,7 +1002,7 @@ export class IndexingService {
         content: itemContent.trim(),
         list_type: listType,
         indent_level: indentLevel,
-        line_number: lineIndex + 1, // 1-based
+        line_number: lineIndex + 1,
         block_id: blockId,
         start_offset: startOffset,
         end_offset: endOffset,
@@ -817,6 +1016,13 @@ export class IndexingService {
     return { listItems: listItems.length > 0 ? listItems : undefined, time };
   }
 
+  private getNextContextOccurrence(contextOccurrences: Map<string, number>, lineIndex: number, lines: string[]): number {
+    const contextKey = ContentLocationService.computeContextKey(lineIndex, lines);
+    const occurrence = contextOccurrences.get(contextKey) ?? 0;
+    contextOccurrences.set(contextKey, occurrence + 1);
+    return occurrence;
+  }
+
   private trackPerformance(file: TFile, startTime: number, timings: IndexingTimings): void {
     this.performanceMonitor.trackFile(
       file,
@@ -826,103 +1032,132 @@ export class IndexingService {
     );
   }
   
-  private processFrontmatterProperties(obj: Record<string, unknown>, keyPrefix: string = ''): Array<{ 
-    key: string; 
-    value: string; 
-    valueType: string; 
-    arrayIndex: number | null 
+  private processFrontmatterProperties(obj: Record<string, unknown>, keyPrefix: string = ''): Array<{
+    key: string;
+    value: string;
+    valueType: string;
+    arrayIndex: number | null
   }> {
-    const results: Array<{ 
-      key: string; 
-      value: string; 
-      valueType: string; 
-      arrayIndex: number | null 
-    }> = [];
-    
+    const convertValue = (val: unknown): { valueType: string; valueString: string } => {
+      if (val == null) return { valueType: 'null', valueString: '' };
+      return {
+        valueType: typeof val,
+        valueString: typeof val === 'string' ? val : JSON.stringify(val)
+      };
+    };
+
+    const results: Array<{ key: string; value: string; valueType: string; arrayIndex: number | null }> = [];
+
     for (const [key, value] of Object.entries(obj)) {
       const fullKey = keyPrefix ? `${keyPrefix}.${key}` : key;
-      
+
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
-          const valueType = typeof item;
-          const valueString = item === null || item === undefined ? '' : 
-                     typeof item === 'string' ? item : JSON.stringify(item);
-          
-          results.push({
-            key: fullKey,
-            value: valueString,
-            valueType,
-            arrayIndex: index
-          });
+          const { valueType, valueString } = convertValue(item);
+          results.push({ key: fullKey, value: valueString, valueType, arrayIndex: index });
         });
       }
       else if (typeof value === 'object' && value !== null) {
         results.push(...this.processFrontmatterProperties(value as Record<string, unknown>, fullKey));
       }
       else {
-        const valueType = value === null || value === undefined ? 'null' : typeof value;
-        const valueString = value === null || value === undefined ? '' : 
-                   typeof value === 'string' ? value : JSON.stringify(value);
-        
-        results.push({
-          key: fullKey,
-          value: valueString,
-          valueType,
-          arrayIndex: null
-        });
+        const { valueType, valueString } = convertValue(value);
+        results.push({ key: fullKey, value: valueString, valueType, arrayIndex: null });
       }
     }
-    
+
     return results;
   }
 
-  private parseAndIndexTables(content: string, lineOffset: number, contentOffset: number, detectedTables: Array<{ table_index: number; table_name?: string; block_id?: string; start_offset: number; end_offset: number }>): TableCellData[] {
+  private parseAndIndexTables(content: string, lines: string[], lineOffset: number, contentOffset: number, detectedTables: Array<{ table_index: number; table_name?: string; block_id?: string; start_offset: number; end_offset: number }>): TableCellData[] {
+    if (detectedTables.length === 0) {
+      return [];
+    }
+
     const tableCells: TableCellData[] = [];
-    const lines = content.split('\n');
-    let fallbackTableIdx = 0;
 
+    const lineStartOffsets: number[] = [];
+    let currentOffset = contentOffset;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      lineStartOffsets.push(currentOffset);
+      currentOffset += lines[i].length + 1;
+    }
 
-      if (line.includes('|') && line.split('|').length > 2) {
-        const tableData = this.parseTableAt(lines, i);
+    for (const detectedTable of detectedTables) {
+      const tableStartOffset = detectedTable.start_offset;
+      let lineIndex = this.findLineIndexForOffset(lineStartOffsets, tableStartOffset);
 
-        if (tableData.headers.length > 0 && tableData.rows.length > 0) {
-          const tableStartOffset = ContentLocationService.getLineStartOffset(content, i) + contentOffset;
+      if (lineIndex < 0 || lineIndex >= lines.length) continue;
 
-          const detectedTable = detectedTables.find(dt => Math.abs(dt.start_offset - tableStartOffset) < 10);
+      const tableData = this.parseTableAt(lines, lineIndex);
 
-          const tableIndex = detectedTable?.table_index ?? fallbackTableIdx;
-          fallbackTableIdx++;
+      if (tableData.headers.length > 0 && tableData.rows.length > 0) {
+        const tableName = detectedTable.table_name ?? null;
 
-          // table_name already resolved by MarkdownTableUtils (block_id > heading > noteTitle)
-          const tableName = detectedTable?.table_name ?? null;
+        tableData.rows.forEach((row, rowIndex) => {
+          const dataRowLineNumber = lineIndex + 2 + rowIndex + lineOffset + 1;
 
-          tableData.rows.forEach((row, rowIndex) => {
-            const dataRowLineNumber = i + 2 + rowIndex + lineOffset + 1;
+          tableData.headers.forEach((columnName, columnIndex) => {
+            const cellValue = row[columnIndex] || '';
 
-            tableData.headers.forEach((columnName, columnIndex) => {
-              const cellValue = row[columnIndex] || '';
+            const cellData: TableCellData = {
+              tableIndex: detectedTable.table_index,
+              tableName,
+              rowIndex,
+              columnName,
+              cellValue,
+              lineNumber: dataRowLineNumber
+            };
 
-              const cellData: TableCellData = {
-                tableIndex,
-                tableName,
-                rowIndex,
-                columnName,
-                cellValue,
-                lineNumber: dataRowLineNumber
-              };
-
-              tableCells.push(cellData);
-            });
+            tableCells.push(cellData);
           });
-
-          i += tableData.totalLines - 1;
-        }
+        });
       }
     }
 
     return tableCells;
+  }
+
+  /** Binary search to find line index for a character offset */
+  private findLineIndexForOffset(lineStartOffsets: number[], targetOffset: number): number {
+    let low = 0;
+    let high = lineStartOffsets.length - 1;
+
+    while (low < high) {
+      const mid = Math.floor((low + high + 1) / 2);
+      if (lineStartOffsets[mid] <= targetOffset) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    return low;
+  }
+
+  private buildLineStartOffsets(lines: string[]): number[] {
+    const offsets: number[] = [];
+    let offset = 0;
+
+    for (const line of lines) {
+      offsets.push(offset);
+      offset += line.length + 1;
+    }
+
+    return offsets;
+  }
+
+  private getLineRange(content: string, lines: string[], lineStartOffsets: number[], lineIndex: number): { start: number; end: number } {
+    if (lineIndex < 0 || lineIndex >= lines.length) {
+      return { start: 0, end: 0 };
+    }
+
+    const start = lineStartOffsets[lineIndex] ?? 0;
+    const end = lineIndex + 1 < lineStartOffsets.length
+      ? Math.max(start, lineStartOffsets[lineIndex + 1] - 1)
+      : content.length;
+
+    return { start, end };
   }
 
 
@@ -932,7 +1167,7 @@ export class IndexingService {
     
     while (currentIndex < lines.length) {
       const line = lines[currentIndex];
-      if (line.includes('|') && line.split('|').length > 2) {
+      if (/^\s*\|.*\|\s*$/.test(line) && MarkdownTableUtils.splitTableRow(line).length > 1) {
         tableLines.push(line);
         currentIndex++;
       }
@@ -950,7 +1185,7 @@ export class IndexingService {
     
     for (let i = 0; i < Math.min(3, tableLines.length); i++) {
       const line = tableLines[i];
-      const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+      const cells = MarkdownTableUtils.splitTableRow(line);
       
       const isSeparator = cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
       
@@ -966,9 +1201,7 @@ export class IndexingService {
       return { headers: [], rows: [], totalLines: 0 };
     }
     
-    const headers = tableLines[headerLineIndex].split('|')
-      .map(cell => cell.trim())
-      .filter(cell => cell !== '');
+    const headers = MarkdownTableUtils.splitTableRow(tableLines[headerLineIndex]);
     
     const rows: string[][] = [];
     for (let i = 0; i < tableLines.length; i++) {
@@ -976,9 +1209,7 @@ export class IndexingService {
         continue;
       }
       
-      const cells = tableLines[i].split('|')
-        .map(cell => cell.trim())
-        .filter(cell => cell !== '');
+      const cells = MarkdownTableUtils.splitTableRow(tableLines[i]);
       
       const isSeparator = cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
       if (isSeparator) {
@@ -1003,71 +1234,41 @@ export class IndexingService {
     };
   }
 
-  private parseTasksFromCache(fullContent: string, fullLines: string[], contentLines: string[], lineOffset: number, taskItems: ListItemCache[], cache: CachedMetadata | null): TaskData[] {
+  private parseTasksFromCache(fullContent: string, fullLines: string[], lineStartOffsets: number[], taskItems: ListItemCache[], cache: CachedMetadata | null): TaskData[] {
     const tasks: TaskData[] = [];
+    const contextOccurrences = new Map<string, number>();
 
-    const headingsByLine = new Map<number, string>();
-    if (cache?.headings) {
-      for (const heading of cache.headings) {
-        headingsByLine.set(heading.position.start.line, heading.heading);
-      }
-    }
-
-    const findSectionHeading = (lineIndex: number): string | undefined => {
-      let lastHeading: string | undefined;
-      for (const [headingLine, headingText] of headingsByLine) {
-        if (headingLine < lineIndex) {
-          lastHeading = headingText;
-        }
-        else {
-          break;
-        }
-      }
-      return lastHeading;
-    };
+    const sortedHeadings = [...(cache?.headings ?? [])]
+      .sort((a, b) => a.position.start.line - b.position.start.line);
+    let headingIndex = 0;
+    let currentSectionHeading: string | undefined;
 
     for (const item of taskItems) {
       const lineIndex = item.position.start.line;
+      while (
+        headingIndex < sortedHeadings.length &&
+        sortedHeadings[headingIndex].position.start.line < lineIndex
+      ) {
+        currentSectionHeading = sortedHeadings[headingIndex].heading;
+        headingIndex++;
+      }
+
       const line = fullLines[lineIndex] || '';
       const checkbox = item.task || ' ';
-
-      let completed: boolean;
-      let status: string;
-      switch (checkbox.toLowerCase()) {
-        case 'x':
-          completed = true;
-          status = 'DONE';
-          break;
-        case '/':
-          completed = false;
-          status = 'IN_PROGRESS';
-          break;
-        case '-':
-          completed = false;
-          status = 'CANCELLED';
-          break;
-        default:
-          completed = false;
-          status = 'TODO';
-      }
+      const { completed, status } = ContentLocationService.getTaskStatus(checkbox);
 
       const taskTextMatch = line.match(/^\s*[-*+]\s*\[.\]\s*(.*)$/);
       const taskText = taskTextMatch ? taskTextMatch[1] : line;
 
-      const { start, end } = ContentLocationService.getLineOffsets(fullContent, lineIndex);
-      const anchorHash = ContentLocationService.computeAnchorHash(fullContent, lineIndex, fullLines);
+      const { start, end } = this.getLineRange(fullContent, fullLines, lineStartOffsets, lineIndex);
 
-      let blockId: string | undefined;
-      const blockMatch = line.match(/\^([\w-]+)\s*$/);
-      if (blockMatch) {
-        blockId = blockMatch[1];
-      }
-      else if (lineIndex < fullLines.length - 1) {
-        const nextLineBlockMatch = fullLines[lineIndex + 1]?.match(/^\s*\^([\w-]+)\s*$/);
-        if (nextLineBlockMatch) {
-          blockId = nextLineBlockMatch[1];
-        }
-      }
+      const contextKey = ContentLocationService.computeContextKey(lineIndex, fullLines);
+      const occurrence = contextOccurrences.get(contextKey) ?? 0;
+      contextOccurrences.set(contextKey, occurrence + 1);
+
+      const anchorHash = ContentLocationService.computeAnchorHash(lineIndex, fullLines, occurrence);
+
+      const blockId = ContentLocationService.extractBlockId(fullLines, lineIndex, line);
 
       const metadata = this.extractTaskMetadata(taskText);
 
@@ -1092,7 +1293,7 @@ export class IndexingService {
         start_offset: start,
         end_offset: end,
         anchor_hash: anchorHash,
-        section_heading: findSectionHeading(lineIndex)
+        section_heading: currentSectionHeading
       };
 
       tasks.push(taskData);
@@ -1182,67 +1383,48 @@ export class IndexingService {
   }
 
   private deriveTitle(path: string, basename: string): string {
-    if (basename && basename !== '') {
-      return basename;
-    }
-    
-    if (path.includes('/')) {
-      return path.substring(path.lastIndexOf('/') + 1).replace('.md', '');
-    }
-    else {
-      return path.replace('.md', '');
-    }
+    if (basename) return basename;
+    // lastIndexOf returns -1 if not found, so substring(0) works for both cases
+    return path.substring(path.lastIndexOf('/') + 1).replace('.md', '');
   }
-  
+
   private deriveSize(statSize: number, content: string): number {
-    if (statSize && statSize > 0) {
-      return statSize;
-    }
-
-    return content ? content.length : 0;
+    return statSize > 0 ? statSize : (content?.length ?? 0);
   }
 
-  private extractUserViews(content: string): UserViewData[] {
-    const views: UserViewData[] = [];
-    const viewBlockRegex = /```vaultquery-view\s*\n([\s\S]*?)```/g;
-    let match;
+  /**
+   * Extract all user-defined objects (views, functions, triggers) in a single pass.
+   * More efficient than three separate content scans.
+   */
+  private extractAllUserDefinedObjects(content: string): {
+    views: UserViewData[];
+    functions: UserFunctionData[];
+    triggers: UserTriggerData[];
+  } {
+    const blocks = extractAllCodeBlocks(content);
 
-    while ((match = viewBlockRegex.exec(content)) !== null) {
-      const sql = match[1].trim();
-      const viewNameMatch = sql.match(/CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?\s+AS/i);
-      if (viewNameMatch) {
-        views.push({
-          view_name: viewNameMatch[1],
-          sql: sql
-        });
-      }
-    }
+    const views = blocks.views
+      .map(sql => {
+        const viewName = parseSQLObjectName(sql, 'VIEW');
+        return viewName ? { view_name: viewName, sql } : null;
+      })
+      .filter((v): v is UserViewData => v !== null);
 
-    return views;
-  }
+    const functions = blocks.functions
+      .map(source => {
+        const functionName = parseFunctionName(source);
+        return functionName ? { function_name: functionName, source } : null;
+      })
+      .filter((f): f is UserFunctionData => f !== null);
 
-  private extractUserFunctions(content: string): UserFunctionData[] {
-    const functions: UserFunctionData[] = [];
-    const functionBlockRegex = /```vaultquery-function\s*\n([\s\S]*?)```/g;
-    let match;
+    const triggers = blocks.triggers
+      .map(sql => {
+        const triggerName = parseSQLObjectName(sql, 'TRIGGER');
+        return triggerName ? { trigger_name: triggerName, trigger_sql: sql } : null;
+      })
+      .filter((t): t is UserTriggerData => t !== null);
 
-    while ((match = functionBlockRegex.exec(content)) !== null) {
-      const blockContent = match[1].trim();
-      const separatorIndex = blockContent.indexOf('\n---');
-      
-      if (separatorIndex > 0) {
-        const functionName = blockContent.substring(0, separatorIndex).trim();
-        const source = blockContent.substring(separatorIndex + 4).trim();
-        if (functionName && source) {
-          functions.push({
-            function_name: functionName,
-            source: source
-          });
-        }
-      }
-    }
-
-    return functions;
+    return { views, functions, triggers };
   }
 
 }

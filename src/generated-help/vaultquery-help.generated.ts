@@ -2,6 +2,7 @@
 // Source: vaultquery-help.md
 /* eslint-disable obsidianmd/ui/sentence-case -- Generated help content */
 
+import { MarkdownRenderer } from 'obsidian';
 import './styles.generated.css';
 
 import type { RenderContext } from './types.generated';
@@ -27,44 +28,62 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   const list = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
   const item = list.createEl('li', { cls: 'vaultquery-help-list-item' });
   item.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery" });
-  item.appendText(" - Output SQL queries to ");
-  item.createEl('a', { cls: 'vaultquery-help-link vaultquery-help-external-link', text: "SlickGrid", attr: { href: "https://github.com/6pac/SlickGrid", target: '_blank', rel: 'noopener' } });
-  item.appendText(" or custom HTML");
+  item.appendText(" - Output SQL queries as a SlickGrid table or JavaScript rendering");
   const item1 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
   item1.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-write" });
   item1.appendText(" - Perform INSERT, UPDATE, DELETE, or multiple operations with preview");
   const item2 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
   item2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart" });
-  item2.appendText(" - Output queries as charts using ");
+  item2.appendText(" - Render chart output using ");
   item2.createEl('a', { cls: 'vaultquery-help-link vaultquery-help-external-link', text: "Chart.js", attr: { href: "https://www.chartjs.org/", target: '_blank', rel: 'noopener' } });
   const item3 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item3.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
-  item3.appendText(" - Output queries as markdown tables");
+  item3.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar" });
+  item3.appendText(" - Render calendar output using ");
+  item3.createEl('a', { cls: 'vaultquery-help-link vaultquery-help-external-link', text: "FullCalendar Standard", attr: { href: "https://fullcalendar.io/", target: '_blank', rel: 'noopener' } });
   const item4 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item4.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-schema" });
-  item4.appendText(" - Display VaultQuery schema as markdown tables");
+  item4.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
+  item4.appendText(" - Render markdown table output");
   const item5 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item5.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-view" });
-  item5.appendText(" - Define custom SQL view for use in other queries");
+  item5.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-schema" });
+  item5.appendText(" - Display VaultQuery schema as markdown tables");
   const item6 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item6.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function" });
-  item6.appendText(" - Define custom SQL functions in JavaScript for use in queries");
+  item6.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-view" });
+  item6.appendText(" - Define custom SQL view for use in other queries");
   const item7 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item7.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function-help" });
-  item7.appendText(" - Display function reference and documentation");
+  item7.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function" });
+  item7.appendText(" - Define custom SQL functions in JavaScript for use in queries");
   const item8 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item8.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-examples" });
-  item8.appendText(" - Display example collections (functions, views)");
+  item8.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-trigger" });
+  item8.appendText(" - Define SQLite triggers to automate actions on data changes");
   const item9 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item9.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-api-help" });
-  item9.appendText(" - API guide for third-party plugin developers");
+  item9.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart-help" });
+  item9.appendText(" - Display chart output reference and examples");
   const item10 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item10.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-help" });
-  item10.appendText(" - Show this help");
+  item10.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar-help" });
+  item10.appendText(" - Display calendar output reference and examples");
+  const item11 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item11.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown-help" });
+  item11.appendText(" - Display markdown output reference and examples");
+  const item12 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item12.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function-help" });
+  item12.appendText(" - Display function reference and documentation");
+  const item13 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item13.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-trigger-help" });
+  item13.appendText(" - Display trigger reference and documentation");
+  const item14 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item14.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-examples" });
+  item14.appendText(" - Display example collections (functions, views)");
+  const item15 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item15.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-api-help" });
+  item15.appendText(" - API guide for third-party plugin developers");
+  const item16 = list.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item16.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-help" });
+  item16.appendText(" - Show this help");
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Template variables" });
   const para = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para.appendText("These placeholders will be evaluated and replaced before a query is executed by SQLite");
-  const table = container.createEl('table', { cls: 'vaultquery-help-table' });
+  const tableWrapper = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });
   const thead = table.createEl('thead');
   const row = thead.createEl('tr');
   row.createEl('th', { text: "Variable" });
@@ -190,284 +209,548 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   row17.createEl('td', { text: "Any frontmatter property" });
   const td32 = row17.createEl('td');
   td32.createEl('code', { cls: 'vaultquery-help-code', text: "{this.status}" });
-  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Database schema" });
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Editor autocomplete" });
   const para1 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para1.appendText("Use a ");
-  para1.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-schema" });
-  para1.appendText(" code block to display the complete database schema with all tables, views, and columns.");
+  para1.appendText("VaultQuery provides editor autocomplete inside supported fenced code blocks.");
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "SQL blocks" });
+  const para2 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para2.appendText("In ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery" });
+  para2.appendText(", ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-write" });
+  para2.appendText(", ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-view" });
+  para2.appendText(", ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-trigger" });
+  para2.appendText(", ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart" });
+  para2.appendText(", ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
+  para2.appendText(", and ");
+  para2.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar" });
+  para2.appendText(", autocomplete can suggest:");
+  const list1 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item17 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item17.appendText("SQL keywords");
+  const item18 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item18.appendText("Template placeholders such as ");
+  item18.createEl('code', { cls: 'vaultquery-help-code', text: "{this.path}" });
+  item18.appendText(" and ");
+  item18.createEl('code', { cls: 'vaultquery-help-code', text: "{this.today}" });
+  const item19 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item19.appendText("Table and view names from the current VaultQuery schema");
+  const item20 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item20.appendText("Column names from indexed tables and views");
+  const item21 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item21.appendText("Built-in SQL functions and user-defined functions from ");
+  item21.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function" });
+  const item22 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item22.appendText("Qualified column suggestions based on table aliases such as ");
+  item22.createEl('code', { cls: 'vaultquery-help-code', text: "n.title" });
+  item22.appendText(" after ");
+  item22.createEl('code', { cls: 'vaultquery-help-code', text: "FROM notes n" });
+  const para3 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para3.appendText("Suggestions are ranked by SQL context:");
+  const list2 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item23 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item23.appendText("After ");
+  item23.createEl('code', { cls: 'vaultquery-help-code', text: "FROM" });
+  item23.appendText(", ");
+  item23.createEl('code', { cls: 'vaultquery-help-code', text: "JOIN" });
+  item23.appendText(", ");
+  item23.createEl('code', { cls: 'vaultquery-help-code', text: "INTO" });
+  item23.appendText(", or ");
+  item23.createEl('code', { cls: 'vaultquery-help-code', text: "UPDATE" });
+  item23.appendText(", relations are shown first");
+  const item24 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item24.appendText("After ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "SELECT" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "WHERE" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "AND" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "OR" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "ON" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "ORDER BY" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "GROUP BY" });
+  item24.appendText(", ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "HAVING" });
+  item24.appendText(", or ");
+  item24.createEl('code', { cls: 'vaultquery-help-code', text: "SET" });
+  item24.appendText(", columns are shown first");
+  const item25 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item25.appendText("Inside function-call positions such as ");
+  item25.createEl('code', { cls: 'vaultquery-help-code', text: "COUNT(" });
+  item25.appendText(" or ");
+  item25.createEl('code', { cls: 'vaultquery-help-code', text: "LOWER(" });
+  item25.appendText(", functions are shown first");
+  const item26 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item26.appendText("When a query already declares table aliases, matching qualified columns for those aliases are prioritized");
+  const para4 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para4.appendText("When relation aliases are present, VaultQuery also biases unqualified column suggestions toward the relations already in the query, which reduces noise in common patterns such as:");
+  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlockCode = codeBlock.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlockCode.innerHTML = Prism.highlight("SELECT\nFROM notes n\nJOIN tasks t ON t.path = n.path", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlockCode.textContent = "SELECT\nFROM notes n\nJOIN tasks t ON t.path = n.path";
+  }
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para5 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para5.appendText("Autocomplete appears immediately after separators such as spaces, commas, and opening parentheses. For example, suggestions should appear after ");
+  para5.createEl('code', { cls: 'vaultquery-help-code', text: "SELECT " });
+  para5.appendText(", ");
+  para5.createEl('code', { cls: 'vaultquery-help-code', text: "title, " });
+  para5.appendText(", ");
+  para5.createEl('code', { cls: 'vaultquery-help-code', text: "FROM " });
+  para5.appendText(", and ");
+  para5.createEl('code', { cls: 'vaultquery-help-code', text: "COUNT(" });
+  para5.appendText(" without typing another character first.");
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Config sections" });
+  const para6 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para6.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart" });
+  para6.appendText(", ");
+  para6.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
+  para6.appendText(", and ");
+  para6.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar" });
+  para6.appendText(" also provide autocomplete in ");
+  para6.createEl('code', { cls: 'vaultquery-help-code', text: "config:" });
+  para6.appendText(" sections for:");
+  const list3 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item27 = list3.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item27.appendText("Markdown options");
+  const item28 = list3.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item28.appendText("Chart options");
+  const item29 = list3.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item29.appendText("Calendar options");
+  const item30 = list3.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item30.appendText("Common boolean values");
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Provider definition blocks" });
+  const para7 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para7.appendText("Third-party provider definition blocks registered with VaultQuery use generic config-style highlighting. VaultQuery currently ships provider-definition key/value autocomplete for the built-in Places provider block languages: ");
+  para7.createEl('code', { cls: 'vaultquery-help-code', text: "places-weather-vaultquery" });
+  para7.appendText(", ");
+  para7.createEl('code', { cls: 'vaultquery-help-code', text: "places-tides-vaultquery" });
+  para7.appendText(", and ");
+  para7.createEl('code', { cls: 'vaultquery-help-code', text: "places-solar-vaultquery" });
+  para7.appendText(".");
+  const para8 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para8.appendText("Examples:");
+  const list4 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item31 = list4.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item31.appendText("Places weather definitions can suggest keys such as ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "id" });
+  item31.appendText(", ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "coordinates" });
+  item31.appendText(", ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "daily" });
+  item31.appendText(", ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "hourly" });
+  item31.appendText(", ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "units" });
+  item31.appendText(", ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "cache" });
+  item31.appendText(", and ");
+  item31.createEl('code', { cls: 'vaultquery-help-code', text: "tables" });
+  item31.appendText(", along with valid values for weather variable lists and table selection.");
+  const item32 = list4.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item32.appendText("Places tides definitions can suggest keys such as ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "id" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "location" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "station" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "stationId" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "datum" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "units" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "cache" });
+  item32.appendText(", and ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "tables" });
+  item32.appendText(", along with valid values for ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "datum" });
+  item32.appendText(", ");
+  item32.createEl('code', { cls: 'vaultquery-help-code', text: "units" });
+  item32.appendText(", and tide table selection.");
+  const item33 = list4.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item33.appendText("Places solar definitions can suggest keys such as ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "id" });
+  item33.appendText(", ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "name" });
+  item33.appendText(", ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "coordinates" });
+  item33.appendText(", ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "location" });
+  item33.appendText(", ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "startDate" });
+  item33.appendText(", and ");
+  item33.createEl('code', { cls: 'vaultquery-help-code', text: "endDate" });
+  item33.appendText(".");
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Database schema" });
+  const para9 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para9.appendText("Use a ");
+  para9.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-schema" });
+  para9.appendText(" code block to display the complete database schema with all tables, views, and columns.");
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Examples" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Notes in same folder" });
-  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlockCode = codeBlock.createEl('code', { cls: 'language-vaultquery' });
-  codeBlockCode.textContent = "SELECT path, title\nFROM notes\nWHERE path LIKE '{this.folder}%'";
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlockCode); }
+  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock1Code = codeBlock1.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock1Code.innerHTML = Prism.highlight("SELECT path, title\nFROM notes\nWHERE path LIKE '{this.folder}%'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock1Code.textContent = "SELECT path, title\nFROM notes\nWHERE path LIKE '{this.folder}%'";
+  }
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Notes linked from current note" });
-  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock1Code = codeBlock1.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock1Code.textContent = "SELECT path, title\nFROM notes\nWHERE path IN ({this.outgoingLinks})";
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock1Code); }
+  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock2Code = codeBlock2.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock2Code.innerHTML = Prism.highlight("SELECT path, title\nFROM notes\nWHERE path IN ({this.outgoingLinks})", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock2Code.textContent = "SELECT path, title\nFROM notes\nWHERE path IN ({this.outgoingLinks})";
+  }
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Notes with tags" });
-  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock2Code = codeBlock2.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock2Code.textContent = "SELECT n.path, n.title, t.tag_name\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name LIKE \"%project%\";";
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock2Code); }
+  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock3Code = codeBlock3.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock3Code.innerHTML = Prism.highlight("SELECT n.path, n.title, t.tag_name\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name LIKE \"%project%\";", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock3Code.textContent = "SELECT n.path, n.title, t.tag_name\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name LIKE \"%project%\";";
+  }
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Notes with properties" });
-  const para2 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para2.appendText("Using the ");
-  para2.createEl('code', { cls: 'vaultquery-help-code', text: "notes_with_properties" });
-  para2.appendText(" view (pivots property rows to columns):");
-  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock3Code = codeBlock3.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock3Code.textContent = "SELECT path, title, status, priority\nFROM notes_with_properties\nWHERE status IS NOT NULL\nORDER BY path;";
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock3Code); }
-  const para3 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para3.appendText("Or using a JOIN with the ");
-  para3.createEl('code', { cls: 'vaultquery-help-code', text: "properties" });
-  para3.appendText(" table:");
-  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock4Code = codeBlock4.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock4Code.textContent = "SELECT n.path, n.title,\n  MAX(CASE WHEN p.key = 'status' THEN p.value END) as status,\n  MAX(CASE WHEN p.key = 'priority' THEN p.value END) as priority\nFROM notes n\nJOIN properties p ON n.path = p.path\nGROUP BY n.path\nHAVING status IS NOT NULL\nORDER BY n.path;";
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock4Code); }
-  const para4 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para4.appendText("Or using the ");
-  para4.createEl('code', { cls: 'vaultquery-help-code', text: "note_properties" });
-  para4.appendText(" view (properties only, no notes columns):");
-  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock5Code = codeBlock5.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock5Code.textContent = "SELECT path, status, priority\nFROM note_properties\nWHERE status IS NOT NULL\nORDER BY path;";
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock5Code); }
+  const para10 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para10.appendText("Using the ");
+  para10.createEl('code', { cls: 'vaultquery-help-code', text: "notes_with_properties" });
+  para10.appendText(" view (pivots property rows to columns):");
+  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock4Code = codeBlock4.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock4Code.innerHTML = Prism.highlight("SELECT path, title, status, priority\nFROM notes_with_properties\nWHERE status IS NOT NULL\nORDER BY path;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock4Code.textContent = "SELECT path, title, status, priority\nFROM notes_with_properties\nWHERE status IS NOT NULL\nORDER BY path;";
+  }
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para11 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para11.appendText("Or using a JOIN with the ");
+  para11.createEl('code', { cls: 'vaultquery-help-code', text: "properties" });
+  para11.appendText(" table:");
+  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock5Code = codeBlock5.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock5Code.innerHTML = Prism.highlight("SELECT n.path, n.title,\n  MAX(CASE WHEN p.key = 'status' THEN p.value END) as status,\n  MAX(CASE WHEN p.key = 'priority' THEN p.value END) as priority\nFROM notes n\nJOIN properties p ON n.path = p.path\nGROUP BY n.path\nHAVING status IS NOT NULL\nORDER BY n.path;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock5Code.textContent = "SELECT n.path, n.title,\n  MAX(CASE WHEN p.key = 'status' THEN p.value END) as status,\n  MAX(CASE WHEN p.key = 'priority' THEN p.value END) as priority\nFROM notes n\nJOIN properties p ON n.path = p.path\nGROUP BY n.path\nHAVING status IS NOT NULL\nORDER BY n.path;";
+  }
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para12 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para12.appendText("Or using the ");
+  para12.createEl('code', { cls: 'vaultquery-help-code', text: "note_properties" });
+  para12.appendText(" view (properties only, no notes columns):");
+  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock6Code = codeBlock6.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock6Code.innerHTML = Prism.highlight("SELECT path, status, priority\nFROM note_properties\nWHERE status IS NOT NULL\nORDER BY path;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock6Code.textContent = "SELECT path, status, priority\nFROM note_properties\nWHERE status IS NOT NULL\nORDER BY path;";
+  }
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Headings" });
-  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock6Code = codeBlock6.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock6Code.textContent = "SELECT path, level, heading_text\nFROM headings\nWHERE path = '{this.path}'\nORDER BY line_number;";
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock6Code); }
+  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock7Code = codeBlock7.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock7Code.innerHTML = Prism.highlight("SELECT path, level, heading_text\nFROM headings\nWHERE path = '{this.path}'\nORDER BY line_number;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock7Code.textContent = "SELECT path, level, heading_text\nFROM headings\nWHERE path = '{this.path}'\nORDER BY line_number;";
+  }
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "List items" });
-  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock7Code = codeBlock7.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock7Code.textContent = "SELECT content, indent_level, list_type\nFROM list_items\nWHERE path = '{this.path}'\nORDER BY item_index;";
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock7Code); }
-  const para5 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para5.appendText("The ");
-  para5.createEl('code', { cls: 'vaultquery-help-code', text: "list_items_view" });
-  para5.appendText(" includes a computed ");
-  para5.createEl('code', { cls: 'vaultquery-help-code', text: "parent_content" });
-  para5.appendText(" column showing the parent item's text:");
-  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock8Code = codeBlock8.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock8Code.textContent = "SELECT content, indent_level, parent_content\nFROM list_items_view\nWHERE path = '{this.path}'\nORDER BY item_index;";
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock8Code); }
+  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock8Code = codeBlock8.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock8Code.innerHTML = Prism.highlight("SELECT content, indent_level, list_type\nFROM list_items\nWHERE path = '{this.path}'\nORDER BY item_index;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock8Code.textContent = "SELECT content, indent_level, list_type\nFROM list_items\nWHERE path = '{this.path}'\nORDER BY item_index;";
+  }
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para13 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para13.appendText("The ");
+  para13.createEl('code', { cls: 'vaultquery-help-code', text: "list_items_view" });
+  para13.appendText(" includes a computed ");
+  para13.createEl('code', { cls: 'vaultquery-help-code', text: "parent_content" });
+  para13.appendText(" column showing the parent item's text:");
+  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock9Code = codeBlock9.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock9Code.innerHTML = Prism.highlight("SELECT content, indent_level, parent_content\nFROM list_items_view\nWHERE path = '{this.path}'\nORDER BY item_index;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock9Code.textContent = "SELECT content, indent_level, parent_content\nFROM list_items_view\nWHERE path = '{this.path}'\nORDER BY item_index;";
+  }
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Tasks" });
-  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock9Code = codeBlock9.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock9Code.textContent = "SELECT path, task_text, status, priority\nFROM tasks\nWHERE status != 'DONE'\nORDER BY priority DESC;";
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock9Code); }
-  const para6 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para6.appendText("The ");
-  para6.createEl('code', { cls: 'vaultquery-help-code', text: "tasks_view" });
-  para6.appendText(" includes computed columns for easier sorting and filtering:");
-  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock10Code = codeBlock10.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock10Code.textContent = "SELECT path, task_text, status, days_until_due\nFROM tasks_view\nWHERE is_complete = 0 AND is_overdue = 1\nORDER BY status_order, priority_order;";
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock10Code); }
+  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock10Code = codeBlock10.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock10Code.innerHTML = Prism.highlight("SELECT path, task_text, status, priority\nFROM tasks\nWHERE status != 'DONE'\nORDER BY priority DESC;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock10Code.textContent = "SELECT path, task_text, status, priority\nFROM tasks\nWHERE status != 'DONE'\nORDER BY priority DESC;";
+  }
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para14 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para14.appendText("The ");
+  para14.createEl('code', { cls: 'vaultquery-help-code', text: "tasks_view" });
+  para14.appendText(" includes computed columns for easier sorting and filtering:");
+  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock11Code = codeBlock11.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock11Code.innerHTML = Prism.highlight("SELECT path, task_text, status, days_until_due\nFROM tasks_view\nWHERE is_complete = 0 AND is_overdue = 1\nORDER BY status_order, priority_order;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock11Code.textContent = "SELECT path, task_text, status, days_until_due\nFROM tasks_view\nWHERE is_complete = 0 AND is_overdue = 1\nORDER BY status_order, priority_order;";
+  }
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   const callout = container.createDiv({ cls: 'callout', attr: { 'data-callout': "tip", 'data-callout-metadata': '', 'data-callout-fold': '' } });
   const header = callout.createDiv({ cls: 'callout-title', attr: { dir: 'auto' } });
   const icon = header.createDiv({ cls: 'callout-icon' });
   ctx.setIcon(icon, "flame");
   header.createDiv({ cls: 'callout-title-inner', text: "Tables vs Views" });
   const content = callout.createDiv({ cls: 'callout-content' });
-  const para7 = content.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para7.appendText("Prefer using views (when present) over the underlying tables - the views provide defaults when inserting new records:");
-  const list1 = content.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
-  const item11 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item11.createEl('code', { cls: 'vaultquery-help-code', text: "tasks_view" });
-  item11.appendText(" - status=TODO, created");
-  item11.createEl('em', { cls: 'vaultquery-help-italic', text: "date=today, computed columns (is" });
-  item11.appendText("overdue, days");
-  item11.createEl('em', { cls: 'vaultquery-help-italic', text: "until" });
-  item11.appendText("due)");
-  const item12 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item12.createEl('code', { cls: 'vaultquery-help-code', text: "headings_view" });
-  item12.appendText(" - level=1, line");
-  item12.appendText("_");
-  item12.appendText("number=auto");
-  const item13 = list1.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item13.createEl('code', { cls: 'vaultquery-help-code', text: "list_items_view" });
-  item13.appendText(" - list");
-  item13.createEl('em', { cls: 'vaultquery-help-italic', text: "type=bullet, indent" });
-  item13.appendText("level=0, computed parent");
-  item13.appendText("_");
-  item13.appendText("content");
+  const para15 = content.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para15.appendText("Prefer using views (when present) over the underlying tables - the views provide defaults when inserting new records:");
+  const list5 = content.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item34 = list5.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item34.createEl('code', { cls: 'vaultquery-help-code', text: "tasks_view" });
+  item34.appendText(" - status=TODO, created");
+  item34.createEl('em', { cls: 'vaultquery-help-italic', text: "date=today, computed columns (is" });
+  item34.appendText("overdue, days");
+  item34.createEl('em', { cls: 'vaultquery-help-italic', text: "until" });
+  item34.appendText("due)");
+  const item35 = list5.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item35.createEl('code', { cls: 'vaultquery-help-code', text: "headings_view" });
+  item35.appendText(" - level=1, line");
+  item35.appendText("_");
+  item35.appendText("number=auto");
+  const item36 = list5.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item36.createEl('code', { cls: 'vaultquery-help-code', text: "list_items_view" });
+  item36.appendText(" - list");
+  item36.createEl('em', { cls: 'vaultquery-help-italic', text: "type=bullet, indent" });
+  item36.appendText("level=0, computed parent");
+  item36.appendText("_");
+  item36.appendText("content");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Markdown tables" });
-  const para8 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para8.appendText("Using the ");
-  para8.createEl('code', { cls: 'vaultquery-help-code', text: "table_rows" });
-  para8.appendText(" view (data as JSON objects):");
-  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock11Code = codeBlock11.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock11Code.textContent = "SELECT path, table_index, row_index, row_json\nFROM table_rows\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;";
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock11Code); }
-  const para9 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para9.appendText("Or using dynamic table views (like ");
-  para9.createEl('code', { cls: 'vaultquery-help-code', text: "budgets_table" });
-  para9.appendText(", requires setting):");
-  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock12Code = codeBlock12.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock12Code.textContent = "SELECT path, table_index, row_index, Category, Amount\nFROM budgets_table\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;";
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock12Code); }
-  const para10 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para10.appendText("Or using the ");
-  para10.createEl('code', { cls: 'vaultquery-help-code', text: "table_cells" });
-  para10.appendText(" table directly:");
-  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock13Code = codeBlock13.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock13Code.textContent = "SELECT path, table_index, row_index, column_name, cell_value\nFROM table_cells\nWHERE path = '{this.path}'\nORDER BY table_index, row_index, column_name;";
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock13Code); }
+  const para16 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para16.appendText("Using the ");
+  para16.createEl('code', { cls: 'vaultquery-help-code', text: "table_rows" });
+  para16.appendText(" view (data as JSON objects):");
+  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock12Code = codeBlock12.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock12Code.innerHTML = Prism.highlight("SELECT path, table_index, row_index, row_json\nFROM table_rows\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock12Code.textContent = "SELECT path, table_index, row_index, row_json\nFROM table_rows\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;";
+  }
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para17 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para17.appendText("Or using dynamic table views (like ");
+  para17.createEl('code', { cls: 'vaultquery-help-code', text: "budgets_table" });
+  para17.appendText(", requires setting):");
+  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock13Code = codeBlock13.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock13Code.innerHTML = Prism.highlight("SELECT path, table_index, row_index, Category, Amount\nFROM budgets_table\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock13Code.textContent = "SELECT path, table_index, row_index, Category, Amount\nFROM budgets_table\nWHERE path = '{this.path}'\nORDER BY table_index, row_index;";
+  }
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para18 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para18.appendText("Or using the ");
+  para18.createEl('code', { cls: 'vaultquery-help-code', text: "table_cells" });
+  para18.appendText(" table directly:");
+  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock14Code = codeBlock14.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock14Code.innerHTML = Prism.highlight("SELECT path, table_index, row_index, column_name, cell_value\nFROM table_cells\nWHERE path = '{this.path}'\nORDER BY table_index, row_index, column_name;", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock14Code.textContent = "SELECT path, table_index, row_index, column_name, cell_value\nFROM table_cells\nWHERE path = '{this.path}'\nORDER BY table_index, row_index, column_name;";
+  }
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Reusable SQL views" });
-  const para11 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para11.appendText("Use ");
-  para11.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-view" });
-  para11.appendText(" blocks to create SQL views that can be queried from any note. ");
+  const para19 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para19.appendText("Use ");
+  para19.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-view" });
+  para19.appendText(" blocks to create SQL views that can be queried from any note.");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Creating a view" });
-  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock14Code = codeBlock14.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock14Code.textContent = "CREATE VIEW recent_notes AS\nSELECT path, title, datetime(modified/1000, 'unixepoch', 'localtime') as modified\nFROM notes\nORDER BY modified DESC\nLIMIT 20";
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock14Code); }
+  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock15Code = codeBlock15.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock15Code.innerHTML = Prism.highlight("CREATE VIEW recent_notes AS\nSELECT path, title, datetime(modified/1000, 'unixepoch', 'localtime') as modified\nFROM notes\nORDER BY modified DESC\nLIMIT 20", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock15Code.textContent = "CREATE VIEW recent_notes AS\nSELECT path, title, datetime(modified/1000, 'unixepoch', 'localtime') as modified\nFROM notes\nORDER BY modified DESC\nLIMIT 20";
+  }
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Using a view" });
-  const para12 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para12.appendText("Once created, query the view like any table:");
-  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock15Code = codeBlock15.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock15Code.textContent = "SELECT * FROM recent_notes WHERE title LIKE '%project%'";
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock15Code); }
+  const para20 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para20.appendText("Once created, query the view like any table:");
+  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock16Code = codeBlock16.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock16Code.innerHTML = Prism.highlight("SELECT * FROM recent_notes WHERE title LIKE '%project%'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock16Code.textContent = "SELECT * FROM recent_notes WHERE title LIKE '%project%'";
+  }
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Tasks due this week view" });
-  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock16Code = codeBlock16.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock16Code.textContent = "CREATE VIEW tasks_due_this_week AS\nSELECT path, task_text, due_date, priority\nFROM tasks\nWHERE due_date IS NOT NULL\n  AND due_date >= date('now')\n  AND due_date <= date('now', '+7 days')\nORDER BY due_date, priority DESC";
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock16Code); }
+  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock17Code = codeBlock17.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock17Code.innerHTML = Prism.highlight("CREATE VIEW tasks_due_this_week AS\nSELECT path, task_text, due_date, priority\nFROM tasks\nWHERE due_date IS NOT NULL\n  AND due_date >= date('now')\n  AND due_date <= date('now', '+7 days')\nORDER BY due_date, priority DESC", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock17Code.textContent = "CREATE VIEW tasks_due_this_week AS\nSELECT path, task_text, due_date, priority\nFROM tasks\nWHERE due_date IS NOT NULL\n  AND due_date >= date('now')\n  AND due_date <= date('now', '+7 days')\nORDER BY due_date, priority DESC";
+  }
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Notes by tag view" });
-  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock17Code = codeBlock17.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock17Code.textContent = "CREATE VIEW project_notes AS\nSELECT DISTINCT n.path, n.title, n.modified\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name = 'project'\nORDER BY n.modified DESC";
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock17Code); }
+  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock18Code = codeBlock18.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock18Code.innerHTML = Prism.highlight("CREATE VIEW project_notes AS\nSELECT DISTINCT n.path, n.title, n.modified\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name = '#project'\nORDER BY n.modified DESC", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock18Code.textContent = "CREATE VIEW project_notes AS\nSELECT DISTINCT n.path, n.title, n.modified\nFROM notes n\nJOIN tags t ON n.path = t.path\nWHERE t.tag_name = '#project'\nORDER BY n.modified DESC";
+  }
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Orphan notes view" });
-  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock18Code = codeBlock18.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock18Code.textContent = "CREATE VIEW orphan_notes AS\nSELECT n.path, n.title\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target_path\nWHERE l.link_target_path IS NULL\n  AND n.path NOT LIKE '%/_templates/%'";
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock18Code); }
+  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock19Code = codeBlock19.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock19Code.innerHTML = Prism.highlight("CREATE VIEW orphan_notes AS\nSELECT n.path, n.title\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target_path\nWHERE l.link_target_path IS NULL\n  AND n.path NOT LIKE '%/_templates/%'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock19Code.textContent = "CREATE VIEW orphan_notes AS\nSELECT n.path, n.title\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target_path\nWHERE l.link_target_path IS NULL\n  AND n.path NOT LIKE '%/_templates/%'";
+  }
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   const callout1 = container.createDiv({ cls: 'callout', attr: { 'data-callout': "note", 'data-callout-metadata': '', 'data-callout-fold': '' } });
   const header1 = callout1.createDiv({ cls: 'callout-title', attr: { dir: 'auto' } });
   const icon1 = header1.createDiv({ cls: 'callout-icon' });
   ctx.setIcon(icon1, "pencil");
   header1.createDiv({ cls: 'callout-title-inner', text: "Note" });
   const content1 = callout1.createDiv({ cls: 'callout-content' });
-  const para13 = content1.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para13.appendText("Views show a preview when created. Configure preview row limit in settings (default: 10 rows, set to 0 to disable).");
+  const para21 = content1.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para21.appendText("Views show a preview when created. Configure preview row limit in settings (default: 10 rows, set to 0 to disable).");
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "SQL functions" });
-  const para14 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para14.appendText("VaultQuery includes built-in SQL functions (regex, date, link building, link resolution, path, geolocation) and supports user-defined functions in JavaScript.");
-  const para15 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para15.appendText("Use a ");
-  para15.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function-help" });
-  para15.appendText(" code block for complete function documentation:");
+  const para22 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para22.appendText("VaultQuery includes built-in SQL functions (regex, date, link building, link resolution, path, geolocation) and supports user-defined functions in JavaScript.");
+  const para23 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para23.appendText("Use a ");
+  para23.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-function-help" });
+  para23.appendText(" code block for complete function documentation:");
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Write operations" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Insert new note" });
-  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock19Code = codeBlock19.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock19Code.textContent = "INSERT INTO notes (path, title, content)\nVALUES (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nProject description here.\");";
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock19Code); }
+  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock20Code = codeBlock20.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock20Code.innerHTML = Prism.highlight("INSERT INTO notes (path, title, content)\nVALUES (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nProject description here.\");", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock20Code.textContent = "INSERT INTO notes (path, title, content)\nVALUES (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nProject description here.\");";
+  }
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Update note name" });
-  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock20Code = codeBlock20.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock20Code.textContent = "UPDATE notes\nSET title = \"Updated Project Title\"\nWHERE path = \"Projects/My Project.md\";";
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock20Code); }
+  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock21Code = codeBlock21.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock21Code.innerHTML = Prism.highlight("UPDATE notes\nSET title = \"Updated Project Title\"\nWHERE path = \"Projects/My Project.md\";", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock21Code.textContent = "UPDATE notes\nSET title = \"Updated Project Title\"\nWHERE path = \"Projects/My Project.md\";";
+  }
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Update property value" });
-  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock21Code = codeBlock21.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock21Code.textContent = "UPDATE properties\nSET value = \"completed\"\nWHERE key = \"status\"\nAND path = \"Projects/My Project.md\";";
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock21Code); }
+  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock22Code = codeBlock22.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock22Code.innerHTML = Prism.highlight("UPDATE properties\nSET value = \"completed\"\nWHERE key = \"status\"\nAND path = \"Projects/My Project.md\";", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock22Code.textContent = "UPDATE properties\nSET value = \"completed\"\nWHERE key = \"status\"\nAND path = \"Projects/My Project.md\";";
+  }
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Delete old notes" });
-  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock22Code = codeBlock22.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock22Code.textContent = "DELETE FROM notes\nWHERE modified < strftime(\"%s\", \"now\", \"-365 days\") * 1000\nAND path LIKE \"Archive/%\";";
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock22Code); }
+  const codeBlock23 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock23.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock23Code = codeBlock23.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock23Code.innerHTML = Prism.highlight("DELETE FROM notes\nWHERE modified < strftime(\"%s\", \"now\", \"-365 days\") * 1000\nAND path LIKE \"Archive/%\";", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock23Code.textContent = "DELETE FROM notes\nWHERE modified < strftime(\"%s\", \"now\", \"-365 days\") * 1000\nAND path LIKE \"Archive/%\";";
+  }
+  codeBlock23.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Multi-statement operation" });
-  const codeBlock23 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock23.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock23Code = codeBlock23.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock23Code.textContent = "-- Create multiple related notes\nINSERT INTO notes (path, title, content)\nVALUES\n  (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nOverview...\"),\n  (\"Projects/New Project/Tasks.md\", \"Tasks\", \"# Tasks\\n\\n- [ ] Initial setup\");\n\n-- Add properties\nINSERT INTO properties (path, key, value)\nVALUES\n  (\"Projects/New Project.md\", \"status\", \"\\\"active\\\"\"),\n  (\"Projects/New Project.md\", \"priority\", \"1\");";
-  codeBlock23.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock23Code); }
+  const codeBlock24 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock24.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock24Code = codeBlock24.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock24Code.innerHTML = Prism.highlight("-- Create multiple related notes\nINSERT INTO notes (path, title, content)\nVALUES\n  (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nOverview...\"),\n  (\"Projects/New Project/Tasks.md\", \"Tasks\", \"# Tasks\\n\\n- [ ] Initial setup\");\n\n-- Add properties\nINSERT INTO properties (path, key, value)\nVALUES\n  (\"Projects/New Project.md\", \"status\", \"\\\"active\\\"\"),\n  (\"Projects/New Project.md\", \"priority\", \"1\");", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock24Code.textContent = "-- Create multiple related notes\nINSERT INTO notes (path, title, content)\nVALUES\n  (\"Projects/New Project.md\", \"New Project\", \"# New Project\\n\\nOverview...\"),\n  (\"Projects/New Project/Tasks.md\", \"Tasks\", \"# Tasks\\n\\n- [ ] Initial setup\");\n\n-- Add properties\nINSERT INTO properties (path, key, value)\nVALUES\n  (\"Projects/New Project.md\", \"status\", \"\\\"active\\\"\"),\n  (\"Projects/New Project.md\", \"priority\", \"1\");";
+  }
+  codeBlock24.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Daily note with migrated tasks" });
-  const para16 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para16.appendText("Use CTEs (Common Table Expressions) to create a new daily note and migrate incomplete tasks from the previous day's note. The query finds the most recent daily note before today (not necessarily yesterday) and carries forward any unfinished tasks.");
-  const codeBlock24 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock24.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock24Code = codeBlock24.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock24Code.textContent = "WITH previous_note AS (\n  -- Find the most recent daily note before today\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n),\ntask_stats AS (\n  -- Count completed vs incomplete tasks\n  SELECT\n    SUM(CASE WHEN status IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as completed,\n    SUM(CASE WHEN status NOT IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as carried_forward\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n),\nincomplete_tasks AS (\n  -- Get all incomplete tasks from that note\n  SELECT '- [ ] ' || task_text as task_line\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n    AND status NOT IN ('DONE', 'CANCELLED')\n)\nINSERT INTO notes (path, content)\nSELECT\n  'Daily Notes/' || date('now') || '.md',\n  '# ' || date('now') || char(10) || char(10) ||\n  '## Yesterday''s Summary' || char(10) ||\n  '- Completed: ' || COALESCE((SELECT completed FROM task_stats), 0) || char(10) ||\n  '- Carried forward: ' || COALESCE((SELECT carried_forward FROM task_stats), 0) || char(10) || char(10) ||\n  '## Migrated Tasks' || char(10) ||\n  COALESCE(group_concat(task_line, char(10)), '*(No tasks to migrate)*') || char(10) || char(10) ||\n  '## Today''s Tasks' || char(10) ||\n  '- [ ] ' || char(10)\nFROM incomplete_tasks";
-  codeBlock24.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock24Code); }
-  const para17 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para17.appendText("After creating the new note, optionally mark the original tasks as complete:");
-  const codeBlock25 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock25.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-write\n" });
-  const codeBlock25Code = codeBlock25.createEl('code', { cls: 'language-vaultquery-write' });
-  codeBlock25Code.textContent = "WITH previous_note AS (\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n)\nUPDATE tasks\nSET status = 'DONE', done_date = date('now')\nWHERE path = (SELECT path FROM previous_note)\n  AND status NOT IN ('DONE', 'CANCELLED')";
-  codeBlock25.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock25Code); }
+  const para24 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para24.appendText("Use CTEs (Common Table Expressions) to create a new daily note and migrate incomplete tasks from the previous day's note. The query finds the most recent daily note before today (not necessarily yesterday) and carries forward any unfinished tasks.");
+  const codeBlock25 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock25.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock25Code = codeBlock25.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock25Code.innerHTML = Prism.highlight("WITH previous_note AS (\n  -- Find the most recent daily note before today\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n),\ntask_stats AS (\n  -- Count completed vs incomplete tasks\n  SELECT\n    SUM(CASE WHEN status IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as completed,\n    SUM(CASE WHEN status NOT IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as carried_forward\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n),\nincomplete_tasks AS (\n  -- Get all incomplete tasks from that note\n  SELECT '- [ ] ' || task_text as task_line\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n    AND status NOT IN ('DONE', 'CANCELLED')\n)\nINSERT INTO notes (path, content)\nSELECT\n  'Daily Notes/' || date('now') || '.md',\n  '# ' || date('now') || char(10) || char(10) ||\n  '## Yesterday''s Summary' || char(10) ||\n  '- Completed: ' || COALESCE((SELECT completed FROM task_stats), 0) || char(10) ||\n  '- Carried forward: ' || COALESCE((SELECT carried_forward FROM task_stats), 0) || char(10) || char(10) ||\n  '## Migrated Tasks' || char(10) ||\n  COALESCE(group_concat(task_line, char(10)), '*(No tasks to migrate)*') || char(10) || char(10) ||\n  '## Today''s Tasks' || char(10) ||\n  '- [ ] ' || char(10)\nFROM incomplete_tasks", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock25Code.textContent = "WITH previous_note AS (\n  -- Find the most recent daily note before today\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n),\ntask_stats AS (\n  -- Count completed vs incomplete tasks\n  SELECT\n    SUM(CASE WHEN status IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as completed,\n    SUM(CASE WHEN status NOT IN ('DONE', 'CANCELLED') THEN 1 ELSE 0 END) as carried_forward\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n),\nincomplete_tasks AS (\n  -- Get all incomplete tasks from that note\n  SELECT '- [ ] ' || task_text as task_line\n  FROM tasks\n  WHERE path = (SELECT path FROM previous_note)\n    AND status NOT IN ('DONE', 'CANCELLED')\n)\nINSERT INTO notes (path, content)\nSELECT\n  'Daily Notes/' || date('now') || '.md',\n  '# ' || date('now') || char(10) || char(10) ||\n  '## Yesterday''s Summary' || char(10) ||\n  '- Completed: ' || COALESCE((SELECT completed FROM task_stats), 0) || char(10) ||\n  '- Carried forward: ' || COALESCE((SELECT carried_forward FROM task_stats), 0) || char(10) || char(10) ||\n  '## Migrated Tasks' || char(10) ||\n  COALESCE(group_concat(task_line, char(10)), '*(No tasks to migrate)*') || char(10) || char(10) ||\n  '## Today''s Tasks' || char(10) ||\n  '- [ ] ' || char(10)\nFROM incomplete_tasks";
+  }
+  codeBlock25.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para25 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para25.appendText("After creating the new note, optionally mark the original tasks as complete:");
+  const codeBlock26 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock26.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });
+  const codeBlock26Code = codeBlock26.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-write"]) {
+    codeBlock26Code.innerHTML = Prism.highlight("WITH previous_note AS (\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n)\nUPDATE tasks\nSET status = 'DONE', done_date = date('now')\nWHERE path = (SELECT path FROM previous_note)\n  AND status NOT IN ('DONE', 'CANCELLED')", Prism.languages["vaultquery-write"], "vaultquery-write");
+  } else {
+    codeBlock26Code.textContent = "WITH previous_note AS (\n  SELECT path\n  FROM notes\n  WHERE path LIKE 'Daily Notes/%.md'\n    AND path < 'Daily Notes/' || date('now') || '.md'\n  ORDER BY path DESC\n  LIMIT 1\n)\nUPDATE tasks\nSET status = 'DONE', done_date = date('now')\nWHERE path = (SELECT path FROM previous_note)\n  AND status NOT IN ('DONE', 'CANCELLED')";
+  }
+  codeBlock26.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Inline buttons" });
-  const para18 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para18.appendText("Inline buttons use the syntax ");
-  para18.appendText("`");
-  para18.createEl('code', { cls: 'vaultquery-help-code', text: "vq[Label]{SQL}" });
-  para18.appendText("`");
-  para18.appendText(" to execute SQL with a single click. Requires \"Enable inline buttons\" in settings.");
-  const table1 = container.createEl('table', { cls: 'vaultquery-help-table' });
+  const para26 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para26.appendText("Inline buttons use the syntax ");
+  para26.appendText("`");
+  para26.createEl('code', { cls: 'vaultquery-help-code', text: "vq[Label]{SQL}" });
+  para26.appendText("`");
+  para26.appendText(" to execute SQL with a single click. Requires \"Enable inline buttons\" in settings.");
+  const tableWrapper1 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const table1 = tableWrapper1.createEl('table', { cls: 'vaultquery-help-table' });
   const thead1 = table1.createEl('thead');
   const row18 = thead1.createEl('tr');
   row18.createEl('th', { text: "Syntax" });
@@ -497,44 +780,61 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td36.createEl('code', { cls: 'vaultquery-help-code', text: "vq.mod-warning.large[Label]{SQL}" });
   td36.appendText("`");
   row22.createEl('td', { text: "Multiple CSS classes" });
-  const para19 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para19.createEl('strong', { cls: 'vaultquery-help-bold', text: "Query behavior:" });
-  const list2 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
-  const item14 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item14.createEl('strong', { cls: 'vaultquery-help-bold', text: "SELECT/WITH queries:" });
-  item14.appendText(" Results are copied to clipboard as a markdown table");
-  const item15 = list2.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item15.createEl('strong', { cls: 'vaultquery-help-bold', text: "INSERT/UPDATE/DELETE:" });
-  item15.appendText(" Changes are applied immediately (no preview)");
+  const para27 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para27.createEl('strong', { cls: 'vaultquery-help-bold', text: "Query behavior:" });
+  const list6 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item37 = list6.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item37.createEl('strong', { cls: 'vaultquery-help-bold', text: "SELECT/WITH queries:" });
+  item37.appendText(" Results are copied to clipboard as a markdown table");
+  const item38 = list6.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item38.createEl('strong', { cls: 'vaultquery-help-bold', text: "INSERT/UPDATE/DELETE:" });
+  item38.appendText(" Changes are applied immediately (no preview)");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Copy tasks to clipboard" });
-  ctx.renderCode(container, "", "`vq[Copy Tasks]{SELECT task_text, status FROM tasks WHERE path = '{this.path}'}`");
+  const codeBlock27 = container.createDiv();
+  MarkdownRenderer.render(ctx.app, "```\n`vq[Copy Tasks]{SELECT task_text, status FROM tasks WHERE path = '{this.path}'}`\n```", codeBlock27, '', ctx.component);
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Mark all tasks done" });
-  ctx.renderCode(container, "", "`vq.mod-warning[Complete All]{UPDATE tasks SET status = 'DONE' WHERE path = '{this.path}' AND status = 'TODO'}`");
+  const codeBlock28 = container.createDiv();
+  MarkdownRenderer.render(ctx.app, "```\n`vq.mod-warning[Complete All]{UPDATE tasks SET status = 'DONE' WHERE path = '{this.path}' AND status = 'TODO'}`\n```", codeBlock28, '', ctx.component);
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Recalculate table totals" });
-  ctx.renderCode(container, "", "`vq[Recalculate]{UPDATE budget_table SET Amount = (SELECT SUM(CAST(Amount AS INTEGER)) FROM budget_table WHERE Category NOT LIKE '%Total%') WHERE Category LIKE '%Total%'}`");
+  const codeBlock29 = container.createDiv();
+  MarkdownRenderer.render(ctx.app, "```\n`vq[Recalculate]{UPDATE budget_table SET Amount = (SELECT SUM(CAST(Amount AS INTEGER)) FROM budget_table WHERE Category NOT LIKE '%Total%') WHERE Category LIKE '%Total%'}`\n```", codeBlock29, '', ctx.component);
   const callout2 = container.createDiv({ cls: 'callout', attr: { 'data-callout': "tip", 'data-callout-metadata': '', 'data-callout-fold': '' } });
   const header2 = callout2.createDiv({ cls: 'callout-title', attr: { dir: 'auto' } });
   const icon2 = header2.createDiv({ cls: 'callout-icon' });
   ctx.setIcon(icon2, "flame");
   header2.createDiv({ cls: 'callout-title-inner', text: "Tip" });
   const content2 = callout2.createDiv({ cls: 'callout-content' });
-  const para20 = content2.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para20.appendText("If button clicks lose edits, increase \"Inline button debounce\" in settings.");
+  const para28 = content2.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para28.appendText("If button clicks lose edits, increase \"Inline button debounce\" in settings.");
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Output types" });
+  const para29 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para29.appendText("Use the output-specific fence name to choose a renderer. That makes help discoverable by appending ");
+  para29.createEl('code', { cls: 'vaultquery-help-code', text: "-help" });
+  para29.appendText(" to the fence name, such as ");
+  para29.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart-help" });
+  para29.appendText(" or ");
+  para29.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar-help" });
+  para29.appendText(".");
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Markdown output" });
-  const para21 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para21.appendText("There are two ways to export query results as markdown tables:");
-  const list3 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
-  const item16 = list3.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item16.createEl('strong', { cls: 'vaultquery-help-bold', text: "Copy to markdown button" });
-  item16.appendText(" - In any ");
-  item16.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery" });
-  item16.appendText(" block, click the \"Copy to markdown\" button in the upper right to clipboard as a markdown table.");
-  const list4 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
-  const item17 = list4.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item17.createEl('strong', { cls: 'vaultquery-help-bold', text: "`vaultquery-markdown` blocks" });
-  item17.appendText(" - Use dedicated blocks to render results directly as copyable markdown tables with optional column configuration.");
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "vaultquery-markdown options" });
-  const table2 = container.createEl('table', { cls: 'vaultquery-help-table' });
+  const para30 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para30.appendText("There are two ways to export query results as markdown tables:");
+  const list7 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
+  const item39 = list7.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item39.createEl('strong', { cls: 'vaultquery-help-bold', text: "Copy to markdown button" });
+  item39.appendText(" - In any table/chart/template ");
+  item39.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery" });
+  item39.appendText(" block, click the upper-right button to copy the current results as a markdown table.");
+  const list8 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
+  const item40 = list8.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item40.createEl('strong', { cls: 'vaultquery-help-bold', text: "Markdown output block" });
+  item40.appendText(" - Use the ");
+  item40.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
+  item40.appendText(" fence. For help, change it to ");
+  item40.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown-help" });
+  item40.appendText(".");
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Markdown output options" });
+  const tableWrapper2 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const table2 = tableWrapper2.createEl('table', { cls: 'vaultquery-help-table' });
   const thead2 = table2.createEl('thead');
   const row23 = thead2.createEl('tr');
   row23.createEl('th', { text: "Option" });
@@ -549,244 +849,198 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td38.createEl('code', { cls: 'vaultquery-help-code', text: "alignment" });
   row25.createEl('td', { text: "Column alignments: left, center, right (comma-separated)" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Basic markdown export" });
-  const codeBlock26 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock26.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-markdown\n" });
-  const codeBlock26Code = codeBlock26.createEl('code', { cls: 'language-vaultquery-markdown' });
-  codeBlock26Code.textContent = "SELECT title, path, modified\nFROM notes\nORDER BY modified DESC\nLIMIT 10";
-  codeBlock26.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock26Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "With alignment configuration" });
-  const codeBlock27 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock27.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-markdown\n" });
-  const codeBlock27Code = codeBlock27.createEl('code', { cls: 'language-vaultquery-markdown' });
-  codeBlock27Code.textContent = "SELECT title, size\nFROM notes\nORDER BY size DESC\nLIMIT 10;\n\nconfig:\nalignment: left, right";
-  codeBlock27.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock27Code); }
+  const codeBlock30 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock30.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-markdown\n" });
+  const codeBlock30Code = codeBlock30.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-markdown"]) {
+    codeBlock30Code.innerHTML = Prism.highlight("SELECT title, path, modified\nFROM notes\nORDER BY modified DESC\nLIMIT 10;", Prism.languages["vaultquery-markdown"], "vaultquery-markdown");
+  } else {
+    codeBlock30Code.textContent = "SELECT title, path, modified\nFROM notes\nORDER BY modified DESC\nLIMIT 10;";
+  }
+  codeBlock30.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "With column selection and alignment" });
+  const codeBlock31 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock31.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-markdown\n" });
+  const codeBlock31Code = codeBlock31.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-markdown"]) {
+    codeBlock31Code.innerHTML = Prism.highlight("SELECT title, size\nFROM notes\nORDER BY size DESC\nLIMIT 10;\n\nconfig:\ncolumns: title, size\nalignment: left, right", Prism.languages["vaultquery-markdown"], "vaultquery-markdown");
+  } else {
+    codeBlock31Code.textContent = "SELECT title, size\nFROM notes\nORDER BY size DESC\nLIMIT 10;\n\nconfig:\ncolumns: title, size\nalignment: left, right";
+  }
+  codeBlock31.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Charts & visualizations" });
-  const para22 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para22.appendText("Charts use ");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart" });
-  para22.appendText(" blocks. Query must use ");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "label" });
-  para22.appendText(" and ");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "value" });
-  para22.appendText(" columns (or ");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "x" });
-  para22.appendText("/");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "y" });
-  para22.appendText(" for scatter). Add a ");
-  para22.createEl('code', { cls: 'vaultquery-help-code', text: "series" });
-  para22.appendText(" column for multiple datasets.");
-  const table3 = container.createEl('table', { cls: 'vaultquery-help-table' });
+  const para31 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para31.appendText("Use ");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart" });
+  para31.appendText(" for chart output. Query must use ");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "label" });
+  para31.appendText(" and ");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "value" });
+  para31.appendText(" columns (or ");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "x" });
+  para31.appendText("/");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "y" });
+  para31.appendText(" for scatter). Add a ");
+  para31.createEl('code', { cls: 'vaultquery-help-code', text: "series" });
+  para31.appendText(" column for multiple datasets.");
+  const para32 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para32.appendText("Use a ");
+  para32.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-chart-help" });
+  para32.appendText(" code block for the full chart reference, including result columns, config options, colors, multi-series charts, mixed charts, and examples.");
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Calendar output" });
+  const para33 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para33.appendText("Use ");
+  para33.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar" });
+  para33.appendText(" for calendar output. Each result row becomes one calendar item. At minimum, the query must return a date column.");
+  const para34 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para34.appendText("Use a ");
+  para34.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-calendar-help" });
+  para34.appendText(" code block for the full calendar reference, including result columns, config options, responsive behavior, clickable events, and examples.");
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Performance & Troubleshooting" });
+  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Analyzing query performance" });
+  const para35 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para35.appendText("Use ");
+  para35.createEl('code', { cls: 'vaultquery-help-code', text: "EXPLAIN QUERY PLAN" });
+  para35.appendText(" to inspect how SQLite executes the query:");
+  const codeBlock32 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock32.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock32Code = codeBlock32.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock32Code.innerHTML = Prism.highlight("EXPLAIN QUERY PLAN\nSELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE n.path LIKE 'Projects/%'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock32Code.textContent = "EXPLAIN QUERY PLAN\nSELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE n.path LIKE 'Projects/%'";
+  }
+  codeBlock32.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Reading the output" });
+  const tableWrapper3 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const table3 = tableWrapper3.createEl('table', { cls: 'vaultquery-help-table' });
   const thead3 = table3.createEl('thead');
   const row26 = thead3.createEl('tr');
-  row26.createEl('th', { text: "Option" });
-  row26.createEl('th', { text: "Description" });
+  row26.createEl('th', { text: "Term" });
+  row26.createEl('th', { text: "Meaning" });
   const tbody3 = table3.createEl('tbody');
   const row27 = tbody3.createEl('tr');
   const td39 = row27.createEl('td');
-  td39.createEl('code', { cls: 'vaultquery-help-code', text: "type" });
-  row27.createEl('td', { text: "bar, line, pie, doughnut, or scatter (required)" });
+  td39.createEl('code', { cls: 'vaultquery-help-code', text: "SCAN" });
+  row27.createEl('td', { text: "Full table scan (slow for large tables)" });
   const row28 = tbody3.createEl('tr');
   const td40 = row28.createEl('td');
-  td40.createEl('code', { cls: 'vaultquery-help-code', text: "title" });
-  row28.createEl('td', { text: "Chart title" });
+  td40.createEl('code', { cls: 'vaultquery-help-code', text: "SEARCH" });
+  row28.createEl('td', { text: "Index lookup (fast)" });
   const row29 = tbody3.createEl('tr');
   const td41 = row29.createEl('td');
-  td41.createEl('code', { cls: 'vaultquery-help-code', text: "datasetLabel" });
-  row29.createEl('td', { text: "Legend label for the dataset" });
+  td41.createEl('code', { cls: 'vaultquery-help-code', text: "USING INDEX" });
+  row29.createEl('td', { text: "Which index is being used" });
   const row30 = tbody3.createEl('tr');
   const td42 = row30.createEl('td');
-  td42.createEl('code', { cls: 'vaultquery-help-code', text: "xLabel" });
-  row30.createEl('td', { text: "X-axis label (bar, line, scatter)" });
-  const row31 = tbody3.createEl('tr');
-  const td43 = row31.createEl('td');
-  td43.createEl('code', { cls: 'vaultquery-help-code', text: "yLabel" });
-  row31.createEl('td', { text: "Y-axis label (bar, line, scatter)" });
-  const row32 = tbody3.createEl('tr');
-  const td44 = row32.createEl('td');
-  td44.createEl('code', { cls: 'vaultquery-help-code', text: "datasetBackgroundColor" });
-  const td45 = row32.createEl('td');
-  td45.appendText("Fill color (e.g., ");
-  td45.createEl('code', { cls: 'vaultquery-help-code', text: "rgba(54, 162, 235, 0.8)" });
-  td45.appendText(")");
-  const row33 = tbody3.createEl('tr');
-  const td46 = row33.createEl('td');
-  td46.createEl('code', { cls: 'vaultquery-help-code', text: "datasetBorderColor" });
-  row33.createEl('td', { text: "Border color" });
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Bar chart" });
-  const codeBlock28 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock28.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock28Code = codeBlock28.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock28Code.textContent = "SELECT tag_name as label, COUNT(*) as value\nFROM tags\nGROUP BY tag_name\nORDER BY value DESC\nLIMIT 10;\nconfig:\ntype: bar\ndatasetLabel: Tag count";
-  codeBlock28.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock28Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Bar chart with custom color" });
-  const codeBlock29 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock29.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock29Code = codeBlock29.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock29Code.textContent = "SELECT tag_name as label, COUNT(*) as value\nFROM tags\nGROUP BY tag_name\nLIMIT 5;\nconfig:\ntype: bar\ndatasetBackgroundColor: rgba(75, 192, 192, 0.8)\ndatasetBorderColor: rgba(75, 192, 192, 1)";
-  codeBlock29.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock29Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Per-bar colors via SQL" });
-  const para23 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para23.appendText("Use ");
-  para23.createEl('code', { cls: 'vaultquery-help-code', text: "backgroundColor" });
-  para23.appendText(" column to set colors per data point:");
-  const codeBlock30 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock30.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock30Code = codeBlock30.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock30Code.textContent = "SELECT\n    tag_name as label,\n    COUNT(*) as value,\n    CASE\n        WHEN tag_name = 'important' THEN 'rgba(255, 99, 132, 0.8)'\n        ELSE 'rgba(54, 162, 235, 0.8)'\n    END as backgroundColor\nFROM tags\nGROUP BY tag_name\nLIMIT 5;\nconfig:\ntype: bar";
-  codeBlock30.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock30Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Multi-series bar chart" });
-  const codeBlock31 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock31.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock31Code = codeBlock31.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock31Code.textContent = "SELECT status as label, priority as series, COUNT(*) as value\nFROM tasks\nGROUP BY status, priority;\nconfig:\ntype: bar\ntitle: Tasks by status and priority";
-  codeBlock31.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock31Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Mixed chart (bar + line)" });
-  const para24 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para24.appendText("Use ");
-  para24.createEl('code', { cls: 'vaultquery-help-code', text: "chartType" });
-  para24.appendText(" column to mix chart types:");
-  const codeBlock32 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock32.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock32Code = codeBlock32.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock32Code.textContent = "SELECT label, value, series, chartType, backgroundColor FROM (\n    SELECT 'Jan' as label, 10 as value, 'Sales' as series,\n           'bar' as chartType, 'rgba(54, 162, 235, 0.8)' as backgroundColor\n    UNION ALL\n    SELECT 'Jan', 8, 'Trend', 'line', 'rgba(255, 99, 132, 1)'\n    UNION ALL\n    SELECT 'Feb', 15, 'Sales', 'bar', 'rgba(54, 162, 235, 0.8)'\n    UNION ALL\n    SELECT 'Feb', 12, 'Trend', 'line', 'rgba(255, 99, 132, 1)'\n);\nconfig:\ntype: bar\ntitle: Sales vs Trend";
-  codeBlock32.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock32Code); }
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Line chart with axis labels" });
-  const codeBlock33 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock33.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-chart\n" });
-  const codeBlock33Code = codeBlock33.createEl('code', { cls: 'language-vaultquery-chart' });
-  codeBlock33Code.textContent = "SELECT done_date as label, COUNT(*) as value\nFROM tasks\nWHERE status = 'DONE'\nGROUP BY done_date\nORDER BY done_date;\nconfig:\ntype: line\nxLabel: Date\nyLabel: Completed\ndatasetLabel: Tasks completed";
-  codeBlock33.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock33Code); }
-  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Performance & Troubleshooting" });
-  container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Analyzing query performance" });
-  const para25 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para25.appendText("Use ");
-  para25.createEl('code', { cls: 'vaultquery-help-code', text: "EXPLAIN QUERY PLAN" });
-  para25.appendText(" to understand how SQLite executes your query:");
-  const codeBlock34 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock34.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock34Code = codeBlock34.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock34Code.textContent = "EXPLAIN QUERY PLAN\nSELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE n.path LIKE 'Projects/%'";
-  codeBlock34.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock34Code); }
-  container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Reading the output" });
-  const table4 = container.createEl('table', { cls: 'vaultquery-help-table' });
-  const thead4 = table4.createEl('thead');
-  const row34 = thead4.createEl('tr');
-  row34.createEl('th', { text: "Term" });
-  row34.createEl('th', { text: "Meaning" });
-  const tbody4 = table4.createEl('tbody');
-  const row35 = tbody4.createEl('tr');
-  const td47 = row35.createEl('td');
-  td47.createEl('code', { cls: 'vaultquery-help-code', text: "SCAN" });
-  row35.createEl('td', { text: "Full table scan (slow for large tables)" });
-  const row36 = tbody4.createEl('tr');
-  const td48 = row36.createEl('td');
-  td48.createEl('code', { cls: 'vaultquery-help-code', text: "SEARCH" });
-  row36.createEl('td', { text: "Index lookup (fast)" });
-  const row37 = tbody4.createEl('tr');
-  const td49 = row37.createEl('td');
-  td49.createEl('code', { cls: 'vaultquery-help-code', text: "USING INDEX" });
-  row37.createEl('td', { text: "Which index is being used" });
-  const row38 = tbody4.createEl('tr');
-  const td50 = row38.createEl('td');
-  td50.createEl('code', { cls: 'vaultquery-help-code', text: "COVERING INDEX" });
-  row38.createEl('td', { text: "Index contains all needed columns (fastest)" });
+  td42.createEl('code', { cls: 'vaultquery-help-code', text: "COVERING INDEX" });
+  row30.createEl('td', { text: "Index contains all needed columns (fastest)" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Common optimizations" });
-  const list5 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
-  const item18 = list5.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item18.createEl('strong', { cls: 'vaultquery-help-bold', text: "Prefer `notes_with_properties` for convenience, joins for speed" });
-  item18.appendText(" - The view joins all property keys which is convenient but slower. For performance-critical queries, use direct joins:");
-  const para26 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para26.appendText("   Convenient:");
-  const codeBlock35 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock35.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock35Code = codeBlock35.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock35Code.textContent = "SELECT path, title, status FROM notes_with_properties WHERE status = 'active'";
-  codeBlock35.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock35Code); }
-  const para27 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para27.appendText("   Faster:");
-  const codeBlock36 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock36.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock36Code = codeBlock36.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock36Code.textContent = "SELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE p.value = 'active'";
-  codeBlock36.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock36Code); }
-  const list6 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
-  const item19 = list6.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item19.createEl('strong', { cls: 'vaultquery-help-bold', text: "Filter early" });
-  item19.appendText(" - Put WHERE conditions on the smallest result set first");
-  const list7 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
-  const item20 = list7.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item20.createEl('strong', { cls: 'vaultquery-help-bold', text: "Use EXISTS instead of IN" });
-  item20.appendText(" - For subqueries returning many rows:");
-  const codeBlock37 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock37.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock37Code = codeBlock37.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock37Code.textContent = "-- Instead of: WHERE path IN (SELECT path FROM tags WHERE tag_name = 'project')\nSELECT * FROM notes n\nWHERE EXISTS (SELECT 1 FROM tags t WHERE t.path = n.path AND t.tag_name = 'project')";
-  codeBlock37.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock37Code); }
-  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Custom templates" });
-  const para28 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para28.appendText("Use ");
-  para28.createEl('code', { cls: 'vaultquery-help-code', text: "template:" });
-  para28.appendText(" after the SQL query (ending with ");
-  para28.createEl('code', { cls: 'vaultquery-help-code', text: ";" });
-  para28.appendText(") to render custom HTML output.");
-  const list8 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
-  const item21 = list8.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item21.createEl('code', { cls: 'vaultquery-help-code', text: "results" });
-  item21.appendText(" - Array of row objects from query");
-  const item22 = list8.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item22.createEl('code', { cls: 'vaultquery-help-code', text: "count" });
-  item22.appendText(" - Number of rows returned");
-  const item23 = list8.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item23.createEl('code', { cls: 'vaultquery-help-code', text: "query" });
-  item23.appendText(" - The SQL query string");
-  const para29 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para29.appendText("Helper functions available via ");
-  para29.createEl('code', { cls: 'vaultquery-help-code', text: "h" });
-  para29.appendText(":");
-  const list9 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
-  const item24 = list9.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item24.createEl('code', { cls: 'vaultquery-help-code', text: "h.link(path, text?)" });
-  item24.appendText(" - Create internal link");
-  const item25 = list9.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item25.createEl('code', { cls: 'vaultquery-help-code', text: "h.escape(text)" });
-  item25.appendText(" - Escape HTML characters");
-  const item26 = list9.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item26.createEl('code', { cls: 'vaultquery-help-code', text: "h.truncate(text, length?)" });
-  item26.appendText(" - Truncate text (default 200 chars)");
-  const item27 = list9.createEl('li', { cls: 'vaultquery-help-list-item' });
-  item27.createEl('code', { cls: 'vaultquery-help-code', text: "h.formatDate(timestamp)" });
-  item27.appendText(" - Format timestamp as date");
+  const list9 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
+  const item41 = list9.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item41.createEl('strong', { cls: 'vaultquery-help-bold', text: "Prefer `notes_with_properties` for convenience, joins for speed" });
+  item41.appendText(" - The view joins all property keys which is convenient but slower. For performance-critical queries, use direct joins:");
+  const para36 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para36.appendText("   Convenient:");
+  const codeBlock33 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock33.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock33Code = codeBlock33.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock33Code.innerHTML = Prism.highlight("SELECT path, title, status FROM notes_with_properties WHERE status = 'active'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock33Code.textContent = "SELECT path, title, status FROM notes_with_properties WHERE status = 'active'";
+  }
+  codeBlock33.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const para37 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para37.appendText("   Faster:");
+  const codeBlock34 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock34.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock34Code = codeBlock34.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock34Code.innerHTML = Prism.highlight("SELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE p.value = 'active'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock34Code.textContent = "SELECT n.path, n.title, p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path AND p.key = 'status'\nWHERE p.value = 'active'";
+  }
+  codeBlock34.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const list10 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
+  const item42 = list10.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item42.createEl('strong', { cls: 'vaultquery-help-bold', text: "Filter early" });
+  item42.appendText(" - Put WHERE conditions on the smallest result set first");
+  const list11 = container.createEl('ol', { cls: 'vaultquery-help-list vaultquery-help-ordered-list' });
+  const item43 = list11.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item43.createEl('strong', { cls: 'vaultquery-help-bold', text: "Use EXISTS instead of IN" });
+  item43.appendText(" - For subqueries returning many rows:");
+  const codeBlock35 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock35.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock35Code = codeBlock35.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock35Code.innerHTML = Prism.highlight("-- Instead of: WHERE path IN (SELECT path FROM tags WHERE tag_name = '#project')\nSELECT * FROM notes n\nWHERE EXISTS (SELECT 1 FROM tags t WHERE t.path = n.path AND t.tag_name = '#project')", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock35Code.textContent = "-- Instead of: WHERE path IN (SELECT path FROM tags WHERE tag_name = '#project')\nSELECT * FROM notes n\nWHERE EXISTS (SELECT 1 FROM tags t WHERE t.path = n.path AND t.tag_name = '#project')";
+  }
+  codeBlock35.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "JavaScript rendering" });
+  const para38 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para38.appendText("Enable JavaScript rendering in settings, then use ");
+  para38.createEl('code', { cls: 'vaultquery-help-code', text: "template:" });
+  para38.appendText(" after the SQL query (ending with ");
+  para38.createEl('code', { cls: 'vaultquery-help-code', text: ";" });
+  para38.appendText(") to run JavaScript rendering code.");
+  const list12 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item44 = list12.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item44.createEl('code', { cls: 'vaultquery-help-code', text: "results" });
+  item44.appendText(" - Array of row objects from query");
+  const item45 = list12.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item45.createEl('code', { cls: 'vaultquery-help-code', text: "count" });
+  item45.appendText(" - Number of rows returned");
+  const item46 = list12.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item46.createEl('code', { cls: 'vaultquery-help-code', text: "query" });
+  item46.appendText(" - The SQL query string");
+  const para39 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
+  para39.appendText("Helper functions available via ");
+  para39.createEl('code', { cls: 'vaultquery-help-code', text: "h" });
+  para39.appendText(":");
+  const list13 = container.createEl('ul', { cls: 'vaultquery-help-list vaultquery-help-unordered-list' });
+  const item47 = list13.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item47.createEl('code', { cls: 'vaultquery-help-code', text: "h.link(path, text?)" });
+  item47.appendText(" - Create internal link");
+  const item48 = list13.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item48.createEl('code', { cls: 'vaultquery-help-code', text: "h.escape(text)" });
+  item48.appendText(" - Escape HTML characters");
+  const item49 = list13.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item49.createEl('code', { cls: 'vaultquery-help-code', text: "h.truncate(text, length?)" });
+  item49.appendText(" - Truncate text (default 200 chars)");
+  const item50 = list13.createEl('li', { cls: 'vaultquery-help-list-item' });
+  item50.createEl('code', { cls: 'vaultquery-help-code', text: "h.formatDate(timestamp)" });
+  item50.appendText(" - Format timestamp as date");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Simple list template" });
-  const codeBlock38 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock38.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock38Code = codeBlock38.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock38Code.textContent = "SELECT title, path FROM notes LIMIT 5;\ntemplate:\nreturn `<ul>\n  ${results.map(r => `<li>${h.link(r.path, r.title)}</li>`).join('')}\n</ul>`";
-  codeBlock38.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock38Code); }
+  const codeBlock36 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock36.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock36Code = codeBlock36.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock36Code.innerHTML = Prism.highlight("SELECT title, path FROM notes LIMIT 5;\ntemplate:\nreturn `<ul>\n  ${results.map(r => `<li>${h.link(r.path, r.title)}</li>`).join('')}\n</ul>`", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock36Code.textContent = "SELECT title, path FROM notes LIMIT 5;\ntemplate:\nreturn `<ul>\n  ${results.map(r => `<li>${h.link(r.path, r.title)}</li>`).join('')}\n</ul>`";
+  }
+  codeBlock36.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Card layout template" });
-  const codeBlock39 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock39.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock39Code = codeBlock39.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock39Code.textContent = "SELECT title, path, content FROM notes WHERE content IS NOT NULL LIMIT 3;\ntemplate:\nreturn `<div style=\"display: grid; gap: 1em;\">\n  ${results.map(r => `\n    <div style=\"border: 1px solid var(--background-modifier-border); padding: 1em; border-radius: 8px;\">\n      <h4>${h.link(r.path, r.title)}</h4>\n      <p>${h.truncate(h.escape(r.content), 100)}</p>\n    </div>\n  `).join('')}\n</div>`";
-  codeBlock39.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock39Code); }
+  const codeBlock37 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock37.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock37Code = codeBlock37.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock37Code.innerHTML = Prism.highlight("SELECT title, path, content FROM notes WHERE content IS NOT NULL LIMIT 3;\ntemplate:\nreturn `<div style=\"display: grid; gap: 1em;\">\n  ${results.map(r => `\n    <div style=\"border: 1px solid var(--background-modifier-border); padding: 1em; border-radius: 8px;\">\n      <h4>${h.link(r.path, r.title)}</h4>\n      <p>${h.truncate(h.escape(r.content), 100)}</p>\n    </div>\n  `).join('')}\n</div>`", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock37Code.textContent = "SELECT title, path, content FROM notes WHERE content IS NOT NULL LIMIT 3;\ntemplate:\nreturn `<div style=\"display: grid; gap: 1em;\">\n  ${results.map(r => `\n    <div style=\"border: 1px solid var(--background-modifier-border); padding: 1em; border-radius: 8px;\">\n      <h4>${h.link(r.path, r.title)}</h4>\n      <p>${h.truncate(h.escape(r.content), 100)}</p>\n    </div>\n  `).join('')}\n</div>`";
+  }
+  codeBlock37.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Task summary with count" });
-  const codeBlock40 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock40.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock40Code = codeBlock40.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock40Code.textContent = "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status;\ntemplate:\nreturn `<p>Found ${count} status types:</p>\n<ul>\n  ${results.map(r => `<li><strong>${h.escape(r.status)}</strong>: ${r.cnt} tasks</li>`).join('')}\n</ul>`";
-  codeBlock40.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock40Code); }
+  const codeBlock38 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock38.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock38Code = codeBlock38.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock38Code.innerHTML = Prism.highlight("SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status;\ntemplate:\nreturn `<p>Found ${count} status types:</p>\n<ul>\n  ${results.map(r => `<li><strong>${h.escape(r.status)}</strong>: ${r.cnt} tasks</li>`).join('')}\n</ul>`", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock38Code.textContent = "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status;\ntemplate:\nreturn `<p>Found ${count} status types:</p>\n<ul>\n  ${results.map(r => `<li><strong>${h.escape(r.status)}</strong>: ${r.cnt} tasks</li>`).join('')}\n</ul>`";
+  }
+  codeBlock38.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
 }

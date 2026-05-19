@@ -2,11 +2,12 @@
 status: active
 category: documentation
 author: VaultQuery
+location: 41.07134837048664, -71.85714016024518
 ---
 
 ## Working with Dates
 
-Timestamps are stored in milliseconds. Use `/1000` when converting with SQLite date functions.
+Timestamps are stored in milliseconds. Divide by `1000` when converting with SQLite date functions.
 
 ### Recently modified notes
 
@@ -21,7 +22,7 @@ LIMIT 20
 ## Searching Content
 
 > [!important] Enable content indexing
-> Content search is disabled by default. To enable go to Settings → VaultQuery → Indexing → Index note content
+> Content search is disabled by default. Enable at Settings → VaultQuery → Index note content.
 
 ### Full-text search in content
 
@@ -29,14 +30,6 @@ LIMIT 20
 SELECT path, title
 FROM notes
 WHERE content LIKE '%VaultQuery%'
-```
-
-### Case-insensitive search
-
-```vaultquery
-SELECT path, title
-FROM notes
-WHERE LOWER(content) LIKE '%query%'
 ```
 
 
@@ -95,7 +88,7 @@ LIMIT 10
 
 ### Notes with specific headings
 > [!important] Enable heading indexing
-> Heading queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index headings
+> Heading queries are disabled by default. Enable at Settings → VaultQuery → Index headings.
 
 ```vaultquery
 SELECT DISTINCT n.path, n.title, h.heading_text 
@@ -108,7 +101,7 @@ LIMIT 20
 
 ### Notes without any tasks
 > [!important] Enable task indexing
-> Task queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tasks
+> Task queries are disabled by default. Enable at Settings → VaultQuery → Index tasks.
 
 ```vaultquery
 SELECT n.path, n.title
@@ -121,12 +114,12 @@ LIMIT 20
 
 ### Orphan notes (not linked anywhere)
 > [!important] Enable link indexing
-> Link queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index links
+> Link queries are disabled by default. Enable at Settings → VaultQuery → Index links.
 
 ```vaultquery
 SELECT n.path, n.title
 FROM notes n
-LEFT JOIN links l ON n.path = l.link_target
+LEFT JOIN links l ON n.path = l.link_target_path
 WHERE l.id IS NULL
 ORDER BY n.modified DESC
 LIMIT 20
@@ -280,4 +273,3 @@ SELECT
 FROM notes
 LIMIT 10
 ```
-

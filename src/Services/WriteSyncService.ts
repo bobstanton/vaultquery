@@ -1,17 +1,22 @@
 import { App, TFile, Notice, normalizePath } from 'obsidian';
 import { VaultDatabase } from '../Database/DatabaseService';
+import { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { EditPlanner } from './EditPlanner';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, INFO_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
 import { createTableKey, parseTableKey, createCellKey } from '../utils/StringUtils';
 import { EntityHandlerRegistry, type PreviewResult, type EditPlannerPreviewResult, type EntityHandlerContext, createEmptyResult, extractSql } from '../WriteSync';
+import { appendCellsFromTableRows } from '../WriteSync/TableUtils';
+import { logger as rootLogger } from '../utils/logger';
 
 import type { PreviewResult as ServicePreviewResult } from './PreviewService';
 import type { EditPlan, Edit, ReplaceRangeEdit, FrontmatterEdit } from './EditPlanner';
 import type { TaskRow, HeadingRow, ListItemRow, TableCellRow } from './ContentLocationService';
 
-export class WriteOperationError extends Error {
+const logger = rootLogger.scope('WriteSync');
+
+class WriteOperationError extends Error {
   public constructor(message: string, public readonly operation: string, public readonly filePath?: string, public readonly cause?: Error) {
     super(message);
     this.name = 'WriteOperationError';
@@ -23,7 +28,7 @@ export class WriteSyncService {
   private handlerRegistry: EntityHandlerRegistry;
   private handlerContext: EntityHandlerContext;
 
-  public constructor(private app: App, private database: VaultDatabase, private settings: VaultQuerySettings) {
+  public constructor(private app: App, private database: VaultDatabase | WorkerDatabase, private settings: VaultQuerySettings) {
     this.editPlanner = new EditPlanner({
       app: this.app,
       metadataCache: this.app.metadataCache,
@@ -40,6 +45,10 @@ export class WriteSyncService {
         allowDeleteNotes: this.settings.allowDeleteNotes
       }
     };
+  }
+
+  public setDatabase(database: VaultDatabase | WorkerDatabase): void {
+    this.database = database;
   }
 
   private async queryListItemsByListIndex(path: string, listIndex: number): Promise<Array<{ line_number: number | null; item_index: number }>> {
@@ -59,29 +68,24 @@ export class WriteSyncService {
 
   public async syncChanges(previewResult: ServicePreviewResult): Promise<string[]> {
     try {
-      const editPlannerPreview = await this.convertPreviewResult(previewResult as unknown as PreviewResult);
+      const editPlannerPreview = await this.convertPreviewResult(previewResult);
       const editPlan = await this.editPlanner.planFromPreview(editPlannerPreview);
 
       if (editPlan.warnings.length > 0) {
-        console.warn(`[VaultQuery] Edit plan warnings:`, editPlan.warnings);
-        // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- false positive: Notice message with colon, not YAML
-        new Notice(`VaultQuery: ${WARNING_MESSAGES.EDIT_PLAN_WARNINGS(editPlan.warnings.length)}`, 5000);
+        logger.warn('Edit plan warnings', editPlan.warnings);
+        new Notice("VaultQuery: " + WARNING_MESSAGES.EDIT_PLAN_WARNINGS(editPlan.warnings.length), 5000);
       }
 
       let affectedPaths: string[] = [];
       if (editPlan.edits.length > 0) {
         affectedPaths = await this.applyEditPlan(editPlan);
-        // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- false positive: Notice message with colon, not YAML
-        new Notice(`VaultQuery: ${INFO_MESSAGES.FILES_UPDATED(editPlan.stats.filesTouched)}`, 3000);
+        new Notice("VaultQuery: " + INFO_MESSAGES.FILES_UPDATED(editPlan.stats.filesTouched), 3000);
       }
 
       return affectedPaths;
-
-    }
-
-    catch (error: unknown) {
+    } catch (error: unknown) {
       const message = getErrorMessage(error);
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.WRITE_SYNC_ERROR}:`, message);
+      logger.error(CONSOLE_ERRORS.WRITE_SYNC_ERROR, message);
 
       const contextualError = error instanceof WriteOperationError
         ? error
@@ -99,14 +103,12 @@ export class WriteSyncService {
 
   private async applyEditPlan(editPlan: EditPlan): Promise<string[]> {
     const editsByFile = this.groupEditsByFile(editPlan.edits);
-    const affectedPaths: string[] = [];
 
     for (const [filePath, edits] of editsByFile) {
       await this.applyEditsToFile(filePath, edits);
-      affectedPaths.push(filePath);
     }
 
-    return affectedPaths;
+    return Array.from(editsByFile.keys());
   }
 
   private async applyEditsToFile(filePath: string, edits: Edit[]): Promise<void> {
@@ -134,7 +136,7 @@ export class WriteSyncService {
           }
           catch (e) {
             // Folder might already exist due to race condition, ignore
-            console.warn('[VaultQuery] WriteSyncService: Folder creation failed (may already exist)', parentPath, e);
+            logger.warn('Folder creation failed (may already exist)', parentPath, e);
           }
         }
       }
@@ -170,7 +172,6 @@ export class WriteSyncService {
     }
 
     if (rangeEdits.length > 0) {
-      // eslint-disable-next-line obsidianmd/vault/prefer-cached-read -- need fresh content for accurate range edits
       const content = await this.app.vault.read(file);
 
       let modifiedContent = content;
@@ -179,11 +180,9 @@ export class WriteSyncService {
         modifiedContent = this.applyRangeEdit(modifiedContent, edit);
       }
 
-      // eslint-disable-next-line obsidianmd/prefer-editor-api -- Editor not available in write sync; using vault.modify for file updates
       await this.app.vault.modify(file, modifiedContent);
     }
   }
-
 
   private applyRangeEdit(content: string, edit: ReplaceRangeEdit): string {
     const { start, end } = edit.range;
@@ -203,7 +202,6 @@ export class WriteSyncService {
     await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
       edit.mutate(frontmatter);
     });
-    // eslint-disable-next-line obsidianmd/vault/prefer-cached-read -- need fresh content after frontmatter mutation
     return await this.app.vault.read(file);
   }
 
@@ -211,10 +209,12 @@ export class WriteSyncService {
     const byFile = new Map<string, Edit[]>();
 
     for (const edit of edits) {
-      const path = edit.path;
-      const existing = byFile.get(path) || [];
-      existing.push(edit);
-      byFile.set(path, existing);
+      const existing = byFile.get(edit.path);
+      if (existing) {
+        existing.push(edit);
+      } else {
+        byFile.set(edit.path, [edit]);
+      }
     }
 
     return byFile;
@@ -226,15 +226,13 @@ export class WriteSyncService {
       if (!(file instanceof TFile)) {
         throw new Error(ERROR_MESSAGES.FILE_NOT_FOUND(path));
       }
-      // eslint-disable-next-line obsidianmd/vault/prefer-cached-read -- need fresh content for accurate edit planning
       return await this.app.vault.read(file);
     }
     catch (error: unknown) {
-      console.warn(`[VaultQuery] ${WARNING_MESSAGES.FILE_READ_FAILED(path, getErrorMessage(error))}`);
+      logger.warn(WARNING_MESSAGES.FILE_READ_FAILED(path, getErrorMessage(error)));
       return '';
     }
   }
-
 
   private async convertPreviewResult(previewResult: PreviewResult): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'multi' && previewResult.multiResults) {
@@ -324,8 +322,7 @@ export class WriteSyncService {
         const key = createCellKey(cell.path, cell.table_index, cell.row_index, cell.column_name);
         if (changedCellMap.has(key)) {
           allTableCells.push(changedCellMap.get(key)!);
-        }
-        else {
+        } else {
           allTableCells.push(cell);
         }
       }
@@ -351,57 +348,18 @@ export class WriteSyncService {
   }
 
   private async handleTableRowsInMulti(result: PreviewResult, affectedTables: Set<string>, newRowsByTable: Map<string, TableCellRow[]>): Promise<void> {
-    const tableLineNumbers = new Map<string, number | null>();
-
-    for (let i = 0; i < result.after.length; i++) {
-      const r = result.after[i];
-      const path = r.path as string;
-      const table_index = (r.table_index as number) ?? 0;
-      const tableKey = createTableKey(path, table_index);
-      affectedTables.add(tableKey);
-
-      const tableLineNumber = r.table_line_number as number | null | undefined;
-      if (!tableLineNumbers.has(tableKey) || (tableLineNumber != null && tableLineNumbers.get(tableKey) == null)) {
-        tableLineNumbers.set(tableKey, tableLineNumber ?? null);
-      }
-
-      const existingMaxRows = await this.database.all(
-        'SELECT COALESCE(MAX(row_index), -1) as max_row FROM table_cells WHERE path = ? AND table_index = ?',
-        [path, table_index]
-      );
-      const baseRowIndex = ((existingMaxRows[0]?.max_row as number) ?? -1) + 1;
-      const row_index = (r.row_index as number) ?? (baseRowIndex + i);
-
-      const raw = r.row_json;
-      let obj: Record<string, unknown> = {};
-      try {
-        if (typeof raw === 'string') obj = JSON.parse(raw);
-        else if (typeof raw === 'object' && raw !== null) obj = raw as Record<string, unknown>;
-      }
-      catch (e) {
-        console.warn('[VaultQuery] WriteSyncService: Failed to parse row_json in multi operation', e);
-      }
-
-      const tableCells = newRowsByTable.get(tableKey) || [];
-      let isFirstCellForTable = tableCells.length === 0;
-      for (const [column_name, v] of Object.entries(obj)) {
-        const cell: TableCellRow = {
-          path,
-          table_index,
-          row_index,
-          column_name,
-          cell_value: v == null ? '' : String(v),
-          start_offset: null,
-          end_offset: null,
-        };
-
-        if (isFirstCellForTable && tableLineNumbers.get(tableKey) != null) {
-          cell.line_number = tableLineNumbers.get(tableKey);
-          isFirstCellForTable = false;
-        }
-        tableCells.push(cell);
-      }
-      newRowsByTable.set(tableKey, tableCells);
-    }
+    await appendCellsFromTableRows(
+      result.after,
+      affectedTables,
+      newRowsByTable,
+      async (path, tableIndex) => {
+        const existingMaxRows = await this.database.all(
+          'SELECT COALESCE(MAX(row_index), -1) as max_row FROM table_cells WHERE path = ? AND table_index = ?',
+          [path, tableIndex]
+        );
+        return ((existingMaxRows[0]?.max_row as number) ?? -1) + 1;
+      },
+      'WriteSyncService'
+    );
   }
 }

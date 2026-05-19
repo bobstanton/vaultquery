@@ -1,114 +1,51 @@
 import type { TableCellRow } from '../Services/ContentLocationService';
 import type { EntityHandler, EntityHandlerContext, PreviewResult, EditPlannerPreviewResult } from './types';
 import { createTableKey, parseTableKey, createRowColumnKey } from '../utils/StringUtils';
-import { extractSql } from './types';
+import { asNum, asStr, extractSql } from './types';
+import { appendCellsFromTableRows } from './TableUtils';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('WriteSync');
 
 export class TableCellHandler implements EntityHandler {
   readonly supportedTables = ['table_cells', 'table_rows'];
 
   canHandle(table: string): boolean {
     if (this.supportedTables.includes(table)) return true;
-    // Dynamic table views end with _table
     if (table.endsWith('_table')) return true;
     return false;
   }
 
-  async convertPreviewResult(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  async convertPreviewResult(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     return this.handleTableCellsOperation(previewResult, context);
   }
 
-  async handleInsertOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  async handleInsertOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.table === 'table_rows') {
       return this.handleTableRowsInsert(previewResult, context);
     }
     return this.handleTableCellsOperation(previewResult, context);
   }
 
-  private async handleTableRowsInsert(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTableRowsInsert(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const allCells: TableCellRow[] = [];
     const affectedTables = new Set<string>();
     const newCellsByTable = new Map<string, TableCellRow[]>();
-    const tableLineNumbers = new Map<string, number | null>();
 
-    // Pre-fetch max row indices for all affected tables
-    const maxRowByTable = new Map<string, number>();
-    for (const r of previewResult.after) {
-      const path = r.path as string;
-      const table_index = (r.table_index as number) ?? 0;
-      const tableKey = createTableKey(path, table_index);
-      if (!maxRowByTable.has(tableKey)) {
+    await appendCellsFromTableRows(
+      previewResult.after,
+      affectedTables,
+      newCellsByTable,
+      async (path, tableIndex) => {
         const existingMaxRows = await context.queryDatabase<{ max_row: number }>(
           'SELECT COALESCE(MAX(row_index), -1) as max_row FROM table_cells WHERE path = ? AND table_index = ?',
-          [path, table_index]
+          [path, tableIndex]
         );
-        maxRowByTable.set(tableKey, ((existingMaxRows[0]?.max_row as number) ?? -1) + 1);
-      }
-    }
+        return ((existingMaxRows[0]?.max_row as number) ?? -1) + 1;
+      },
+      'TableCellHandler'
+    );
 
-    // Track how many rows we've added per table for incrementing row_index
-    const rowCountByTable = new Map<string, number>();
-
-    for (let i = 0; i < previewResult.after.length; i++) {
-      const r = previewResult.after[i];
-      const path = r.path as string;
-      const table_index = (r.table_index as number) ?? 0;
-      const tableKey = createTableKey(path, table_index);
-      affectedTables.add(tableKey);
-
-      // Capture table_line_number from the first row that has it
-      const tableLineNumber = r.table_line_number as number | null | undefined;
-      if (!tableLineNumbers.has(tableKey) || (tableLineNumber != null && tableLineNumbers.get(tableKey) == null)) {
-        tableLineNumbers.set(tableKey, tableLineNumber ?? null);
-      }
-
-      const baseRowIndex = maxRowByTable.get(tableKey) ?? 0;
-      const rowOffset = rowCountByTable.get(tableKey) ?? 0;
-      const row_index = (r.row_index as number) ?? (baseRowIndex + rowOffset);
-      rowCountByTable.set(tableKey, rowOffset + 1);
-
-      const raw = r.row_json;
-      let obj: Record<string, unknown> = {};
-      try {
-        if (typeof raw === 'string') obj = JSON.parse(raw);
-        else if (typeof raw === 'object' && raw !== null) obj = raw as Record<string, unknown>;
-      }
-
-      catch (e) {
-        console.warn('[VaultQuery] TableCellHandler: Failed to parse row_json', e);
-      }
-
-      const tableCells = newCellsByTable.get(tableKey) || [];
-      let isFirstCellForTable = tableCells.length === 0;
-      for (const [column_name, v] of Object.entries(obj)) {
-        const cell: TableCellRow = {
-          path,
-          table_index,
-          row_index,
-          column_name,
-          cell_value: v == null ? '' : String(v),
-          start_offset: null,
-          end_offset: null,
-        };
-        // Add line_number to first cell of new table for positioning
-        if (isFirstCellForTable && tableLineNumbers.get(tableKey) != null) {
-          cell.line_number = tableLineNumbers.get(tableKey);
-          isFirstCellForTable = false;
-        }
-        tableCells.push(cell);
-      }
-      newCellsByTable.set(tableKey, tableCells);
-    }
-
-    // For each affected table, fetch existing cells and add new cells
     for (const tableKey of affectedTables) {
       const { path, tableIndex } = parseTableKey(tableKey);
 
@@ -119,7 +56,6 @@ export class TableCellHandler implements EntityHandler {
 
       const newCells = newCellsByTable.get(tableKey) || [];
 
-      // Find the minimum row_index being inserted
       const explicitRowIndices = newCells
         .map(c => c.row_index)
         .filter(idx => idx !== undefined && idx !== null);
@@ -127,7 +63,6 @@ export class TableCellHandler implements EntityHandler {
         ? Math.min(...explicitRowIndices)
         : null;
 
-      // Add existing cells, shifting row_index if inserting at a specific position
       for (const row of existingCells) {
         const cell = this.convertToTableCellRow(row);
         if (insertAtIndex !== null && cell.row_index >= insertAtIndex) {
@@ -147,10 +82,7 @@ export class TableCellHandler implements EntityHandler {
     };
   }
 
-  private async handleTableCellsOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTableCellsOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const changedCells = previewResult.after.map(row => this.convertToTableCellRow(row));
 
     const affectedTables = new Set<string>();
@@ -229,20 +161,20 @@ export class TableCellHandler implements EntityHandler {
   }
 
   convertToTableCellRow(row: Record<string, unknown>): TableCellRow {
-    const path = typeof row.path === 'string' ? row.path : '';
+    const path = asStr(row.path);
     if (!path) {
-      console.warn('[VaultQuery] TableCellHandler.convertToTableCellRow: missing required field "path"', row);
+      logger.warn('TableCellHandler.convertToTableCellRow: missing required field "path"', row);
     }
 
     return {
       path,
-      table_index: typeof row.table_index === 'number' ? row.table_index : 0,
-      row_index: typeof row.row_index === 'number' ? row.row_index : 0,
-      column_name: typeof row.column_name === 'string' ? row.column_name : '',
-      cell_value: typeof row.cell_value === 'string' ? row.cell_value : '',
-      start_offset: typeof row.start_offset === 'number' ? row.start_offset : null,
-      end_offset: typeof row.end_offset === 'number' ? row.end_offset : null,
-      line_number: typeof row.line_number === 'number' ? row.line_number : null
+      table_index: asNum(row.table_index, 0),
+      row_index: asNum(row.row_index, 0),
+      column_name: asStr(row.column_name),
+      cell_value: asStr(row.cell_value),
+      start_offset: asNum(row.start_offset, null),
+      end_offset: asNum(row.end_offset, null),
+      line_number: asNum(row.line_number, null)
     };
   }
 

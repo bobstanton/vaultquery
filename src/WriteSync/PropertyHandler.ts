@@ -1,34 +1,27 @@
-import type { EntityHandler, EntityHandlerContext, PreviewResult, EditPlannerPreviewResult, PropertyRow } from './types';
-import { extractSql } from './types';
+import type { EntityHandlerContext, PreviewResult, EditPlannerPreviewResult, PropertyRow } from './types';
+import { asStr, createEntityResult } from './types';
+import { BaseEntityHandler } from './BaseEntityHandler';
+import { logger as rootLogger } from '../utils/logger';
 
-export class PropertyHandler implements EntityHandler {
-  readonly supportedTables = ['properties'];
+const logger = rootLogger.scope('WriteSync');
 
-  canHandle(table: string): boolean {
-    return this.supportedTables.includes(table);
+export class PropertyHandler extends BaseEntityHandler {
+  public constructor() {
+    super(['properties']);
   }
 
-  convertPreviewResult(
-    previewResult: PreviewResult,
-    _context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  convertPreviewResult(previewResult: PreviewResult, _context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'delete') {
-      return Promise.resolve({
-        sqlToApply: extractSql(previewResult),
-        tasksAfter: [],
-        headingsAfter: [],
-        tableCellsAfter: [],
+      return Promise.resolve(createEntityResult(previewResult, {
         propertiesAfter: [],
         propertiesToDelete: previewResult.before.map(row => this.convertToPropertyRow(row))
-      });
+      }));
     }
 
-    // For updates, check if key changed - if so, we need to delete old and add new
     if (previewResult.op === 'update') {
       const beforeProps = previewResult.before.map(row => this.convertToPropertyRow(row));
       const afterProps = previewResult.after.map(row => this.convertToPropertyRow(row));
 
-      // Find properties where the key changed (need to delete old key)
       const propsToDelete: PropertyRow[] = [];
       for (let i = 0; i < beforeProps.length; i++) {
         const before = beforeProps[i];
@@ -38,50 +31,34 @@ export class PropertyHandler implements EntityHandler {
         }
       }
 
-      return Promise.resolve({
-        sqlToApply: extractSql(previewResult),
-        tasksAfter: [],
-        headingsAfter: [],
-        tableCellsAfter: [],
+      return Promise.resolve(createEntityResult(previewResult, {
         propertiesAfter: afterProps,
         propertiesToDelete: propsToDelete.length > 0 ? propsToDelete : undefined
-      });
+      }));
     }
 
-    // For inserts, just add the new properties
-    return Promise.resolve({
-      sqlToApply: extractSql(previewResult),
-      tasksAfter: [],
-      headingsAfter: [],
-      tableCellsAfter: [],
+    return Promise.resolve(createEntityResult(previewResult, {
       propertiesAfter: previewResult.after.map(row => this.convertToPropertyRow(row))
-    });
+    }));
   }
 
-  handleInsertOperation(
-    previewResult: PreviewResult,
-    _context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
-    return Promise.resolve({
-      sqlToApply: extractSql(previewResult),
-      tasksAfter: [],
-      headingsAfter: [],
-      tableCellsAfter: [],
+  handleInsertOperation(previewResult: PreviewResult, _context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
+    return Promise.resolve(createEntityResult(previewResult, {
       propertiesAfter: previewResult.after.map(row => this.convertToPropertyRow(row))
-    });
+    }));
   }
 
   convertToPropertyRow(row: Record<string, unknown>): PropertyRow {
-    const path = typeof row.path === 'string' ? row.path : '';
+    const path = asStr(row.path);
     if (!path) {
-      console.warn('[VaultQuery] PropertyHandler.convertToPropertyRow: missing required field "path"', row);
+      logger.warn('PropertyHandler.convertToPropertyRow: missing required field "path"', row);
     }
 
     return {
       path,
-      key: typeof row.key === 'string' ? row.key : '',
-      value: typeof row.value === 'string' ? row.value : null,
-      type: typeof row.type === 'string' ? row.type : null
+      key: asStr(row.key),
+      value: asStr(row.value, null),
+      type: asStr(row.type, null)
     };
   }
 }

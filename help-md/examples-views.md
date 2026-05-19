@@ -113,8 +113,8 @@ ORDER BY due_date
 CREATE VIEW orphan_notes AS
 SELECT n.path, n.title, n.modified
 FROM notes n
-LEFT JOIN links l ON n.path = l.link_target
-WHERE l.link_target IS NULL
+LEFT JOIN links l ON n.path = l.link_target_path
+WHERE l.link_target_path IS NULL
   AND n.path NOT LIKE '%/_templates/%'
   AND n.path NOT LIKE '%.excalidraw.md'
 ORDER BY n.modified DESC
@@ -188,11 +188,12 @@ ORDER BY tag_count DESC
 ~~~vaultquery-view
 CREATE VIEW popular_notes AS
 SELECT
-  link_target as path,
+  link_target_path as path,
   COUNT(*) as incoming_links
 FROM links
 WHERE link_type = 'internal'
-GROUP BY link_target
+  AND link_target_path IS NOT NULL
+GROUP BY link_target_path
 ORDER BY incoming_links DESC
 ~~~
 
@@ -204,10 +205,10 @@ Using `resolve_link()` to find links that don't resolve to any file:
 CREATE VIEW broken_links AS
 SELECT
   l.path as source,
-  l.link_text as target
+  l.link_target as target
 FROM links l
 WHERE l.link_type = 'internal'
-  AND resolve_link(l.link_text, l.path) IS NULL
+  AND resolve_link(l.link_target, l.path) IS NULL
 ~~~
 
 ### Link graph edges
@@ -216,9 +217,9 @@ WHERE l.link_type = 'internal'
 CREATE VIEW link_graph AS
 SELECT DISTINCT
   l.path as source,
-  l.link_target as target
+  l.link_target_path as target
 FROM links l
-JOIN notes n ON l.link_target = n.path
+JOIN notes n ON l.link_target_path = n.path
 WHERE l.link_type = 'internal'
 ~~~
 

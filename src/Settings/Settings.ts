@@ -1,18 +1,14 @@
+import type { EnabledFeatures } from '../Database/DatabaseSchema';
+import type { ConsoleLogLevel } from 'obsidian-debug-logger';
+
 export const getDatabaseDir = (configDir: string): string => `${configDir}/plugins/vaultquery`;
 export const getDatabasePath = (configDir: string): string => `${getDatabaseDir(configDir)}/database.db`;
 
-export interface EnabledFeatures {
-  indexContent: boolean;
-  indexFrontmatter: boolean;
-  indexTables: boolean;
-  indexTasks: boolean;
-  indexHeadings: boolean;
-  indexLinks: boolean;
-  indexTags: boolean;
-  indexListItems: boolean;
-}
+export type { EnabledFeatures };
 
 export type WasmSource = 'auto' | 'cdn' | 'local';
+export type ContentRenderingMode = 'plain-text' | 'rendered-markdown';
+
 
 export interface WasmSettings {
   source: WasmSource;
@@ -28,16 +24,22 @@ export interface VaultQuerySettings {
   enabledFeatures: EnabledFeatures;
   allowWriteOperations: boolean;
   allowDeleteNotes: boolean;
+  enableJavaScriptFunctions: boolean;
+  enableJavaScriptRendering: boolean;
+  enableTriggers: boolean;
+  enableThirdPartyProviderTables: boolean;
   enableInlineButtons: boolean;
   inlineButtonDebounceMs: number;
-  enableMarkdownRendering: boolean;
+  contentRenderingMode: ContentRenderingMode;
   enableDynamicTableViews: boolean;
   autoRefreshOnIndexChange: boolean;
   viewPreviewLimit: number;
   wasm: WasmSettings;
+  backgroundIndexing: boolean;
+  debugConsoleLogLevel: ConsoleLogLevel;
 }
 
-export function validateSettings(settings: VaultQuerySettings): void {
+export function normalizeSettings(settings: VaultQuerySettings): void {
   if (!settings.enabledFeatures.indexContent) {
     settings.enabledFeatures.indexTables = false;
     settings.enabledFeatures.indexTasks = false;
@@ -56,6 +58,7 @@ export function validateSettings(settings: VaultQuerySettings): void {
 
   if (!settings.allowWriteOperations) {
     settings.allowDeleteNotes = false;
+    settings.enableTriggers = false;
     settings.enableInlineButtons = false;
   }
 }
@@ -79,9 +82,13 @@ export const DEFAULT_SETTINGS: VaultQuerySettings = {
   },
   allowWriteOperations: false,
   allowDeleteNotes: false,
+  enableJavaScriptFunctions: false,
+  enableJavaScriptRendering: false,
+  enableTriggers: false,
+  enableThirdPartyProviderTables: false,
   enableInlineButtons: false,
   inlineButtonDebounceMs: 500,
-  enableMarkdownRendering: false,
+  contentRenderingMode: 'plain-text',
   enableDynamicTableViews: false,
   autoRefreshOnIndexChange: false,
   viewPreviewLimit: 10,
@@ -89,5 +96,7 @@ export const DEFAULT_SETTINGS: VaultQuerySettings = {
     source: 'auto',
     cacheLocally: true,
     customPath: ''
-  }
+  },
+  backgroundIndexing: true,
+  debugConsoleLogLevel: 'warn'
 };

@@ -71,7 +71,7 @@ LIMIT 20
 1. Assert dominance
 2. Know the product better than anyone
 3. Close the sale
-   1. Use the Schrute method
+   1. Follow the Schrute method
    2. Never take no for an answer
 
 ```vaultquery

@@ -4,10 +4,10 @@ priority: high
 category: documentation
 ---
 
-These example files demonstrate how to use VaultQuery with in an Obsidian vault.
+VaultQuery examples for an Obsidian vault.
 
-> [!tip] Enable Table Indexing
-> For quick reference, use a `vaultquery-help` code block to see schema and examples.
+> [!tip] Enable table indexing
+> A `vaultquery-help` code block shows schema and examples.
 
 ## Schema basics
 VaultQuery indexes the vault into these tables:
@@ -22,10 +22,10 @@ VaultQuery indexes the vault into these tables:
 | `links`       | Internal [[wiki-links]]                                       |
 | `table_cells` | Markdown table data                                           |
 
-Use the `vaultquery-schema` code block for complete schema reference.
+The `vaultquery-schema` code block shows the full schema reference.
 
 ### Convenience Views
-VaultQuery creates these views for easier querying (when the underlying table is being index):
+VaultQuery creates these views when the underlying table is indexed:
 
 | View                    | Description                                          | Writable |
 | ----------------------- | ---------------------------------------------------- | -------- |
@@ -110,12 +110,27 @@ GROUP BY tag_name
 ORDER BY tag_name
 ```
 
+## Markdown output
+
+Render the same query as a markdown table:
+
+```vaultquery-markdown
+SELECT title, modified, size
+FROM notes
+ORDER BY modified DESC
+LIMIT 5;
+
+config:
+columns: title, modified, size
+alignment: left, right, right
+```
+
 ## Write Operations
 
 > [!important] Enable write operations
-> Write operations are disabled by default. To enable go to Settings → VaultQuery → Write operations → Enable write operations
+> Write operations are disabled by default. Enable at Settings → VaultQuery → Enable write operations.
 
-Use the `vaultquery-write` code block to update the tasks above:
+`vaultquery-write` updates the tasks above:
 
 ```vaultquery-write
 UPDATE headings
@@ -130,6 +145,10 @@ WHERE path = '{this.path}'
 - **[[03 - Tasks]]** - Task management with Obsidian Tasks format
 - **[[04 - Properties]]** - Working with note metadata
 - **[[05 - Charts]]** - Creating visual dashboards
-- **[[06 - List Items]]** - Working with list items
-- **[[07 - Tables]]** - Working with markdown tables
-- **[[08 - HTML Output]]** - Output results to custom HTML
+- **[[06 - Calendar]]** - Viewing query results on a calendar
+- **[[07 - List Items]]** - Working with list items
+- **[[08 - Tables]]** - Working with markdown tables
+- **[[09 - JavaScript Rendering]]** - Render results with user-authored JavaScript
+- **[[10 - Views]]** - Custom reusable SQL views
+- **[[11 - Functions]]** - User-defined JavaScript functions
+- **[[12 - Triggers]]** - Automate actions on note changes

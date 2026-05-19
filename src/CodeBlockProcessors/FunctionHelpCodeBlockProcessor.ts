@@ -1,7 +1,7 @@
-import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
-import VaultQueryPlugin from '../main';
+import { App, MarkdownRenderer } from 'obsidian';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
 import * as functionHelp from '../generated-help/vaultquery-function-help.generated';
-import type { RenderContext } from '../generated-help/index.generated';
+import { BaseHelpCodeBlockProcessor } from './BaseHelpCodeBlockProcessor';
 
 interface FunctionDef {
   name: string;
@@ -35,7 +35,7 @@ const BUILTIN_FUNCTIONS: Record<string, FunctionDef[]> = {
     {
       name: 'format_date',
       signature: 'format_date(date, format)',
-      description: 'Formats ISO date using specifiers: %Y, %m, %d, %B, %b, %A, %a, etc.',
+      description: 'Formats ISO YYYY-MM-DD or compact YYYYMMDD dates using specifiers: %Y, %m, %d, %B, %b, %A, %a, etc.',
       example: "format_date('2024-12-25', '%B %e, %Y')"
     }
   ],
@@ -57,6 +57,12 @@ const BUILTIN_FUNCTIONS: Record<string, FunctionDef[]> = {
       signature: 'link_block(path, block_id) / link_block(path, block_id, display)',
       description: 'Creates block link [[path#^id]] or [[path#^id|display]].',
       example: "link_block(path, block_id, task_text)"
+    },
+    {
+      name: 'resolve_link',
+      signature: 'resolve_link(wikilink) / resolve_link(wikilink, sourcePath)',
+      description: 'Resolves a wikilink or note name to a vault-relative file path using Obsidian link resolution.',
+      example: "resolve_link(link_text, path)"
     }
   ],
   'Path Functions': [
@@ -119,58 +125,23 @@ const BUILTIN_FUNCTIONS: Record<string, FunctionDef[]> = {
   ]
 };
 
-export class FunctionHelpCodeBlockProcessor {
-  private component: Component;
-
-  public constructor(private app: App, private plugin: VaultQueryPlugin) {
-    this.component = new Component();
-    this.component.load();
+export class FunctionHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
+  public constructor(app: App, plugin: VaultQueryPluginContext) {
+    super(app, plugin, 'vaultquery-function-help', functionHelp);
   }
 
-  public process(_source: string, el: HTMLElement, _ctx: MarkdownPostProcessorContext): void {
-    el.empty();
-    const container = el.createDiv({ cls: 'vaultquery-function-help' });
-
-    functionHelp.render(container, this.createRenderContext());
-  }
-
-  private createRenderContext(): RenderContext {
-    return {
-      renderCode: (parent: HTMLElement, language: string, code: string) => {
-        const wrapper = parent.createDiv();
-        const codeBlockMarkdown = '```' + language + '\n' + code + '\n```';
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget render in sync callback
-        MarkdownRenderer.render(this.app, codeBlockMarkdown, wrapper, '', this.component);
-      },
-      renderDynamic: (parent: HTMLElement, key: string) => {
-        this.renderDynamicContent(parent, key);
-      },
-      setIcon: (element: HTMLElement, iconId: string) => {
-        setIcon(element, iconId);
-      },
-    };
-  }
-
-  private renderDynamicContent(container: HTMLElement, key: string): void {
+  protected renderDynamicContent(container: HTMLElement, key: string): void {
     if (key === 'functions') {
-      this.renderFunctions(container);
-    }
-
-    else {
-      container.createDiv({
-        cls: 'vaultquery-help-error',
-        text: `Unknown dynamic content: ${key}`
+      void this.generateFunctionsMarkdown().then(markdown => {
+        void MarkdownRenderer.render(this.app, markdown, container, '', this.component);
       });
     }
+    else {
+      super.renderDynamicContent(container, key);
+    }
   }
 
-  private renderFunctions(container: HTMLElement): void {
-    const markdown = this.generateFunctionsMarkdown();
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Fire-and-forget render
-    MarkdownRenderer.render(this.app, markdown, container, '', this.component);
-  }
-
-  private generateFunctionsMarkdown(): string {
+  private async generateFunctionsMarkdown(): Promise<string> {
     const sections: string[] = [];
 
     sections.push('## Built-in Functions\n');
@@ -181,7 +152,6 @@ export class FunctionHelpCodeBlockProcessor {
       sections.push('|----------|-------------|');
 
       for (const fn of functions) {
-        // Escape pipe characters in signature and description
         const sig = fn.signature.replace(/\|/g, '\\|');
         const desc = fn.description.replace(/\|/g, '\\|');
         sections.push(`| \`${sig}\` | ${desc} |`);
@@ -189,7 +159,7 @@ export class FunctionHelpCodeBlockProcessor {
       sections.push('');
     }
 
-    const userFunctions = this.plugin.api?.getAllUserFunctions() ?? [];
+    const userFunctions = await this.plugin.api?.getAllUserFunctions() ?? [];
 
     if (userFunctions.length > 0) {
       sections.push('## User-defined Functions\n');

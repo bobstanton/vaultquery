@@ -1,9 +1,10 @@
 import { RangeSetBuilder, EditorState } from '@codemirror/state';
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view';
 import { editorLivePreviewField, Notice } from 'obsidian';
-import type VaultQueryPlugin from '../main';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { logger as rootLogger } from '../utils/logger';
 
-declare const activeDocument: Document;
+const logger = rootLogger.scope('InlineButtons');
 
 function findCodeBlockRanges(text: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
@@ -26,17 +27,16 @@ function isInsideCodeBlock(pos: number, ranges: Array<[number, number]>): boolea
   return false;
 }
 
-// Debounce tracking across all buttons together
 // Obsidian's debounce() isn't used here because it would debounce per-individual button
 let lastClickTime = 0;
 
 class InlineButtonWidget extends WidgetType {
-  public constructor(private label: string, private sql: string, private plugin: VaultQueryPlugin, private sourcePath: string, private customClasses: string[] = [], private useDefaultStyle: boolean = true) {
+  public constructor(private label: string, private sql: string, private plugin: VaultQueryPluginContext, private sourcePath: string, private customClasses: string[] = [], private useDefaultStyle: boolean = true) {
     super();
   }
 
-  toDOM(): HTMLElement {
-    const button = activeDocument.createElement('button');
+  toDOM(view: EditorView): HTMLElement {
+    const button = view.dom.ownerDocument.createElement('button');
     // Use mod-cta only when no explicit class syntax was used
     // vq[Label] → mod-cta (default)
     // vq.[Label] → plain button (no mod-cta)
@@ -48,7 +48,7 @@ class InlineButtonWidget extends WidgetType {
     button.textContent = this.label;
     button.setAttribute('data-sql', this.sql);
 
-    button.addEventListener('click', async (e) => {
+    button.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -65,26 +65,31 @@ class InlineButtonWidget extends WidgetType {
       button.disabled = true;
       button.classList.add('vaultquery-inline-button-loading');
 
-      try {
-        const result = await this.executeQuery();
-        
-        if (result.isSelect) {
-          new Notice(`Copied ${result.rowCount} row${result.rowCount === 1 ? '' : 's'} to clipboard`);
-        }
-        else if (!result.applied) {
-          new Notice('No changes to apply');
+      void (async () => {
+        try {
+          const result = await this.executeQuery();
+
+          if (result.isSelect) {
+            new Notice(`Copied ${result.rowCount} row${result.rowCount === 1 ? '' : 's'} to clipboard`);
+          }
+          else if (!result.applied) {
+            new Notice('No changes to apply');
+          }
+          else {
+            new Notice('Query executed');
+          }
+
         }
 
-      }
-
-      catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        new Notice(`Query failed: ${message}`, 5000);
-        console.error('[VaultQuery InlineButton] Error:', error);
-      } finally {
-        button.disabled = false;
-        button.classList.remove('vaultquery-inline-button-loading');
-      }
+        catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Query failed: ${message}`, 5000);
+          logger.error('Inline button query failed', error);
+        } finally {
+          button.disabled = false;
+          button.classList.remove('vaultquery-inline-button-loading');
+        }
+      })();
     });
 
     return button;
@@ -146,7 +151,7 @@ class InlineButtonWidget extends WidgetType {
       const cells = columns.map(col => {
         const value = row[col];
         const str = value == null ? '' : String(value);
-        return str.replace(/\|/g, '\\|').replace(/\n/g, ' '); //escape pipes and new lines in content
+        return str.replace(/\|/g, '\\|').replace(/\n/g, ' ');
       });
       return '| ' + cells.join(' | ') + ' |';
     });
@@ -163,16 +168,15 @@ class InlineButtonWidget extends WidgetType {
   }
 
   // Ignore mouse/touch events so clicking the button doesn't move the cursor
-  // This prevents the button from being replaced with raw text when clicked
+  // and avoids replacing the button with raw text when clicked.
   ignoreEvent(event: Event): boolean {
-    return event.type === 'mousedown' || event.type === 'mouseup' || event.type === 'click' || event.type === 'touchstart' || event.type === 'touchend' || event.type === 'touchmove';
+    return ['mousedown', 'mouseup', 'click', 'touchstart', 'touchend', 'touchmove'].includes(event.type);
   }
 }
 
-function findInlineButtonsByRegex(state: EditorState, plugin: VaultQueryPlugin, sourcePath: string, cursorPos: number): DecorationSet {
+function findInlineButtonsByRegex(state: EditorState, plugin: VaultQueryPluginContext, sourcePath: string, cursorPos: number): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
-  // eslint-disable-next-line obsidianmd/no-object-to-string -- CodeMirror Text.toString() returns document content
   const text = doc.toString();
 
   const codeBlockRanges = findCodeBlockRanges(text);
@@ -186,7 +190,7 @@ function findInlineButtonsByRegex(state: EditorState, plugin: VaultQueryPlugin, 
   let match;
   while ((match = regex.exec(text)) !== null) {
     const fullMatch = match[0];
-    const classesStr = match[1]; // e.g., ".danger.large" or "." or undefined
+    const classesStr = match[1];
     const label = match[2];
     const sql = match[3];
     const from = match.index;
@@ -195,7 +199,6 @@ function findInlineButtonsByRegex(state: EditorState, plugin: VaultQueryPlugin, 
     const hasExplicitDotSyntax = classesStr !== undefined && classesStr.startsWith('.');
     const useDefaultStyle = !hasExplicitDotSyntax;
 
-    // Parse classes from the dot-separated string (e.g., ".danger.large" -> ["danger", "large"])
     const customClasses = classesStr
       ? classesStr.split('.').filter(c => c.length > 0)
       : [];
@@ -220,7 +223,7 @@ function findInlineButtonsByRegex(state: EditorState, plugin: VaultQueryPlugin, 
   return builder.finish();
 }
 
-export function createInlineButtonExtension(plugin: VaultQueryPlugin) {
+export function createInlineButtonExtension(plugin: VaultQueryPluginContext) {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
@@ -273,18 +276,11 @@ export function createInlineButtonExtension(plugin: VaultQueryPlugin) {
   );
 }
 
-/**
- * Process inline buttons in Reading View.
- * Finds code elements matching pattern: vq[Label]{SQL}
- * and replaces them with clickable buttons.
- */
-export function processReadingViewInlineButtons(plugin: VaultQueryPlugin, element: HTMLElement, sourcePath: string): void {
-  // Skip if inline buttons are disabled or write operations are disabled
+export function processReadingViewInlineButtons(plugin: VaultQueryPluginContext, element: HTMLElement, sourcePath: string): void {
   if (!plugin.settings.enableInlineButtons || !plugin.settings.allowWriteOperations) {
     return;
   }
 
-  // Pattern: vq[Label]{SQL} - matches inline code containing this syntax
   const pattern = /^vq\[([^\]]+)\]\{(.+)\}$/s;
 
   const codeElements = element.querySelectorAll('code');
@@ -299,13 +295,13 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPlugin, elemen
     const label = match[1];
     const sql = match[2];
 
-    const button = activeDocument.createElement('button');
+    const button = element.ownerDocument.createElement('button');
     button.className = 'vaultquery-inline-button';
     button.textContent = label;
     button.setAttribute('data-sql', sql);
     button.setAttribute('data-source-path', sourcePath);
 
-    button.addEventListener('click', async (e) => {
+    button.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -313,28 +309,27 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPlugin, elemen
       button.disabled = true;
       button.classList.add('vaultquery-inline-button-loading');
 
-      try {
-        await executeReadingViewQuery(plugin, sql, sourcePath);
-        new Notice('Query executed successfully');
-      }
-      catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        new Notice(`Query failed: ${message}`, 5000);
-        console.error('[VaultQuery] Reading view inline button error:', error);
-      } finally {
-        button.disabled = false;
-        button.classList.remove('vaultquery-inline-button-loading');
-      }
+      void (async () => {
+        try {
+          await executeReadingViewQuery(plugin, sql, sourcePath);
+          new Notice('Query executed successfully');
+        }
+        catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Query failed: ${message}`, 5000);
+          logger.error('Reading view inline button query failed', error);
+        } finally {
+          button.disabled = false;
+          button.classList.remove('vaultquery-inline-button-loading');
+        }
+      })();
     });
 
     codeEl.replaceWith(button);
   }
 }
 
-/**
- * Execute an inline query in Reading View without preview.
- */
-async function executeReadingViewQuery(plugin: VaultQueryPlugin, sql: string, sourcePath: string): Promise<void> {
+async function executeReadingViewQuery(plugin: VaultQueryPluginContext, sql: string, sourcePath: string): Promise<void> {
   const api = plugin.api;
   if (!api) {
     throw new Error('VaultQuery API not initialized');

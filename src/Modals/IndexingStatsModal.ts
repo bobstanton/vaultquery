@@ -18,7 +18,7 @@ export class IndexingStatsModal extends Modal {
         if (!this.stats) {
             contentEl.createEl('p', { 
                 text: 'No performance data available. Performance statistics are collected during indexing operations.',
-                cls: 'setting-item-description'
+                cls: 'vaultquery-stats-description'
             });
             return;
         }
@@ -39,10 +39,10 @@ export class IndexingStatsModal extends Modal {
             slowFilesSection.createEl('h3', { text: `Slowest files (${this.stats.slowFiles.length})` });
             slowFilesSection.createEl('p', { 
                 text: 'Files that took longer than normal to process during indexing.',
-                cls: 'setting-item-description'
+                cls: 'vaultquery-stats-description'
             });
             
-            const slowFilesTable = slowFilesSection.createEl('table', { cls: 'performance-stats-table' });
+            const slowFilesTable = slowFilesSection.createEl('table', { cls: 'vaultquery-table performance-stats-table' });
             const headerRow = slowFilesTable.createEl('tr');
             headerRow.createEl('th', { text: 'File' });
             headerRow.createEl('th', { text: 'Size (kb)' });
@@ -86,7 +86,7 @@ export class IndexingStatsModal extends Modal {
             slowFilesSection.createEl('h3', { text: 'Performance status' });
             slowFilesSection.createEl('p', {
                 text: '✅ No slow files detected! All files processed efficiently.',
-                cls: 'setting-item-description'
+                cls: 'vaultquery-stats-description'
             });
         }
 

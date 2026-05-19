@@ -1,16 +1,13 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
 import type { ListItemRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext } from './types';
-import { getBlockIdSuffix } from './types';
+import { getBlockIdSuffix, validateLineNumberBatch, pushInsertionEdit } from './types';
+
+type QueryListItemsByListIndex = (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>;
 
 export class ListItemEditPlanner {
   public constructor(private readonly contentLocationService: ContentLocationService) {}
 
-  public async planListItemEdits(
-    ctx: EntityPlannerContext,
-    listItems: ListItemRow[],
-    listItemsToDelete: ListItemRow[],
-    queryListItemsByListIndex?: (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>
-  ): Promise<EntityPlanResult> {
+  public async planListItemEdits(ctx: EntityPlannerContext, listItems: ListItemRow[], listItemsToDelete: ListItemRow[], queryListItemsByListIndex?: QueryListItemsByListIndex): Promise<EntityPlanResult> {
     const edits: ReplaceRangeEdit[] = [];
     const warnings: string[] = [];
     const newListItems: ListItemRow[] = [];
@@ -27,9 +24,8 @@ export class ListItemEditPlanner {
         continue;
       }
 
-      const loc = this.contentLocationService.locateListItem(ctx.content, row);
-      if (loc.kind === "miss") {
-        warnings.push(`${ctx.path}: list item "${row.content?.substring(0, 30)}..." - ${loc.reason}`);
+      const loc = this.locateListItem(ctx, row, warnings);
+      if (!loc) {
         continue;
       }
       const existing = ctx.content.slice(loc.range.start, loc.range.end);
@@ -40,31 +36,10 @@ export class ListItemEditPlanner {
     }
 
     if (listItemsWithLineNumber.length > 0) {
-      listItemsWithLineNumber.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
-
-      const lineNumbers = listItemsWithLineNumber.map(l => l.line_number!);
-      const minLineNumber = lineNumbers[0];
-      const maxLineNumber = lineNumbers[lineNumbers.length - 1];
-      const isConsecutive = (maxLineNumber - minLineNumber) <= (listItemsWithLineNumber.length - 1);
-
-      if (!isConsecutive) {
-        warnings.push(`Non-consecutive line numbers detected (${minLineNumber} to ${maxLineNumber} for ${listItemsWithLineNumber.length} list items). Use consecutive line numbers like +1, +2, +3 for batch inserts.`);
-      }
-
+      const minLineNumber = validateLineNumberBatch(listItemsWithLineNumber, 'list items', warnings);
       const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
-      const itemLines = listItemsWithLineNumber.map(item => this.emitListItemLine(item));
-      const combinedText = itemLines.join('\n');
-
-      const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-      const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: { start: insertionPoint.offset, end: insertionPoint.offset },
-        text: prefix + combinedText + suffix,
-        reason: "insert list items at specified line"
-      });
+      const combinedText = listItemsWithLineNumber.map(item => this.emitListItemLine(item)).join('\n');
+      pushInsertionEdit(edits, ctx, insertionPoint, combinedText, 'insert list items at specified line');
     }
 
     if (newListItems.length > 0) {
@@ -82,24 +57,13 @@ export class ListItemEditPlanner {
           ctx.content, ctx.path, listIndex, queryListItemsByListIndex
         );
         const newItemText = items.map(item => this.emitListItemLine(item)).join('\n');
-
-        const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-        const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-        edits.push({
-          type: "replaceRange",
-          path: ctx.path,
-          range: { start: insertionPoint.offset, end: insertionPoint.offset },
-          text: prefix + newItemText + suffix,
-          reason: `insert new list items into list ${listIndex}`
-        });
+        pushInsertionEdit(edits, ctx, insertionPoint, newItemText, `insert new list items into list ${listIndex}`);
       }
     }
 
     for (const row of listItemsToDelete) {
-      const loc = this.contentLocationService.locateListItem(ctx.content, row);
-      if (loc.kind === "miss") {
-        warnings.push(`${ctx.path}: list item "${row.content?.substring(0, 30)}..." to delete - ${loc.reason}`);
+      const loc = this.locateListItem(ctx, row, warnings, ' to delete');
+      if (!loc) {
         continue;
       }
       const deleteRange = ContentLocationService.expandRangeToIncludeNewline(ctx.content, loc.range);
@@ -113,6 +77,15 @@ export class ListItemEditPlanner {
     }
 
     return { edits, warnings };
+  }
+
+  private locateListItem(ctx: EntityPlannerContext, row: ListItemRow, warnings: string[], action = ''): Exclude<ReturnType<ContentLocationService['locateListItem']>, { kind: 'miss' }> | null {
+    const loc = this.contentLocationService.locateListItem(ctx.content, row);
+    if (loc.kind === "miss") {
+      warnings.push(`${ctx.path}: list item "${row.content?.substring(0, 30)}..."${action} - ${loc.reason}`);
+      return null;
+    }
+    return loc;
   }
 
   private parseListItemStyle(existing: string): { indent: string; marker: string } {

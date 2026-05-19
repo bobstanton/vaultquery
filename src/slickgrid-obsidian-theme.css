@@ -1,22 +1,29 @@
 /**
- * SlickGrid Obsidian Theme Overrides
+ * VaultQuery data-grid styles.
  *
- * These styles override the SlickGrid Alpine theme to match Obsidian's native look.
- * This file is imported after slick-alpine-theme.css so our overrides take precedence.
- *
- * When upgrading SlickGrid, review these overrides for compatibility with new versions.
+ * Selectors with .slick-* target DOM emitted by the grid library; VaultQuery-owned
+ * class names stay under the vaultquery-* namespace.
  */
 
-/* Container styles for VaultQuery SlickGrid instances */
-.vaultquery-slickgrid {
+/* Container styles for VaultQuery data-grid instances */
+.vaultquery-data-grid {
+    --vaultquery-table-row-height: 32px;
+    --vaultquery-table-header-height: 32px;
+    --vaultquery-table-cell-padding-y: 0;
+    --vaultquery-table-cell-padding-x: var(--size-4-2);
+    --vaultquery-table-border-color: var(--background-modifier-border);
+    --vaultquery-table-row-border-color: var(--table-border-color, var(--background-modifier-border));
+    --vaultquery-table-background: var(--background-primary);
+    --vaultquery-table-header-background: var(--background-secondary);
+    --vaultquery-table-row-hover-background: var(--background-modifier-hover);
     width: 100%;
     min-height: 400px;
     max-height: 600px;
-    border: 1px solid var(--background-modifier-border);
+    border: 1px solid var(--vaultquery-table-border-color);
     border-radius: var(--radius-s);
     margin: 0;
     overflow: hidden;
-    background-color: var(--background-primary);
+    background-color: var(--vaultquery-table-background);
     position: relative;
     font-family: var(--font-interface);
     font-size: var(--font-ui-medium);
@@ -28,49 +35,49 @@
 }
 
 /* Header */
-.vaultquery-slickgrid .slick-header {
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
-    height: 32px !important;
+.vaultquery-data-grid .slick-header {
+    background: var(--vaultquery-table-header-background);
+    border-bottom: 1px solid var(--vaultquery-table-border-color);
+    height: var(--vaultquery-table-header-height);
 }
 
-.vaultquery-slickgrid .slick-header-column {
-    background: var(--background-secondary);
-    border-right: 1px solid var(--background-modifier-border);
+.vaultquery-data-grid .slick-header-column {
+    background: var(--vaultquery-table-header-background);
+    border-right: 1px solid var(--vaultquery-table-border-color);
     color: var(--text-normal);
-    height: 32px !important;
-    line-height: 32px;
+    height: var(--vaultquery-table-header-height);
+    line-height: var(--vaultquery-table-header-height);
     font-weight: var(--font-weight-semibold);
     font-family: var(--font-interface);
     font-size: var(--font-ui-medium);
-    padding: 0 0 0 var(--size-4-2);
+    padding: 0 0 0 var(--vaultquery-table-cell-padding-x);
     box-sizing: border-box;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.vaultquery-slickgrid .slick-header-column:hover {
-    background: var(--background-modifier-hover);
+.vaultquery-data-grid .slick-header-column:hover {
+    background: var(--vaultquery-table-header-background);
 }
 
-.vaultquery-slickgrid .slick-header-column .slick-column-name {
+.vaultquery-data-grid .slick-header-column .slick-column-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     width: 100%;
 }
 
-.vaultquery-slickgrid .slick-header-column-sorted {
+.vaultquery-data-grid .slick-header-column-sorted {
     background: var(--background-modifier-active);
 }
 
-.vaultquery-slickgrid .slick-header-column.slick-sortable-placeholder {
+.vaultquery-data-grid .slick-header-column.slick-sortable-placeholder {
     background: var(--background-modifier-active);
 }
 
 /* Sort indicators */
-.vaultquery-slickgrid .slick-sort-indicator {
+.vaultquery-data-grid .slick-sort-indicator {
     position: absolute;
     right: 4px;
     top: 50%;
@@ -78,103 +85,103 @@
     color: var(--text-accent);
 }
 
-.vaultquery-slickgrid .slick-sort-indicator-asc,
-.vaultquery-slickgrid .slick-sort-indicator-desc {
+.vaultquery-data-grid .slick-sort-indicator-asc,
+.vaultquery-data-grid .slick-sort-indicator-desc {
     background: none;
 }
 
 /* Rows */
-.vaultquery-slickgrid .slick-row {
-    background: var(--background-primary);
-    border-bottom: 1px solid var(--table-border-color);
-    height: 32px;
+.vaultquery-data-grid .slick-row {
+    background: var(--vaultquery-table-background);
+    border-bottom: 1px solid var(--vaultquery-table-row-border-color);
+    height: var(--vaultquery-table-row-height);
 }
 
-.vaultquery-slickgrid .slick-row:hover {
-    background: var(--background-modifier-hover);
+.vaultquery-data-grid .slick-row:hover {
+    background: var(--vaultquery-table-row-hover-background);
 }
 
-.vaultquery-slickgrid .slick-row.selected {
+.vaultquery-data-grid .slick-row.selected {
     background: var(--background-modifier-active-hover);
 }
 
-.vaultquery-slickgrid .slick-row.odd {
-    background: var(--table-row-background-hover);
+.vaultquery-data-grid .slick-row.odd {
+    background: var(--vaultquery-table-background);
 }
 
-.vaultquery-slickgrid .slick-row.odd:hover {
-    background: var(--background-modifier-hover);
+.vaultquery-data-grid .slick-row.odd:hover {
+    background: var(--vaultquery-table-row-hover-background);
 }
 
 /* Cells */
-.vaultquery-slickgrid .slick-cell {
+.vaultquery-data-grid .slick-cell {
     border-right: 1px solid transparent;
     color: var(--text-normal);
-    padding: var(--size-4-1) var(--size-4-2);
-    line-height: 1.4;
+    padding: var(--vaultquery-table-cell-padding-y) var(--vaultquery-table-cell-padding-x);
+    line-height: var(--vaultquery-table-row-height);
     font-family: var(--font-text);
     font-size: var(--font-ui-medium);
     vertical-align: middle;
     box-sizing: border-box;
 }
 
-.vaultquery-slickgrid .slick-cell.selected {
+.vaultquery-data-grid .slick-cell.selected {
     background: var(--background-modifier-active);
 }
 
-.vaultquery-slickgrid .slick-cell.active {
+.vaultquery-data-grid .slick-cell.active {
     background: var(--background-modifier-active);
 }
 
 /* Viewport */
-.vaultquery-slickgrid .slick-viewport {
-    background: var(--background-primary);
+.vaultquery-data-grid .slick-viewport {
+    background: var(--vaultquery-table-background);
     border: none;
     height: 100%;
     min-height: 350px;
 }
 
 /* Scrollbar styling */
-.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar {
+.vaultquery-data-grid .slick-viewport::-webkit-scrollbar {
     width: 12px;
     height: 12px;
     background: var(--scrollbar-bg);
 }
 
-.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-track {
+.vaultquery-data-grid .slick-viewport::-webkit-scrollbar-track {
     background: var(--scrollbar-bg);
     border-radius: var(--radius-m);
 }
 
-.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-thumb {
+.vaultquery-data-grid .slick-viewport::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb-bg);
     border-radius: var(--radius-m);
     border: 2px solid var(--scrollbar-bg);
 }
 
-.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-thumb:hover {
+.vaultquery-data-grid .slick-viewport::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-bg-hover);
 }
 
-.vaultquery-slickgrid .slick-viewport::-webkit-scrollbar-corner {
+.vaultquery-data-grid .slick-viewport::-webkit-scrollbar-corner {
     background: var(--scrollbar-bg);
 }
 
 /* Path links in grid cells */
-.vaultquery-slickgrid .slick-path-link {
+.vaultquery-data-grid .slick-path-link {
     color: var(--text-accent);
     text-decoration: none;
     cursor: pointer;
     font-weight: var(--font-weight-medium);
 }
 
-.vaultquery-slickgrid .slick-path-link:hover {
+.vaultquery-data-grid .slick-path-link:hover {
     color: var(--text-accent-hover);
     text-decoration: underline;
 }
 
 /* Header menu */
-.vaultquery-slickgrid .slick-header-menu {
+.vaultquery-data-grid .slick-header-menu {
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-s);
@@ -182,36 +189,36 @@
     z-index: 1000;
 }
 
-.vaultquery-slickgrid .slick-header-menuitem {
+.vaultquery-data-grid .slick-header-menuitem {
     color: var(--text-normal);
     padding: var(--size-4-2) var(--size-4-3);
     font-family: var(--font-interface);
     font-size: var(--font-ui-medium);
 }
 
-.vaultquery-slickgrid .slick-header-menuitem:hover {
+.vaultquery-data-grid .slick-header-menuitem:hover {
     background: var(--background-modifier-hover);
 }
 
 /* Column resizing handle */
-.vaultquery-slickgrid .slick-resizable-handle {
+.vaultquery-data-grid .slick-resizable-handle {
     width: 4px;
     right: 0;
     cursor: col-resize;
     background: transparent;
     border-right: 1px solid var(--background-modifier-border);
-    box-shadow: none !important; /* Override Alpine theme box-shadow */
+    box-shadow: none; /* Override Alpine theme box-shadow */
 }
 
-.vaultquery-slickgrid .slick-resizable-handle:hover {
+.vaultquery-data-grid .slick-resizable-handle:hover {
     background: var(--interactive-accent);
     border-right: 2px solid var(--interactive-accent);
-    box-shadow: none !important; /* Override Alpine theme box-shadow */
+    box-shadow: none; /* Override Alpine theme box-shadow */
 }
 
 /* Mobile/touch-friendly resize handles */
 @media (pointer: coarse), (hover: none) {
-    .vaultquery-slickgrid .slick-resizable-handle {
+    .vaultquery-data-grid .slick-resizable-handle {
         width: 16px;
         right: -6px;
         background: transparent;
@@ -219,23 +226,23 @@
         border-right: 2px solid var(--background-modifier-border);
     }
 
-    .vaultquery-slickgrid .slick-resizable-handle:active {
+    .vaultquery-data-grid .slick-resizable-handle:active {
         background: var(--interactive-accent);
         border-right: 3px solid var(--interactive-accent);
     }
 }
 
 /* Focus styling */
-.vaultquery-slickgrid:focus-within {
+.vaultquery-data-grid:focus-within {
     outline: none;
 }
 
-.vaultquery-slickgrid .slick-cell:focus {
+.vaultquery-data-grid .slick-cell:focus {
     outline: none;
 }
 
 /* Subgrid styling (for nested/expandable rows) */
-.vaultquery-subgrid .vaultquery-slickgrid {
+.vaultquery-subgrid .vaultquery-data-grid {
     border: none;
     border-radius: 0;
     min-height: 200px;
@@ -243,10 +250,10 @@
 }
 
 /* Current/proposed column styling for write previews */
-.vaultquery-slickgrid .slick-header-column.vaultquery-current-column {
+.vaultquery-data-grid .slick-header-column.vaultquery-current-column {
     background: var(--background-modifier-hover);
 }
 
-.vaultquery-slickgrid .slick-header-column.vaultquery-proposed-column {
+.vaultquery-data-grid .slick-header-column.vaultquery-proposed-column {
     background: var(--background-modifier-hover);
 }

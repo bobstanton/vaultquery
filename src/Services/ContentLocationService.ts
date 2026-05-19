@@ -1,6 +1,7 @@
 import { App, TFile, MetadataCache, normalizePath } from 'obsidian';
 import { escapeRegex, hashString } from '../utils/StringUtils';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
+import type { TaskMetadataFields } from '../types';
 
 export type Range = { start: number; end: number };
 
@@ -28,30 +29,13 @@ export interface TableCellRow {
   line_number?: number | null;
 }
 
-export interface TaskRow {
+export interface TaskRow extends Partial<TaskMetadataFields> {
   id: number;
   path: string;
   task_text: string;
   completed: 0 | 1;
   status?: string | null;
-  priority?: string | null;
-  due_date?: string | null;
-  scheduled_date?: string | null;
-  start_date?: string | null;
-  created_date?: string | null;
-  done_date?: string | null;
-  cancelled_date?: string | null;
-  recurrence?: string | null;
-  on_completion?: string | null;
-  task_id?: string | null;
-  depends_on?: string | null;
-  tags?: string | null;
   line_number?: number | null;
-  block_id?: string | null;
-  start_offset?: number | null;
-  end_offset?: number | null;
-  anchor_hash?: string | null;
-  section_heading?: string | null;
 }
 
 export interface HeadingRow {
@@ -81,21 +65,89 @@ export interface ListItemRow {
   anchor_hash?: string | null;
 }
 
+interface StableLocationRow {
+  path: string;
+  block_id?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  anchor_hash?: string | null;
+}
+
+/** Map of checkbox characters to task status */
+const TASK_STATUS_MAP: ReadonlyMap<string, { completed: boolean; status: string }> = new Map([
+  ['x', { completed: true, status: 'DONE' }],
+  ['/', { completed: false, status: 'IN_PROGRESS' }],
+  ['-', { completed: false, status: 'CANCELLED' }],
+]);
+
+/** Default task status for unrecognized checkbox characters */
+const DEFAULT_TASK_STATUS_ENTRY = { completed: false, status: 'TODO' };
+
 export class ContentLocationService {
   public constructor(private app: App, private metadataCache: MetadataCache) {}
 
-  public static computeAnchorHash(content: string, lineIndex: number, lines: string[]): string {
-    const prevLine = lineIndex > 0 ? lines[lineIndex - 1] : '';
+  /**
+   * Get task completed/status from checkbox character.
+   */
+  public static getTaskStatus(checkbox: string): { completed: boolean; status: string } {
+    return TASK_STATUS_MAP.get(checkbox.toLowerCase()) ?? DEFAULT_TASK_STATUS_ENTRY;
+  }
+
+  /**
+   * Extract block ID from a line or the following line.
+   * Block IDs are in the format ^block-id at the end of a line or on a line by itself.
+   */
+  public static extractBlockId(lines: string[], lineIndex: number, lineContent?: string): string | undefined {
+    const line = lineContent ?? lines[lineIndex] ?? '';
+
+    const inlineMatch = line.match(/\^([\w-]+)\s*$/);
+    if (inlineMatch) {
+      return inlineMatch[1];
+    }
+
+    if (lineIndex < lines.length - 1) {
+      const nextLine = lines[lineIndex + 1];
+      const nextLineMatch = nextLine?.match(/^\s*\^([\w-]+)\s*$/);
+      if (nextLineMatch) {
+        return nextLineMatch[1];
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Compute a content-based hash for identifying an item across reindexing.
+   * Uses surrounding context (prev/current/next lines) rather than position,
+   * so moving an item doesn't change its identity.
+   */
+  public static computeAnchorHash(lineIndex: number, lines: string[], occurrence: number = 0): string {
+    const prevLine = (lineIndex > 0 ? lines[lineIndex - 1] : '') || '';
     const currentLine = lines[lineIndex] || '';
-    const nextLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '';
-    
+    const nextLine = (lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '') || '';
+
     const contextWindow = [prevLine, currentLine, nextLine]
       .map(line => line.trim().toLowerCase())
       .join('\n');
-    
-    const hashInput = `${contextWindow}::L${lineIndex}`;
-    
+
+    // Include occurrence number to distinguish items with identical context.
+    // Occurrence 0 means "first item with this context", 1 means "second", etc.
+    const hashInput = occurrence > 0 ? `${contextWindow}::O${occurrence}` : contextWindow;
+
     return hashString(hashInput);
+  }
+
+  /**
+   * Compute the context key used to track occurrences (before adding occurrence number).
+   */
+  public static computeContextKey(lineIndex: number, lines: string[]): string {
+    const prevLine = (lineIndex > 0 ? lines[lineIndex - 1] : '') || '';
+    const currentLine = lines[lineIndex] || '';
+    const nextLine = (lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '') || '';
+
+    return [prevLine, currentLine, nextLine]
+      .map(line => line.trim().toLowerCase())
+      .join('\n');
   }
 
   public static getLineOffsets(content: string, lineIndex: number): Range {
@@ -134,26 +186,10 @@ export class ContentLocationService {
   }
 
   public locateTask(content: string, row: TaskRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
-    if (row.block_id) {
-      const r = this.rangeFromBlockId(row.path, row.block_id);
-      if (r && ContentLocationService.looksLikeTask(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
+    const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeTask);
+    if (stableRange) {
+      return { kind: "ok", range: stableRange };
       }
-    }
-
-    if (ContentLocationService.isValidRange(content, row.start_offset, row.end_offset)) {
-      const slice = content.slice(row.start_offset!, row.end_offset!);
-      if (ContentLocationService.looksLikeTask(slice)) {
-        return { kind: "ok", range: { start: row.start_offset!, end: row.end_offset! } };
-      }
-    }
-
-    if (row.anchor_hash) {
-      const r = this.searchByAnchorHash(content, row.anchor_hash);
-      if (r && ContentLocationService.looksLikeTask(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
-      }
-    }
 
     const fuzzyResult = this.fuzzyTaskInSection(content, row);
     if (fuzzyResult) {
@@ -164,25 +200,9 @@ export class ContentLocationService {
   }
 
   public locateHeading(content: string, row: HeadingRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
-    if (row.block_id) {
-      const r = this.rangeFromBlockId(row.path, row.block_id);
-      if (r && ContentLocationService.looksLikeHeading(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
-      }
-    }
-
-    if (ContentLocationService.isValidRange(content, row.start_offset, row.end_offset)) {
-      const slice = content.slice(row.start_offset!, row.end_offset!);
-      if (ContentLocationService.looksLikeHeading(slice)) {
-        return { kind: "ok", range: { start: row.start_offset!, end: row.end_offset! } };
-      }
-    }
-
-    if (row.anchor_hash) {
-      const r = this.searchByAnchorHash(content, row.anchor_hash);
-      if (r && ContentLocationService.looksLikeHeading(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
-      }
+    const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeHeading);
+    if (stableRange) {
+      return { kind: "ok", range: stableRange };
     }
 
     const level = Math.max(1, Math.min(6, row.level || 1));
@@ -200,28 +220,41 @@ export class ContentLocationService {
   }
 
   public locateListItem(content: string, row: ListItemRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
+    const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeListItem);
+    if (stableRange) {
+      return { kind: "ok", range: stableRange };
+    }
+
+    return { kind: "miss", reason: "Unable to locate list item" };
+  }
+
+  private locateByStableReferences(content: string, row: StableLocationRow, isExpectedLine: (slice: string) => boolean): Range | null {
     if (row.block_id) {
-      const r = this.rangeFromBlockId(row.path, row.block_id);
-      if (r && ContentLocationService.looksLikeListItem(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
+      const range = this.rangeFromBlockId(row.path, row.block_id);
+      if (this.rangeMatches(content, range, isExpectedLine)) {
+        return range;
       }
     }
 
     if (ContentLocationService.isValidRange(content, row.start_offset, row.end_offset)) {
-      const slice = content.slice(row.start_offset!, row.end_offset!);
-      if (ContentLocationService.looksLikeListItem(slice)) {
-        return { kind: "ok", range: { start: row.start_offset!, end: row.end_offset! } };
+      const range = { start: row.start_offset!, end: row.end_offset! };
+      if (this.rangeMatches(content, range, isExpectedLine)) {
+        return range;
       }
     }
 
     if (row.anchor_hash) {
-      const r = this.searchByAnchorHash(content, row.anchor_hash);
-      if (r && ContentLocationService.looksLikeListItem(content.slice(r.start, r.end))) {
-        return { kind: "ok", range: r };
+      const range = this.searchByAnchorHash(content, row.anchor_hash);
+      if (this.rangeMatches(content, range, isExpectedLine)) {
+        return range;
       }
     }
 
-    return { kind: "miss", reason: "Unable to locate list item" };
+    return null;
+  }
+
+  private rangeMatches(content: string, range: Range | null, isExpectedLine: (slice: string) => boolean): range is Range {
+    return Boolean(range && isExpectedLine(content.slice(range.start, range.end)));
   }
 
   public static isValidRange(content: string, start?: number | null, end?: number | null): boolean {
@@ -250,7 +283,7 @@ export class ContentLocationService {
   public searchByAnchorHash(content: string, targetHash: string): Range | null {
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      if (ContentLocationService.computeAnchorHash(content, i, lines) === targetHash) {
+      if (ContentLocationService.computeAnchorHash(i, lines) === targetHash) {
         return ContentLocationService.getLineOffsets(content, i);
       }
     }
@@ -259,16 +292,15 @@ export class ContentLocationService {
 
   private fuzzyTaskInSection(content: string, row: TaskRow): Range | null {
     const normalized = ContentLocationService.normalizeText(row.task_text ?? "");
-    const re = /^(?<indent>\s*)(?<bullet>[-*+])\s+\[[ xX]\]\s+(?<text>.*)$/gm;
+    const re = /^(\s*)([-*+])\s+\[[ xX]\]\s+(.*)$/gm;
     let best: { start: number; end: number; score: number } | null = null;
     let m: RegExpExecArray | null;
     while ((m = re.exec(content)) !== null) {
-      const raw = m.groups?.text ?? "";
+      const raw = m[3] ?? "";
       const score = ContentLocationService.lcsScore(ContentLocationService.normalizeText(raw), normalized);
       if (score > (best?.score ?? 0)) {
         const lastNewline = content.lastIndexOf("\n", m.index);
         const start = lastNewline === -1 ? 0 : lastNewline + 1;
-        // Find the newline AFTER the match starts, not at the match position
         const lineEnd = content.indexOf("\n", m.index + 1);
         const end = lineEnd === -1 ? content.length : lineEnd;
         best = { start, end, score };
@@ -311,7 +343,7 @@ export class ContentLocationService {
 
   static expandRangeToIncludeNewline(content: string, range: Range): Range {
     // If the character after the range is a newline, include it in the deletion
-    // This prevents leaving blank lines after deletion
+    // to avoid leaving blank lines behind.
     if (range.end < content.length && content[range.end] === '\n') {
       return { start: range.start, end: range.end + 1 };
     }
@@ -324,18 +356,11 @@ export class ContentLocationService {
 
   public static findInsertionPointAtLine(content: string, lineNumber: number): InsertionPoint {
     const lines = content.split('\n');
-
-    // Convert 1-based line number to 0-based index
     const targetLineIndex = lineNumber - 1;
 
     // If the target line is beyond the file, append at end
     if (targetLineIndex >= lines.length) {
-      const endsWithNewline = content.endsWith('\n');
-      return {
-        offset: content.length,
-        needsNewlineBefore: !endsWithNewline,
-        needsNewlineAfter: false
-      };
+      return ContentLocationService.findTableInsertionPoint(content);
     }
 
     // If target line is 0 or negative, insert at beginning
@@ -369,21 +394,10 @@ export class ContentLocationService {
     }
 
     if (lastTaskLineIndex >= 0) {
-      const offset = ContentLocationService.getLineEndOffset(content, lastTaskLineIndex);
-
-      return {
-        offset,
-        needsNewlineBefore: true,
-        needsNewlineAfter: false
-      };
+      return ContentLocationService.insertAfterLine(content, lastTaskLineIndex);
     }
 
-    const endsWithNewline = content.endsWith('\n');
-    return {
-      offset: content.length,
-      needsNewlineBefore: !endsWithNewline,
-      needsNewlineAfter: false
-    };
+    return ContentLocationService.findTableInsertionPoint(content);
   }
 
   public async findListItemInsertionPoint(content: string, path: string, listIndex: number, queryListItemsByListIndex?: (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>): Promise<InsertionPoint> {
@@ -393,31 +407,19 @@ export class ContentLocationService {
       const existingItems = await queryListItemsByListIndex(path, listIndex);
 
       if (existingItems.length > 0) {
-        // Find the last item in this list 
         const lastItem = existingItems
           .filter(item => item.line_number != null && item.line_number > 0)
           .sort((a, b) => (b.line_number ?? 0) - (a.line_number ?? 0))[0];
 
         if (lastItem?.line_number) {
-          // line_number is 1-based, convert to 0-based index
           const lineIndex = lastItem.line_number - 1;
           if (lineIndex >= 0 && lineIndex < lines.length) {
-            const offset = ContentLocationService.getLineEndOffset(content, lineIndex);
-            return {
-              offset,
-              needsNewlineBefore: true,
-              needsNewlineAfter: false
-            };
+            return ContentLocationService.insertAfterLine(content, lineIndex);
           }
         }
       }
 
-      const endsWithNewline = content.endsWith('\n');
-      return {
-        offset: content.length,
-        needsNewlineBefore: !endsWithNewline,
-        needsNewlineAfter: false
-      };
+      return ContentLocationService.findTableInsertionPoint(content);
     }
 
     let lastListItemLineIndex = -1;
@@ -431,15 +433,13 @@ export class ContentLocationService {
     }
 
     if (lastListItemLineIndex >= 0) {
-      const offset = ContentLocationService.getLineEndOffset(content, lastListItemLineIndex);
-
-      return {
-        offset,
-        needsNewlineBefore: true,
-        needsNewlineAfter: false
-      };
+      return ContentLocationService.insertAfterLine(content, lastListItemLineIndex);
     }
 
+    return ContentLocationService.findTableInsertionPoint(content);
+  }
+
+  public static findTableInsertionPoint(content: string): InsertionPoint {
     const endsWithNewline = content.endsWith('\n');
     return {
       offset: content.length,
@@ -448,11 +448,10 @@ export class ContentLocationService {
     };
   }
 
-  public static findTableInsertionPoint(content: string): InsertionPoint {
-    const endsWithNewline = content.endsWith('\n');
+  private static insertAfterLine(content: string, lineIndex: number): InsertionPoint {
     return {
-      offset: content.length,
-      needsNewlineBefore: !endsWithNewline,
+      offset: ContentLocationService.getLineEndOffset(content, lineIndex),
+      needsNewlineBefore: true,
       needsNewlineAfter: false
     };
   }

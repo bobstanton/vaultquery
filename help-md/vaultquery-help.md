@@ -5,14 +5,20 @@ title: VaultQuery Help
 
 # Code block types
 
-- `vaultquery` - Output SQL queries to [SlickGrid](https://github.com/6pac/SlickGrid) or custom HTML
+- `vaultquery` - Output SQL queries as a SlickGrid table or JavaScript rendering
 - `vaultquery-write` - Perform INSERT, UPDATE, DELETE, or multiple operations with preview
-- `vaultquery-chart` - Output queries as charts using [Chart.js](https://www.chartjs.org/)
-- `vaultquery-markdown` - Output queries as markdown tables
+- `vaultquery-chart` - Render chart output using [Chart.js](https://www.chartjs.org/)
+- `vaultquery-calendar` - Render calendar output using [FullCalendar Standard](https://fullcalendar.io/)
+- `vaultquery-markdown` - Render markdown table output
 - `vaultquery-schema` - Display VaultQuery schema as markdown tables
 - `vaultquery-view` - Define custom SQL view for use in other queries
 - `vaultquery-function` - Define custom SQL functions in JavaScript for use in queries
+- `vaultquery-trigger` - Define SQLite triggers to automate actions on data changes
+- `vaultquery-chart-help` - Display chart output reference and examples
+- `vaultquery-calendar-help` - Display calendar output reference and examples
+- `vaultquery-markdown-help` - Display markdown output reference and examples
 - `vaultquery-function-help` - Display function reference and documentation
+- `vaultquery-trigger-help` - Display trigger reference and documentation
 - `vaultquery-examples` - Display example collections (functions, views)
 - `vaultquery-api-help` - API guide for third-party plugin developers
 - `vaultquery-help` - Show this help
@@ -40,6 +46,57 @@ These placeholders will be evaluated and replaced before a query is executed by 
 | `{this.tags}`          | list   | Tags in the note (without #)           | `'project', 'todo'`             |
 | `{this.headings}`      | list   | Headings in the note                   | `'Intro', 'Summary'`            |
 | `{this.<key>}`         | varies | Any frontmatter property               | `{this.status}`                 |
+
+# Editor autocomplete
+
+VaultQuery provides editor autocomplete inside supported fenced code blocks.
+
+## SQL blocks
+
+In `vaultquery`, `vaultquery-write`, `vaultquery-view`, `vaultquery-trigger`, `vaultquery-chart`, `vaultquery-markdown`, and `vaultquery-calendar`, autocomplete can suggest:
+
+- SQL keywords
+- Template placeholders such as `{this.path}` and `{this.today}`
+- Table and view names from the current VaultQuery schema
+- Column names from indexed tables and views
+- Built-in SQL functions and user-defined functions from `vaultquery-function`
+- Qualified column suggestions based on table aliases such as `n.title` after `FROM notes n`
+
+Suggestions are ranked by SQL context:
+
+- After `FROM`, `JOIN`, `INTO`, or `UPDATE`, relations are shown first
+- After `SELECT`, `WHERE`, `AND`, `OR`, `ON`, `ORDER BY`, `GROUP BY`, `HAVING`, or `SET`, columns are shown first
+- Inside function-call positions such as `COUNT(` or `LOWER(`, functions are shown first
+- When a query already declares table aliases, matching qualified columns for those aliases are prioritized
+
+When relation aliases are present, VaultQuery also biases unqualified column suggestions toward the relations already in the query, which reduces noise in common patterns such as:
+
+~~~vaultquery
+SELECT
+FROM notes n
+JOIN tasks t ON t.path = n.path
+~~~
+
+Autocomplete appears immediately after separators such as spaces, commas, and opening parentheses. For example, suggestions should appear after `SELECT `, `title, `, `FROM `, and `COUNT(` without typing another character first.
+
+## Config sections
+
+`vaultquery-chart`, `vaultquery-markdown`, and `vaultquery-calendar` also provide autocomplete in `config:` sections for:
+
+- Markdown options
+- Chart options
+- Calendar options
+- Common boolean values
+
+## Provider definition blocks
+
+Third-party provider definition blocks registered with VaultQuery use generic config-style highlighting. VaultQuery currently ships provider-definition key/value autocomplete for the built-in Places provider block languages: `places-weather-vaultquery`, `places-tides-vaultquery`, and `places-solar-vaultquery`.
+
+Examples:
+
+- Places weather definitions can suggest keys such as `id`, `coordinates`, `daily`, `hourly`, `units`, `cache`, and `tables`, along with valid values for weather variable lists and table selection.
+- Places tides definitions can suggest keys such as `id`, `location`, `station`, `stationId`, `datum`, `units`, `cache`, and `tables`, along with valid values for `datum`, `units`, and tide table selection.
+- Places solar definitions can suggest keys such as `id`, `name`, `coordinates`, `location`, `startDate`, and `endDate`.
 
 # Database schema
 
@@ -190,7 +247,7 @@ ORDER BY table_index, row_index, column_name;
 
 # Reusable SQL views
 
-Use `vaultquery-view` blocks to create SQL views that can be queried from any note. 
+Use `vaultquery-view` blocks to create SQL views that can be queried from any note.
 
 ## Creating a view
 
@@ -230,7 +287,7 @@ CREATE VIEW project_notes AS
 SELECT DISTINCT n.path, n.title, n.modified
 FROM notes n
 JOIN tags t ON n.path = t.path
-WHERE t.tag_name = 'project'
+WHERE t.tag_name = '#project'
 ORDER BY n.modified DESC
 ~~~
 
@@ -402,15 +459,19 @@ Inline buttons use the syntax ``vq[Label]{SQL}`` to execute SQL with a single cl
 > [!tip] Tip
 > If button clicks lose edits, increase "Inline button debounce" in settings.
 
+# Output types
+
+Use the output-specific fence name to choose a renderer. That makes help discoverable by appending `-help` to the fence name, such as `vaultquery-chart-help` or `vaultquery-calendar-help`.
+
 # Markdown output
 
 There are two ways to export query results as markdown tables:
 
-1. **Copy to markdown button** - In any `vaultquery` block, click the "Copy to markdown" button in the upper right to clipboard as a markdown table.
+1. **Copy to markdown button** - In any table/chart/template `vaultquery` block, click the upper-right button to copy the current results as a markdown table.
 
-2. **`vaultquery-markdown` blocks** - Use dedicated blocks to render results directly as copyable markdown tables with optional column configuration.
+2. **Markdown output block** - Use the `vaultquery-markdown` fence. For help, change it to `vaultquery-markdown-help`.
 
-## vaultquery-markdown options
+## Markdown output options
 
 | Option      | Description                                              |
 |-------------|----------------------------------------------------------|
@@ -423,10 +484,10 @@ There are two ways to export query results as markdown tables:
 SELECT title, path, modified
 FROM notes
 ORDER BY modified DESC
-LIMIT 10
+LIMIT 10;
 ~~~
 
-## With alignment configuration
+## With column selection and alignment
 
 ~~~vaultquery-markdown
 SELECT title, size
@@ -435,119 +496,27 @@ ORDER BY size DESC
 LIMIT 10;
 
 config:
+columns: title, size
 alignment: left, right
 ~~~
 
 # Charts & visualizations
 
-Charts use `vaultquery-chart` blocks. Query must use `label` and `value` columns (or `x`/`y` for scatter). Add a `series` column for multiple datasets.
+Use `vaultquery-chart` for chart output. Query must use `label` and `value` columns (or `x`/`y` for scatter). Add a `series` column for multiple datasets.
 
-| Option                   | Description                                 |
-|--------------------------|---------------------------------------------|
-| `type`                   | bar, line, pie, doughnut, or scatter (required) |
-| `title`                  | Chart title                                 |
-| `datasetLabel`           | Legend label for the dataset                |
-| `xLabel`                 | X-axis label (bar, line, scatter)           |
-| `yLabel`                 | Y-axis label (bar, line, scatter)           |
-| `datasetBackgroundColor` | Fill color (e.g., `rgba(54, 162, 235, 0.8)`) |
-| `datasetBorderColor`     | Border color                                |
+Use a `vaultquery-chart-help` code block for the full chart reference, including result columns, config options, colors, multi-series charts, mixed charts, and examples.
 
-## Bar chart
+# Calendar output
 
-~~~vaultquery-chart
-SELECT tag_name as label, COUNT(*) as value
-FROM tags
-GROUP BY tag_name
-ORDER BY value DESC
-LIMIT 10;
-config:
-type: bar
-datasetLabel: Tag count
-~~~
+Use `vaultquery-calendar` for calendar output. Each result row becomes one calendar item. At minimum, the query must return a date column.
 
-## Bar chart with custom color
-
-~~~vaultquery-chart
-SELECT tag_name as label, COUNT(*) as value
-FROM tags
-GROUP BY tag_name
-LIMIT 5;
-config:
-type: bar
-datasetBackgroundColor: rgba(75, 192, 192, 0.8)
-datasetBorderColor: rgba(75, 192, 192, 1)
-~~~
-
-## Per-bar colors via SQL
-
-Use `backgroundColor` column to set colors per data point:
-
-~~~vaultquery-chart
-SELECT
-    tag_name as label,
-    COUNT(*) as value,
-    CASE
-        WHEN tag_name = 'important' THEN 'rgba(255, 99, 132, 0.8)'
-        ELSE 'rgba(54, 162, 235, 0.8)'
-    END as backgroundColor
-FROM tags
-GROUP BY tag_name
-LIMIT 5;
-config:
-type: bar
-~~~
-
-## Multi-series bar chart
-
-~~~vaultquery-chart
-SELECT status as label, priority as series, COUNT(*) as value
-FROM tasks
-GROUP BY status, priority;
-config:
-type: bar
-title: Tasks by status and priority
-~~~
-
-## Mixed chart (bar + line)
-
-Use `chartType` column to mix chart types:
-
-~~~vaultquery-chart
-SELECT label, value, series, chartType, backgroundColor FROM (
-    SELECT 'Jan' as label, 10 as value, 'Sales' as series,
-           'bar' as chartType, 'rgba(54, 162, 235, 0.8)' as backgroundColor
-    UNION ALL
-    SELECT 'Jan', 8, 'Trend', 'line', 'rgba(255, 99, 132, 1)'
-    UNION ALL
-    SELECT 'Feb', 15, 'Sales', 'bar', 'rgba(54, 162, 235, 0.8)'
-    UNION ALL
-    SELECT 'Feb', 12, 'Trend', 'line', 'rgba(255, 99, 132, 1)'
-);
-config:
-type: bar
-title: Sales vs Trend
-~~~
-
-## Line chart with axis labels
-
-~~~vaultquery-chart
-SELECT done_date as label, COUNT(*) as value
-FROM tasks
-WHERE status = 'DONE'
-GROUP BY done_date
-ORDER BY done_date;
-config:
-type: line
-xLabel: Date
-yLabel: Completed
-datasetLabel: Tasks completed
-~~~
+Use a `vaultquery-calendar-help` code block for the full calendar reference, including result columns, config options, responsive behavior, clickable events, and examples.
 
 # Performance & Troubleshooting
 
 ## Analyzing query performance
 
-Use `EXPLAIN QUERY PLAN` to understand how SQLite executes your query:
+Use `EXPLAIN QUERY PLAN` to inspect how SQLite executes the query:
 
 ~~~vaultquery
 EXPLAIN QUERY PLAN
@@ -588,14 +557,14 @@ WHERE n.path LIKE 'Projects/%'
 3. **Use EXISTS instead of IN** - For subqueries returning many rows:
 
    ~~~vaultquery
-   -- Instead of: WHERE path IN (SELECT path FROM tags WHERE tag_name = 'project')
+   -- Instead of: WHERE path IN (SELECT path FROM tags WHERE tag_name = '#project')
    SELECT * FROM notes n
-   WHERE EXISTS (SELECT 1 FROM tags t WHERE t.path = n.path AND t.tag_name = 'project')
+   WHERE EXISTS (SELECT 1 FROM tags t WHERE t.path = n.path AND t.tag_name = '#project')
    ~~~
 
-# Custom templates
+# JavaScript rendering
 
-Use `template:` after the SQL query (ending with `;`) to render custom HTML output.
+Enable JavaScript rendering in settings, then use `template:` after the SQL query (ending with `;`) to run JavaScript rendering code.
 
 - `results` - Array of row objects from query
 - `count` - Number of rows returned

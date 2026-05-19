@@ -1,16 +1,8 @@
 import tsparser from "@typescript-eslint/parser";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import obsidianmd from "eslint-plugin-obsidianmd";
-import obsidianExtras from "eslint-plugin-obsidian-extras";
-
-// Merge obsidian-extras rules into obsidianmd namespace so eslint-disable comments work
-const mergedPlugin = {
-  ...obsidianmd,
-  rules: {
-    ...obsidianmd.rules,
-    ...obsidianExtras.rules,
-  },
-};
+import sdl from "@microsoft/eslint-plugin-sdl";
+import importPlugin from "eslint-plugin-import";
 
 export default [
   {
@@ -24,8 +16,10 @@ export default [
       },
     },
     plugins: {
-      obsidianmd: mergedPlugin,
+      obsidianmd,
       "@typescript-eslint": tseslint,
+      "@microsoft/sdl": sdl,
+      import: importPlugin,
     },
     rules: {
       // TypeScript strict rules (Obsidian submission requirements)
@@ -45,6 +39,34 @@ export default [
       "@typescript-eslint/unbound-method": ["warn", {
         "ignoreStatic": true,
       }],
+      "@typescript-eslint/no-this-alias": "error",
+      "@typescript-eslint/no-deprecated": "error",
+      "@typescript-eslint/no-misused-promises": ["error", {
+        "checksVoidReturn": {
+          "arguments": true,
+          "attributes": false,
+        }
+      }],
+
+      // Security rules (critical for plugin approval)
+      "@microsoft/sdl/no-inner-html": "error",
+      "@microsoft/sdl/no-document-write": "error",
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-new-func": "error",
+
+      // Import restrictions (mobile compatibility & best practices)
+      "import/no-nodejs-modules": "error",  // Disable for desktop-only plugins
+      "import/no-extraneous-dependencies": "error",
+      "no-restricted-imports": ["error",
+        { "name": "axios", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "superagent", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "got", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "ofetch", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "ky", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "node-fetch", "message": "Use Obsidian's requestUrl() instead." },
+        { "name": "moment", "message": "Import moment from 'obsidian' - it's bundled." },
+      ],
 
       // Core ESLint rules (Obsidian submission requirements)
       "no-var": "error",
@@ -53,11 +75,16 @@ export default [
       }],
       "no-useless-escape": "warn",
       "prefer-object-has-own": "warn",
+      "no-alert": "error",
+      "no-implicit-globals": "error",
+      "no-self-compare": "warn",
       "no-restricted-globals": ["error",
+        { "name": "app", "message": "Use this.app from your plugin instance instead of the global app object." },
         { "name": "alert", "message": "Use Obsidian's Modal API instead of native dialogs." },
         { "name": "confirm", "message": "Use Obsidian's Modal API instead of native dialogs." },
         { "name": "prompt", "message": "Use Obsidian's Modal API instead of native dialogs." },
         { "name": "localStorage", "message": "Use App.loadLocalStorage()/saveLocalStorage() instead." },
+        { "name": "fetch", "message": "Use Obsidian's requestUrl() function instead of fetch." },
       ],
 
       // Sample code detection
@@ -81,7 +108,6 @@ export default [
       "obsidianmd/no-forbidden-elements": "error",
       "obsidianmd/no-static-styles-assignment": "warn",
       "obsidianmd/platform": "warn",
-      "obsidianmd/no-obsidian-branding": "warn",
 
       // Type safety
       "obsidianmd/no-tfile-tfolder-cast": "warn",
@@ -91,26 +117,11 @@ export default [
 
       // Performance best practices
       "obsidianmd/vault/iterate": "warn",
-      "obsidianmd/vault/prefer-cached-read": "warn",
 
       // Obsidian API preferences
-      "obsidianmd/prefer-obsidian-debounce": "warn",
-      "obsidianmd/prefer-active-window": "warn",
-      "obsidianmd/prefer-active-view-of-type": "warn",
-      "obsidianmd/prefer-process-front-matter": "warn",
-      "obsidianmd/prefer-stringify-yaml": "warn",
-      "obsidianmd/prefer-editor-api": "warn",
-      "obsidianmd/prefer-window-timers": "warn",
-      "obsidianmd/use-normalize-path": "warn",
       "obsidianmd/prefer-abstract-input-suggest": "warn",
-      "obsidianmd/prefer-instance-of": "warn",
       "obsidianmd/object-assign": "warn",
       "obsidianmd/hardcoded-config-path": "warn",
-      "obsidianmd/editor-event-prevent-default": "warn",
-
-      // Code quality
-      "obsidianmd/no-empty-catch": "warn",
-      "obsidianmd/no-object-to-string": "warn",
 
       // Settings tab
       "obsidianmd/settings-tab/no-manual-html-headings": "warn",
@@ -131,6 +142,12 @@ export default [
       "obsidianmd/ui/sentence-case": "off",
     },
   },
+  {
+    files: ["src/Settings/SettingsTab.ts"],
+    rules: {
+      "obsidianmd/ui/sentence-case": "off",
+    },
+  },
   // Generated help files - inline comments handle most rules, these cover the rest
   {
     files: ["**/generated-help/**/*.ts"],
@@ -139,6 +156,10 @@ export default [
       "@typescript-eslint/no-unused-vars": "off",
       // Help text mentions .obsidian as example path (documentation, not code)
       "obsidianmd/hardcoded-config-path": "off",
+      // Generated help uses innerHTML for static HTML content (no user input)
+      "@microsoft/sdl/no-inner-html": "off",
+      // Generated help uses fire-and-forget pattern for MarkdownRenderer
+      "@typescript-eslint/no-floating-promises": "off",
     },
   },
   {

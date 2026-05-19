@@ -1,10 +1,4 @@
 export * from './types';
-export { TaskHandler } from './TaskHandler';
-export { HeadingHandler } from './HeadingHandler';
-export { ListItemHandler } from './ListItemHandler';
-export { PropertyHandler } from './PropertyHandler';
-export { TableCellHandler } from './TableCellHandler';
-export { ContentHandler } from './ContentHandler';
 
 import type { EntityHandler, EntityHandlerContext, PreviewResult, EditPlannerPreviewResult } from './types';
 import { createEmptyResult, extractSql } from './types';
@@ -51,28 +45,22 @@ export class EntityHandlerRegistry {
   /**
    * Convert a preview result using the appropriate handler
    */
-  async convertPreviewResult(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
-    const handler = this.findHandler(previewResult.table);
-    if (!handler) {
-      return createEmptyResult(extractSql(previewResult));
-    }
-    return handler.convertPreviewResult(previewResult, context);
+  async convertPreviewResult(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
+    return this.withHandler(previewResult, context, handler => handler.convertPreviewResult(previewResult, context));
   }
 
   /**
    * Handle an INSERT operation using the appropriate handler
    */
-  async handleInsertOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  async handleInsertOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
+    return this.withHandler(previewResult, context, handler => handler.handleInsertOperation(previewResult, context));
+  }
+
+  private async withHandler(previewResult: PreviewResult, context: EntityHandlerContext, process: (handler: EntityHandler) => Promise<EditPlannerPreviewResult>): Promise<EditPlannerPreviewResult> {
     const handler = this.findHandler(previewResult.table);
     if (!handler) {
       return createEmptyResult(extractSql(previewResult));
     }
-    return handler.handleInsertOperation(previewResult, context);
+    return process(handler);
   }
 }

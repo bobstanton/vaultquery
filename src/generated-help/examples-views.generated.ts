@@ -26,178 +26,250 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Custom View Examples" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Recent activity" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Recently modified notes" });
-  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlockCode = codeBlock.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlockCode.textContent = "CREATE VIEW recent_notes AS\nSELECT\n  path,\n  title,\n  datetime(modified/1000, 'unixepoch', 'localtime') as modified_at,\n  size\nFROM notes\nORDER BY modified DESC\nLIMIT 50";
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlockCode); }
-  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock1Code = codeBlock1.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock1Code.textContent = "SELECT * FROM recent_notes WHERE title LIKE '%project%'";
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock1Code); }
+  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlockCode = codeBlock.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlockCode.innerHTML = Prism.highlight("CREATE VIEW recent_notes AS\nSELECT\n  path,\n  title,\n  datetime(modified/1000, 'unixepoch', 'localtime') as modified_at,\n  size\nFROM notes\nORDER BY modified DESC\nLIMIT 50", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlockCode.textContent = "CREATE VIEW recent_notes AS\nSELECT\n  path,\n  title,\n  datetime(modified/1000, 'unixepoch', 'localtime') as modified_at,\n  size\nFROM notes\nORDER BY modified DESC\nLIMIT 50";
+  }
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock1Code = codeBlock1.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock1Code.innerHTML = Prism.highlight("SELECT * FROM recent_notes WHERE title LIKE '%project%'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock1Code.textContent = "SELECT * FROM recent_notes WHERE title LIKE '%project%'";
+  }
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Recently created notes" });
-  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock2Code = codeBlock2.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock2Code.textContent = "CREATE VIEW new_notes AS\nSELECT\n  path,\n  title,\n  datetime(created/1000, 'unixepoch', 'localtime') as created_at\nFROM notes\nWHERE created > (strftime('%s', 'now', '-7 days') * 1000)\nORDER BY created DESC";
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock2Code); }
+  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock2Code = codeBlock2.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock2Code.innerHTML = Prism.highlight("CREATE VIEW new_notes AS\nSELECT\n  path,\n  title,\n  datetime(created/1000, 'unixepoch', 'localtime') as created_at\nFROM notes\nWHERE created > (strftime('%s', 'now', '-7 days') * 1000)\nORDER BY created DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock2Code.textContent = "CREATE VIEW new_notes AS\nSELECT\n  path,\n  title,\n  datetime(created/1000, 'unixepoch', 'localtime') as created_at\nFROM notes\nWHERE created > (strftime('%s', 'now', '-7 days') * 1000)\nORDER BY created DESC";
+  }
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Task management" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Open tasks with context" });
-  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock3Code = codeBlock3.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock3Code.textContent = "CREATE VIEW open_tasks AS\nSELECT\n  t.path,\n  t.task_text,\n  t.priority,\n  t.due_date,\n  t.tags,\n  t.section_heading,\n  CASE\n    WHEN t.due_date < date('now') THEN 'overdue'\n    WHEN t.due_date = date('now') THEN 'today'\n    WHEN t.due_date <= date('now', '+7 days') THEN 'this_week'\n    ELSE 'later'\n  END as urgency\nFROM tasks t\nWHERE t.status = 'TODO'";
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock3Code); }
-  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock4Code = codeBlock4.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock4Code.textContent = "SELECT * FROM open_tasks\nWHERE urgency IN ('overdue', 'today')\nORDER BY due_date";
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock4Code); }
+  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock3Code = codeBlock3.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock3Code.innerHTML = Prism.highlight("CREATE VIEW open_tasks AS\nSELECT\n  t.path,\n  t.task_text,\n  t.priority,\n  t.due_date,\n  t.tags,\n  t.section_heading,\n  CASE\n    WHEN t.due_date < date('now') THEN 'overdue'\n    WHEN t.due_date = date('now') THEN 'today'\n    WHEN t.due_date <= date('now', '+7 days') THEN 'this_week'\n    ELSE 'later'\n  END as urgency\nFROM tasks t\nWHERE t.status = 'TODO'", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock3Code.textContent = "CREATE VIEW open_tasks AS\nSELECT\n  t.path,\n  t.task_text,\n  t.priority,\n  t.due_date,\n  t.tags,\n  t.section_heading,\n  CASE\n    WHEN t.due_date < date('now') THEN 'overdue'\n    WHEN t.due_date = date('now') THEN 'today'\n    WHEN t.due_date <= date('now', '+7 days') THEN 'this_week'\n    ELSE 'later'\n  END as urgency\nFROM tasks t\nWHERE t.status = 'TODO'";
+  }
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock4Code = codeBlock4.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock4Code.innerHTML = Prism.highlight("SELECT * FROM open_tasks\nWHERE urgency IN ('overdue', 'today')\nORDER BY due_date", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock4Code.textContent = "SELECT * FROM open_tasks\nWHERE urgency IN ('overdue', 'today')\nORDER BY due_date";
+  }
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Tasks by project" });
-  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock5Code = codeBlock5.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock5Code.textContent = "CREATE VIEW project_tasks AS\nSELECT\n  path_parent(t.path) as project,\n  t.status,\n  COUNT(*) as task_count\nFROM tasks t\nGROUP BY path_parent(t.path), t.status";
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock5Code); }
-  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock6Code = codeBlock6.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock6Code.textContent = "SELECT\n  project,\n  SUM(CASE WHEN status = 'DONE' THEN task_count ELSE 0 END) as done,\n  SUM(CASE WHEN status = 'TODO' THEN task_count ELSE 0 END) as todo\nFROM project_tasks\nGROUP BY project\nORDER BY todo DESC";
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock6Code); }
+  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock5Code = codeBlock5.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock5Code.innerHTML = Prism.highlight("CREATE VIEW project_tasks AS\nSELECT\n  path_parent(t.path) as project,\n  t.status,\n  COUNT(*) as task_count\nFROM tasks t\nGROUP BY path_parent(t.path), t.status", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock5Code.textContent = "CREATE VIEW project_tasks AS\nSELECT\n  path_parent(t.path) as project,\n  t.status,\n  COUNT(*) as task_count\nFROM tasks t\nGROUP BY path_parent(t.path), t.status";
+  }
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock6Code = codeBlock6.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock6Code.innerHTML = Prism.highlight("SELECT\n  project,\n  SUM(CASE WHEN status = 'DONE' THEN task_count ELSE 0 END) as done,\n  SUM(CASE WHEN status = 'TODO' THEN task_count ELSE 0 END) as todo\nFROM project_tasks\nGROUP BY project\nORDER BY todo DESC", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock6Code.textContent = "SELECT\n  project,\n  SUM(CASE WHEN status = 'DONE' THEN task_count ELSE 0 END) as done,\n  SUM(CASE WHEN status = 'TODO' THEN task_count ELSE 0 END) as todo\nFROM project_tasks\nGROUP BY project\nORDER BY todo DESC";
+  }
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Overdue tasks" });
-  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock7Code = codeBlock7.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock7Code.textContent = "CREATE VIEW overdue_tasks AS\nSELECT\n  path,\n  task_text,\n  due_date,\n  julianday('now') - julianday(due_date) as days_overdue\nFROM tasks\nWHERE status = 'TODO'\n  AND due_date IS NOT NULL\n  AND due_date < date('now')\nORDER BY due_date";
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock7Code); }
+  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock7Code = codeBlock7.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock7Code.innerHTML = Prism.highlight("CREATE VIEW overdue_tasks AS\nSELECT\n  path,\n  task_text,\n  due_date,\n  julianday('now') - julianday(due_date) as days_overdue\nFROM tasks\nWHERE status = 'TODO'\n  AND due_date IS NOT NULL\n  AND due_date < date('now')\nORDER BY due_date", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock7Code.textContent = "CREATE VIEW overdue_tasks AS\nSELECT\n  path,\n  task_text,\n  due_date,\n  julianday('now') - julianday(due_date) as days_overdue\nFROM tasks\nWHERE status = 'TODO'\n  AND due_date IS NOT NULL\n  AND due_date < date('now')\nORDER BY due_date";
+  }
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Note organization" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Orphan notes (no incoming links)" });
-  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock8Code = codeBlock8.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock8Code.textContent = "CREATE VIEW orphan_notes AS\nSELECT n.path, n.title, n.modified\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target\nWHERE l.link_target IS NULL\n  AND n.path NOT LIKE '%/_templates/%'\n  AND n.path NOT LIKE '%.excalidraw.md'\nORDER BY n.modified DESC";
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock8Code); }
+  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock8Code = codeBlock8.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock8Code.innerHTML = Prism.highlight("CREATE VIEW orphan_notes AS\nSELECT n.path, n.title, n.modified\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target_path\nWHERE l.link_target_path IS NULL\n  AND n.path NOT LIKE '%/_templates/%'\n  AND n.path NOT LIKE '%.excalidraw.md'\nORDER BY n.modified DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock8Code.textContent = "CREATE VIEW orphan_notes AS\nSELECT n.path, n.title, n.modified\nFROM notes n\nLEFT JOIN links l ON n.path = l.link_target_path\nWHERE l.link_target_path IS NULL\n  AND n.path NOT LIKE '%/_templates/%'\n  AND n.path NOT LIKE '%.excalidraw.md'\nORDER BY n.modified DESC";
+  }
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Notes by folder" });
-  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock9Code = codeBlock9.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock9Code.textContent = "CREATE VIEW folder_stats AS\nSELECT\n  path_parent(path) as folder,\n  COUNT(*) as note_count,\n  SUM(size) as total_size,\n  MAX(modified) as last_modified\nFROM notes\nGROUP BY path_parent(path)\nORDER BY note_count DESC";
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock9Code); }
+  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock9Code = codeBlock9.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock9Code.innerHTML = Prism.highlight("CREATE VIEW folder_stats AS\nSELECT\n  path_parent(path) as folder,\n  COUNT(*) as note_count,\n  SUM(size) as total_size,\n  MAX(modified) as last_modified\nFROM notes\nGROUP BY path_parent(path)\nORDER BY note_count DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock9Code.textContent = "CREATE VIEW folder_stats AS\nSELECT\n  path_parent(path) as folder,\n  COUNT(*) as note_count,\n  SUM(size) as total_size,\n  MAX(modified) as last_modified\nFROM notes\nGROUP BY path_parent(path)\nORDER BY note_count DESC";
+  }
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Large notes" });
-  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock10Code = codeBlock10.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock10Code.textContent = "CREATE VIEW large_notes AS\nSELECT\n  path,\n  title,\n  size,\n  round(size / 1024.0, 1) as size_kb\nFROM notes\nWHERE size > 10000\nORDER BY size DESC";
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock10Code); }
+  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock10Code = codeBlock10.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock10Code.innerHTML = Prism.highlight("CREATE VIEW large_notes AS\nSELECT\n  path,\n  title,\n  size,\n  round(size / 1024.0, 1) as size_kb\nFROM notes\nWHERE size > 10000\nORDER BY size DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock10Code.textContent = "CREATE VIEW large_notes AS\nSELECT\n  path,\n  title,\n  size,\n  round(size / 1024.0, 1) as size_kb\nFROM notes\nWHERE size > 10000\nORDER BY size DESC";
+  }
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Tag analysis" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Tag usage statistics" });
-  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock11Code = codeBlock11.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock11Code.textContent = "CREATE VIEW tag_stats AS\nSELECT\n  tag_name,\n  COUNT(*) as usage_count,\n  COUNT(DISTINCT path) as note_count\nFROM tags\nGROUP BY tag_name\nORDER BY usage_count DESC";
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock11Code); }
-  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock12Code = codeBlock12.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock12Code.textContent = "SELECT * FROM tag_stats WHERE usage_count > 5";
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock12Code); }
+  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock11Code = codeBlock11.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock11Code.innerHTML = Prism.highlight("CREATE VIEW tag_stats AS\nSELECT\n  tag_name,\n  COUNT(*) as usage_count,\n  COUNT(DISTINCT path) as note_count\nFROM tags\nGROUP BY tag_name\nORDER BY usage_count DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock11Code.textContent = "CREATE VIEW tag_stats AS\nSELECT\n  tag_name,\n  COUNT(*) as usage_count,\n  COUNT(DISTINCT path) as note_count\nFROM tags\nGROUP BY tag_name\nORDER BY usage_count DESC";
+  }
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock12Code = codeBlock12.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock12Code.innerHTML = Prism.highlight("SELECT * FROM tag_stats WHERE usage_count > 5", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock12Code.textContent = "SELECT * FROM tag_stats WHERE usage_count > 5";
+  }
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Notes with multiple tags" });
-  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock13Code = codeBlock13.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock13Code.textContent = "CREATE VIEW multi_tag_notes AS\nSELECT\n  path,\n  COUNT(*) as tag_count,\n  GROUP_CONCAT(tag_name, ', ') as all_tags\nFROM tags\nGROUP BY path\nHAVING COUNT(*) > 3\nORDER BY tag_count DESC";
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock13Code); }
+  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock13Code = codeBlock13.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock13Code.innerHTML = Prism.highlight("CREATE VIEW multi_tag_notes AS\nSELECT\n  path,\n  COUNT(*) as tag_count,\n  GROUP_CONCAT(tag_name, ', ') as all_tags\nFROM tags\nGROUP BY path\nHAVING COUNT(*) > 3\nORDER BY tag_count DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock13Code.textContent = "CREATE VIEW multi_tag_notes AS\nSELECT\n  path,\n  COUNT(*) as tag_count,\n  GROUP_CONCAT(tag_name, ', ') as all_tags\nFROM tags\nGROUP BY path\nHAVING COUNT(*) > 3\nORDER BY tag_count DESC";
+  }
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Link analysis" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Most linked notes" });
-  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock14Code = codeBlock14.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock14Code.textContent = "CREATE VIEW popular_notes AS\nSELECT\n  link_target as path,\n  COUNT(*) as incoming_links\nFROM links\nWHERE link_type = 'internal'\nGROUP BY link_target\nORDER BY incoming_links DESC";
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock14Code); }
+  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock14Code = codeBlock14.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock14Code.innerHTML = Prism.highlight("CREATE VIEW popular_notes AS\nSELECT\n  link_target_path as path,\n  COUNT(*) as incoming_links\nFROM links\nWHERE link_type = 'internal'\n  AND link_target_path IS NOT NULL\nGROUP BY link_target_path\nORDER BY incoming_links DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock14Code.textContent = "CREATE VIEW popular_notes AS\nSELECT\n  link_target_path as path,\n  COUNT(*) as incoming_links\nFROM links\nWHERE link_type = 'internal'\n  AND link_target_path IS NOT NULL\nGROUP BY link_target_path\nORDER BY incoming_links DESC";
+  }
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Broken links" });
   const para = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para.appendText("Using ");
   para.createEl('code', { cls: 'vaultquery-help-code', text: "resolve_link()" });
   para.appendText(" to find links that don't resolve to any file:");
-  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock15Code = codeBlock15.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock15Code.textContent = "CREATE VIEW broken_links AS\nSELECT\n  l.path as source,\n  l.link_text as target\nFROM links l\nWHERE l.link_type = 'internal'\n  AND resolve_link(l.link_text, l.path) IS NULL";
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock15Code); }
+  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock15Code = codeBlock15.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock15Code.innerHTML = Prism.highlight("CREATE VIEW broken_links AS\nSELECT\n  l.path as source,\n  l.link_target as target\nFROM links l\nWHERE l.link_type = 'internal'\n  AND resolve_link(l.link_target, l.path) IS NULL", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock15Code.textContent = "CREATE VIEW broken_links AS\nSELECT\n  l.path as source,\n  l.link_target as target\nFROM links l\nWHERE l.link_type = 'internal'\n  AND resolve_link(l.link_target, l.path) IS NULL";
+  }
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Link graph edges" });
-  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock16Code = codeBlock16.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock16Code.textContent = "CREATE VIEW link_graph AS\nSELECT DISTINCT\n  l.path as source,\n  l.link_target as target\nFROM links l\nJOIN notes n ON l.link_target = n.path\nWHERE l.link_type = 'internal'";
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock16Code); }
+  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock16Code = codeBlock16.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock16Code.innerHTML = Prism.highlight("CREATE VIEW link_graph AS\nSELECT DISTINCT\n  l.path as source,\n  l.link_target_path as target\nFROM links l\nJOIN notes n ON l.link_target_path = n.path\nWHERE l.link_type = 'internal'", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock16Code.textContent = "CREATE VIEW link_graph AS\nSELECT DISTINCT\n  l.path as source,\n  l.link_target_path as target\nFROM links l\nJOIN notes n ON l.link_target_path = n.path\nWHERE l.link_type = 'internal'";
+  }
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Content analysis" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Heading structure" });
-  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock17Code = codeBlock17.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock17Code.textContent = "CREATE VIEW heading_outline AS\nSELECT\n  path,\n  level,\n  heading_text,\n  line_number,\n  SUBSTR('      ', 1, (level - 1) * 2) || heading_text as indented\nFROM headings\nORDER BY path, line_number";
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock17Code); }
-  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock18Code = codeBlock18.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock18Code.textContent = "SELECT indented FROM heading_outline WHERE path = '{this.path}'";
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock18Code); }
+  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock17Code = codeBlock17.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock17Code.innerHTML = Prism.highlight("CREATE VIEW heading_outline AS\nSELECT\n  path,\n  level,\n  heading_text,\n  line_number,\n  SUBSTR('      ', 1, (level - 1) * 2) || heading_text as indented\nFROM headings\nORDER BY path, line_number", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock17Code.textContent = "CREATE VIEW heading_outline AS\nSELECT\n  path,\n  level,\n  heading_text,\n  line_number,\n  SUBSTR('      ', 1, (level - 1) * 2) || heading_text as indented\nFROM headings\nORDER BY path, line_number";
+  }
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock18Code = codeBlock18.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock18Code.innerHTML = Prism.highlight("SELECT indented FROM heading_outline WHERE path = '{this.path}'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock18Code.textContent = "SELECT indented FROM heading_outline WHERE path = '{this.path}'";
+  }
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Notes with properties" });
-  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock19Code = codeBlock19.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock19Code.textContent = "CREATE VIEW notes_by_status AS\nSELECT\n  n.path,\n  n.title,\n  p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path\nWHERE p.key = 'status'\nORDER BY p.value, n.title";
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock19Code); }
+  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock19Code = codeBlock19.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock19Code.innerHTML = Prism.highlight("CREATE VIEW notes_by_status AS\nSELECT\n  n.path,\n  n.title,\n  p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path\nWHERE p.key = 'status'\nORDER BY p.value, n.title", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock19Code.textContent = "CREATE VIEW notes_by_status AS\nSELECT\n  n.path,\n  n.title,\n  p.value as status\nFROM notes n\nJOIN properties p ON n.path = p.path\nWHERE p.key = 'status'\nORDER BY p.value, n.title";
+  }
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Property value counts" });
-  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock20Code = codeBlock20.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock20Code.textContent = "CREATE VIEW property_stats AS\nSELECT\n  key,\n  value,\n  COUNT(*) as count\nFROM properties\nWHERE key IN ('status', 'type', 'category', 'priority')\nGROUP BY key, value\nORDER BY key, count DESC";
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock20Code); }
+  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock20Code = codeBlock20.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock20Code.innerHTML = Prism.highlight("CREATE VIEW property_stats AS\nSELECT\n  key,\n  value,\n  COUNT(*) as count\nFROM properties\nWHERE key IN ('status', 'type', 'category', 'priority')\nGROUP BY key, value\nORDER BY key, count DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock20Code.textContent = "CREATE VIEW property_stats AS\nSELECT\n  key,\n  value,\n  COUNT(*) as count\nFROM properties\nWHERE key IN ('status', 'type', 'category', 'priority')\nGROUP BY key, value\nORDER BY key, count DESC";
+  }
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Daily notes" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Daily notes summary" });
-  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock21Code = codeBlock21.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock21Code.textContent = "CREATE VIEW daily_notes AS\nSELECT\n  path,\n  title,\n  SUBSTR(path_basename(path), 1, 10) as date,\n  size,\n  (SELECT COUNT(*) FROM tasks t WHERE t.path = n.path) as task_count\nFROM notes n\nWHERE path LIKE 'Daily/%'\n  OR path LIKE 'Journal/%'\nORDER BY date DESC";
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock21Code); }
+  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock21Code = codeBlock21.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock21Code.innerHTML = Prism.highlight("CREATE VIEW daily_notes AS\nSELECT\n  path,\n  title,\n  SUBSTR(path_basename(path), 1, 10) as date,\n  size,\n  (SELECT COUNT(*) FROM tasks t WHERE t.path = n.path) as task_count\nFROM notes n\nWHERE path LIKE 'Daily/%'\n  OR path LIKE 'Journal/%'\nORDER BY date DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock21Code.textContent = "CREATE VIEW daily_notes AS\nSELECT\n  path,\n  title,\n  SUBSTR(path_basename(path), 1, 10) as date,\n  size,\n  (SELECT COUNT(*) FROM tasks t WHERE t.path = n.path) as task_count\nFROM notes n\nWHERE path LIKE 'Daily/%'\n  OR path LIKE 'Journal/%'\nORDER BY date DESC";
+  }
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Weekly summary" });
-  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock22Code = codeBlock22.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock22Code.textContent = "CREATE VIEW weekly_summary AS\nSELECT\n  strftime('%Y-W%W', SUBSTR(path_basename(path), 1, 10)) as week,\n  COUNT(*) as entries,\n  SUM(size) as total_size\nFROM notes\nWHERE path LIKE 'Daily/%'\nGROUP BY week\nORDER BY week DESC";
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock22Code); }
+  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock22Code = codeBlock22.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock22Code.innerHTML = Prism.highlight("CREATE VIEW weekly_summary AS\nSELECT\n  strftime('%Y-W%W', SUBSTR(path_basename(path), 1, 10)) as week,\n  COUNT(*) as entries,\n  SUM(size) as total_size\nFROM notes\nWHERE path LIKE 'Daily/%'\nGROUP BY week\nORDER BY week DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock22Code.textContent = "CREATE VIEW weekly_summary AS\nSELECT\n  strftime('%Y-W%W', SUBSTR(path_basename(path), 1, 10)) as week,\n  COUNT(*) as entries,\n  SUM(size) as total_size\nFROM notes\nWHERE path LIKE 'Daily/%'\nGROUP BY week\nORDER BY week DESC";
+  }
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Combining views" });
   const para1 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para1.appendText("Views can reference other views:");
-  const codeBlock23 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock23.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-view\n" });
-  const codeBlock23Code = codeBlock23.createEl('code', { cls: 'language-vaultquery-view' });
-  codeBlock23Code.textContent = "CREATE VIEW high_priority_overdue AS\nSELECT *\nFROM overdue_tasks\nWHERE task_text LIKE '%#urgent%'\n   OR task_text LIKE '%!high%'\nORDER BY days_overdue DESC";
-  codeBlock23.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock23Code); }
+  const codeBlock23 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock23.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-view\n" });
+  const codeBlock23Code = codeBlock23.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-view"]) {
+    codeBlock23Code.innerHTML = Prism.highlight("CREATE VIEW high_priority_overdue AS\nSELECT *\nFROM overdue_tasks\nWHERE task_text LIKE '%#urgent%'\n   OR task_text LIKE '%!high%'\nORDER BY days_overdue DESC", Prism.languages["vaultquery-view"], "vaultquery-view");
+  } else {
+    codeBlock23Code.textContent = "CREATE VIEW high_priority_overdue AS\nSELECT *\nFROM overdue_tasks\nWHERE task_text LIKE '%#urgent%'\n   OR task_text LIKE '%!high%'\nORDER BY days_overdue DESC";
+  }
+  codeBlock23.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
 }

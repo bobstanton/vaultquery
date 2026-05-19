@@ -1,6 +1,6 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
 import type { HeadingRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext } from './types';
-import { getBlockIdSuffix } from './types';
+import { getBlockIdSuffix, validateLineNumberBatch, pushInsertionEdit } from './types';
 
 export class HeadingEditPlanner {
   public constructor(private readonly contentLocationService: ContentLocationService) {}
@@ -35,47 +35,16 @@ export class HeadingEditPlanner {
     }
 
     if (headingsWithLineNumber.length > 0) {
-      headingsWithLineNumber.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
-
-      const lineNumbers = headingsWithLineNumber.map(h => h.line_number!);
-      const minLineNumber = lineNumbers[0];
-      const maxLineNumber = lineNumbers[lineNumbers.length - 1];
-      const isConsecutive = (maxLineNumber - minLineNumber) <= (headingsWithLineNumber.length - 1);
-
-      if (!isConsecutive) {
-        warnings.push(`Non-consecutive line numbers detected (${minLineNumber} to ${maxLineNumber} for ${headingsWithLineNumber.length} headings). Use consecutive line numbers like +1, +2, +3 for batch inserts.`);
-      }
-
+      const minLineNumber = validateLineNumberBatch(headingsWithLineNumber, 'headings', warnings);
       const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
-      const headingLines = headingsWithLineNumber.map(heading => this.emitHeadingLine(heading));
-      const combinedText = headingLines.join('\n');
-
-      const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-      const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: { start: insertionPoint.offset, end: insertionPoint.offset },
-        text: prefix + combinedText + suffix,
-        reason: "insert headings at specified line"
-      });
+      const combinedText = headingsWithLineNumber.map(h => this.emitHeadingLine(h)).join('\n');
+      pushInsertionEdit(edits, ctx, insertionPoint, combinedText, 'insert headings at specified line');
     }
 
     if (newHeadings.length > 0) {
       const insertionPoint = ContentLocationService.findTableInsertionPoint(ctx.content);
-      const newHeadingText = newHeadings.map(heading => this.emitHeadingLine(heading)).join('\n');
-
-      const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-      const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: { start: insertionPoint.offset, end: insertionPoint.offset },
-        text: prefix + newHeadingText + suffix,
-        reason: "insert new headings"
-      });
+      const newHeadingText = newHeadings.map(h => this.emitHeadingLine(h)).join('\n');
+      pushInsertionEdit(edits, ctx, insertionPoint, newHeadingText, 'insert new headings');
     }
 
     for (const row of headingsToDelete) {

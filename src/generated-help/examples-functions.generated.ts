@@ -26,163 +26,232 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   container.createEl('h1', { cls: 'vaultquery-help-heading vaultquery-help-h1', text: "Custom Function Examples" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Text formatting" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Capitalize first letter" });
-  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlockCode = codeBlock.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlockCode.textContent = "function capitalize(str) {\n  if (!str) return null;\n  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();\n}";
-  codeBlock.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlockCode); }
-  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock1Code = codeBlock1.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock1Code.textContent = "SELECT capitalize(title) as formatted FROM notes LIMIT 5";
-  codeBlock1.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock1Code); }
+  const codeBlock = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlockCode = codeBlock.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlockCode.innerHTML = Prism.highlight("function capitalize(str) {\n  if (!str) return null;\n  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlockCode.textContent = "function capitalize(str) {\n  if (!str) return null;\n  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();\n}";
+  }
+  codeBlock.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock1 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock1Code = codeBlock1.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock1Code.innerHTML = Prism.highlight("SELECT capitalize(title) as formatted FROM notes LIMIT 5", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock1Code.textContent = "SELECT capitalize(title) as formatted FROM notes LIMIT 5";
+  }
+  codeBlock1.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Title case" });
-  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock2Code = codeBlock2.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock2Code.textContent = "function title_case(str) {\n  if (!str) return null;\n  return str.replace(/\\w\\S*/g, txt =>\n    txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()\n  );\n}";
-  codeBlock2.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock2Code); }
+  const codeBlock2 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock2Code = codeBlock2.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock2Code.innerHTML = Prism.highlight("function title_case(str) {\n  if (!str) return null;\n  return str.replace(/\\w\\S*/g, txt =>\n    txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()\n  );\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock2Code.textContent = "function title_case(str) {\n  if (!str) return null;\n  return str.replace(/\\w\\S*/g, txt =>\n    txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()\n  );\n}";
+  }
+  codeBlock2.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Extract first word" });
-  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock3Code = codeBlock3.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock3Code.textContent = "function first_word(text) {\n  if (!text) return null;\n  const match = text.match(/^\\s*(\\S+)/);\n  return match ? match[1] : null;\n}";
-  codeBlock3.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock3Code); }
+  const codeBlock3 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock3Code = codeBlock3.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock3Code.innerHTML = Prism.highlight("function first_word(text) {\n  if (!text) return null;\n  const match = text.match(/^\\s*(\\S+)/);\n  return match ? match[1] : null;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock3Code.textContent = "function first_word(text) {\n  if (!text) return null;\n  const match = text.match(/^\\s*(\\S+)/);\n  return match ? match[1] : null;\n}";
+  }
+  codeBlock3.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Word count" });
-  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock4Code = codeBlock4.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock4Code.textContent = "function word_count(text) {\n  if (!text) return 0;\n  return text.trim().split(/\\s+/).filter(w => w.length > 0).length;\n}";
-  codeBlock4.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock4Code); }
-  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock5Code = codeBlock5.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock5Code.textContent = "SELECT title, word_count(content) as words\nFROM notes\nORDER BY word_count(content) DESC\nLIMIT 10";
-  codeBlock5.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock5Code); }
+  const codeBlock4 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock4Code = codeBlock4.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock4Code.innerHTML = Prism.highlight("function word_count(text) {\n  if (!text) return 0;\n  return text.trim().split(/\\s+/).filter(w => w.length > 0).length;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock4Code.textContent = "function word_count(text) {\n  if (!text) return 0;\n  return text.trim().split(/\\s+/).filter(w => w.length > 0).length;\n}";
+  }
+  codeBlock4.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock5 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock5Code = codeBlock5.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock5Code.innerHTML = Prism.highlight("SELECT title, word_count(content) as words\nFROM notes\nORDER BY word_count(content) DESC\nLIMIT 10", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock5Code.textContent = "SELECT title, word_count(content) as words\nFROM notes\nORDER BY word_count(content) DESC\nLIMIT 10";
+  }
+  codeBlock5.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Date calculations" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Days until date" });
-  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock6Code = codeBlock6.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock6Code.textContent = "function days_until(dateStr) {\n  if (!dateStr) return null;\n  const target = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.ceil((target - today) / (1000 * 60 * 60 * 24));\n}";
-  codeBlock6.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock6Code); }
-  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock7Code = codeBlock7.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock7Code.textContent = "SELECT task_text, due_date, days_until(due_date) as days_left\nFROM tasks\nWHERE due_date IS NOT NULL AND days_until(due_date) >= 0\nORDER BY days_until(due_date)";
-  codeBlock7.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock7Code); }
+  const codeBlock6 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock6Code = codeBlock6.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock6Code.innerHTML = Prism.highlight("function days_until(dateStr) {\n  if (!dateStr) return null;\n  const target = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.ceil((target - today) / (1000 * 60 * 60 * 24));\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock6Code.textContent = "function days_until(dateStr) {\n  if (!dateStr) return null;\n  const target = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.ceil((target - today) / (1000 * 60 * 60 * 24));\n}";
+  }
+  codeBlock6.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock7 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock7Code = codeBlock7.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock7Code.innerHTML = Prism.highlight("SELECT task_text, due_date, days_until(due_date) as days_left\nFROM tasks\nWHERE due_date IS NOT NULL AND days_until(due_date) >= 0\nORDER BY days_until(due_date)", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock7Code.textContent = "SELECT task_text, due_date, days_until(due_date) as days_left\nFROM tasks\nWHERE due_date IS NOT NULL AND days_until(due_date) >= 0\nORDER BY days_until(due_date)";
+  }
+  codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Days since date" });
-  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock8Code = codeBlock8.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock8Code.textContent = "function days_since(dateStr) {\n  if (!dateStr) return null;\n  const past = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.floor((today - past) / (1000 * 60 * 60 * 24));\n}";
-  codeBlock8.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock8Code); }
+  const codeBlock8 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock8Code = codeBlock8.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock8Code.innerHTML = Prism.highlight("function days_since(dateStr) {\n  if (!dateStr) return null;\n  const past = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.floor((today - past) / (1000 * 60 * 60 * 24));\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock8Code.textContent = "function days_since(dateStr) {\n  if (!dateStr) return null;\n  const past = new Date(dateStr);\n  const today = new Date();\n  today.setHours(0, 0, 0, 0);\n  return Math.floor((today - past) / (1000 * 60 * 60 * 24));\n}";
+  }
+  codeBlock8.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Week number" });
-  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock9Code = codeBlock9.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock9Code.textContent = "function week_number(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr);\n  const start = new Date(date.getFullYear(), 0, 1);\n  const days = Math.floor((date - start) / (1000 * 60 * 60 * 24));\n  return Math.ceil((days + start.getDay() + 1) / 7);\n}";
-  codeBlock9.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock9Code); }
+  const codeBlock9 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock9Code = codeBlock9.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock9Code.innerHTML = Prism.highlight("function week_number(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr);\n  const start = new Date(date.getFullYear(), 0, 1);\n  const days = Math.floor((date - start) / (1000 * 60 * 60 * 24));\n  return Math.ceil((days + start.getDay() + 1) / 7);\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock9Code.textContent = "function week_number(dateStr) {\n  if (!dateStr) return null;\n  const date = new Date(dateStr);\n  const start = new Date(date.getFullYear(), 0, 1);\n  const days = Math.floor((date - start) / (1000 * 60 * 60 * 24));\n  return Math.ceil((days + start.getDay() + 1) / 7);\n}";
+  }
+  codeBlock9.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "JSON handling" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Get JSON property" });
-  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock10Code = codeBlock10.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock10Code.textContent = "function json_get(jsonStr, key) {\n  if (!jsonStr || !key) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return obj[key] ?? null;\n  } catch {\n    return null;\n  }\n}";
-  codeBlock10.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock10Code); }
+  const codeBlock10 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock10Code = codeBlock10.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock10Code.innerHTML = Prism.highlight("function json_get(jsonStr, key) {\n  if (!jsonStr || !key) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return obj[key] ?? null;\n  } catch {\n    return null;\n  }\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock10Code.textContent = "function json_get(jsonStr, key) {\n  if (!jsonStr || !key) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return obj[key] ?? null;\n  } catch {\n    return null;\n  }\n}";
+  }
+  codeBlock10.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Get nested JSON property" });
-  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock11Code = codeBlock11.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock11Code.textContent = "function json_path(jsonStr, path) {\n  if (!jsonStr || !path) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return path.split('.').reduce((o, k) => o?.[k], obj) ?? null;\n  } catch {\n    return null;\n  }\n}";
-  codeBlock11.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock11Code); }
-  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock12Code = codeBlock12.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock12Code.textContent = "-- Example: json_path('{\"user\":{\"name\":\"Bob\"}}', 'user.name') returns 'Bob'\nSELECT json_path(row_json, 'Status') as status\nFROM table_rows\nWHERE json_path(row_json, 'Status') = 'Active'";
-  codeBlock12.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock12Code); }
+  const codeBlock11 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock11Code = codeBlock11.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock11Code.innerHTML = Prism.highlight("function json_path(jsonStr, path) {\n  if (!jsonStr || !path) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return path.split('.').reduce((o, k) => o?.[k], obj) ?? null;\n  } catch {\n    return null;\n  }\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock11Code.textContent = "function json_path(jsonStr, path) {\n  if (!jsonStr || !path) return null;\n  try {\n    const obj = JSON.parse(jsonStr);\n    return path.split('.').reduce((o, k) => o?.[k], obj) ?? null;\n  } catch {\n    return null;\n  }\n}";
+  }
+  codeBlock11.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock12 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock12Code = codeBlock12.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock12Code.innerHTML = Prism.highlight("-- Example: json_path('{\"user\":{\"name\":\"Bob\"}}', 'user.name') returns 'Bob'\nSELECT json_path(row_json, 'Status') as status\nFROM table_rows\nWHERE json_path(row_json, 'Status') = 'Active'", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock12Code.textContent = "-- Example: json_path('{\"user\":{\"name\":\"Bob\"}}', 'user.name') returns 'Bob'\nSELECT json_path(row_json, 'Status') as status\nFROM table_rows\nWHERE json_path(row_json, 'Status') = 'Active'";
+  }
+  codeBlock12.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Tag and metadata" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Extract priority from text" });
-  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock13Code = codeBlock13.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock13Code.textContent = "function extract_priority(text) {\n  if (!text) return null;\n  const match = text.match(/[!@#]\\s*(high|medium|low|urgent)/i);\n  return match ? match[1].toLowerCase() : null;\n}";
-  codeBlock13.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock13Code); }
+  const codeBlock13 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock13Code = codeBlock13.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock13Code.innerHTML = Prism.highlight("function extract_priority(text) {\n  if (!text) return null;\n  const match = text.match(/[!@#]\\s*(high|medium|low|urgent)/i);\n  return match ? match[1].toLowerCase() : null;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock13Code.textContent = "function extract_priority(text) {\n  if (!text) return null;\n  const match = text.match(/[!@#]\\s*(high|medium|low|urgent)/i);\n  return match ? match[1].toLowerCase() : null;\n}";
+  }
+  codeBlock13.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Has hashtag" });
-  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock14Code = codeBlock14.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock14Code.textContent = "function has_tag(text, tag) {\n  if (!text || !tag) return 0;\n  const pattern = new RegExp('#' + tag + '\\\\b', 'i');\n  return pattern.test(text) ? 1 : 0;\n}";
-  codeBlock14.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock14Code); }
-  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock15Code = codeBlock15.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock15Code.textContent = "SELECT title, path\nFROM notes\nWHERE has_tag(content, 'important') = 1";
-  codeBlock15.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock15Code); }
+  const codeBlock14 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock14Code = codeBlock14.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock14Code.innerHTML = Prism.highlight("function has_tag(text, tag) {\n  if (!text || !tag) return 0;\n  const pattern = new RegExp('#' + tag + '\\\\b', 'i');\n  return pattern.test(text) ? 1 : 0;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock14Code.textContent = "function has_tag(text, tag) {\n  if (!text || !tag) return 0;\n  const pattern = new RegExp('#' + tag + '\\\\b', 'i');\n  return pattern.test(text) ? 1 : 0;\n}";
+  }
+  codeBlock14.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock15 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock15Code = codeBlock15.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock15Code.innerHTML = Prism.highlight("SELECT title, path\nFROM notes\nWHERE has_tag(content, 'important') = 1", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock15Code.textContent = "SELECT title, path\nFROM notes\nWHERE has_tag(content, 'important') = 1";
+  }
+  codeBlock15.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Extract all hashtags" });
-  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock16Code = codeBlock16.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock16Code.textContent = "function extract_tags(text) {\n  if (!text) return null;\n  const tags = text.match(/#[\\w-]+/g);\n  return tags ? tags.join(' ') : null;\n}";
-  codeBlock16.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock16Code); }
+  const codeBlock16 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock16Code = codeBlock16.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock16Code.innerHTML = Prism.highlight("function extract_tags(text) {\n  if (!text) return null;\n  const tags = text.match(/#[\\w-]+/g);\n  return tags ? tags.join(' ') : null;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock16Code.textContent = "function extract_tags(text) {\n  if (!text) return null;\n  const tags = text.match(/#[\\w-]+/g);\n  return tags ? tags.join(' ') : null;\n}";
+  }
+  codeBlock16.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Numeric utilities" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Clamp value" });
-  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock17Code = codeBlock17.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock17Code.textContent = "function clamp(value, min, max) {\n  if (value === null) return null;\n  return Math.min(Math.max(value, min), max);\n}";
-  codeBlock17.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock17Code); }
+  const codeBlock17 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock17Code = codeBlock17.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock17Code.innerHTML = Prism.highlight("function clamp(value, min, max) {\n  if (value === null) return null;\n  return Math.min(Math.max(value, min), max);\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock17Code.textContent = "function clamp(value, min, max) {\n  if (value === null) return null;\n  return Math.min(Math.max(value, min), max);\n}";
+  }
+  codeBlock17.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Round to decimal places" });
-  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock18Code = codeBlock18.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock18Code.textContent = "function round_to(value, decimals) {\n  if (value === null) return null;\n  const factor = Math.pow(10, decimals || 0);\n  return Math.round(value * factor) / factor;\n}";
-  codeBlock18.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock18Code); }
+  const codeBlock18 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock18Code = codeBlock18.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock18Code.innerHTML = Prism.highlight("function round_to(value, decimals) {\n  if (value === null) return null;\n  const factor = Math.pow(10, decimals || 0);\n  return Math.round(value * factor) / factor;\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock18Code.textContent = "function round_to(value, decimals) {\n  if (value === null) return null;\n  const factor = Math.pow(10, decimals || 0);\n  return Math.round(value * factor) / factor;\n}";
+  }
+  codeBlock18.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Percentage" });
-  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock19Code = codeBlock19.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock19Code.textContent = "function percentage(part, total) {\n  if (part === null || total === null || total === 0) return null;\n  return Math.round((part / total) * 100);\n}";
-  codeBlock19.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock19Code); }
-  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery\n" });
-  const codeBlock20Code = codeBlock20.createEl('code', { cls: 'language-vaultquery' });
-  codeBlock20Code.textContent = "SELECT\n  status,\n  COUNT(*) as count,\n  percentage(COUNT(*), (SELECT COUNT(*) FROM tasks)) || '%' as pct\nFROM tasks\nGROUP BY status";
-  codeBlock20.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock20Code); }
+  const codeBlock19 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock19Code = codeBlock19.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock19Code.innerHTML = Prism.highlight("function percentage(part, total) {\n  if (part === null || total === null || total === 0) return null;\n  return Math.round((part / total) * 100);\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock19Code.textContent = "function percentage(part, total) {\n  if (part === null || total === null || total === 0) return null;\n  return Math.round((part / total) * 100);\n}";
+  }
+  codeBlock19.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
+  const codeBlock20 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery\n" });
+  const codeBlock20Code = codeBlock20.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery"]) {
+    codeBlock20Code.innerHTML = Prism.highlight("SELECT\n  status,\n  COUNT(*) as count,\n  percentage(COUNT(*), (SELECT COUNT(*) FROM tasks)) || '%' as pct\nFROM tasks\nGROUP BY status", Prism.languages["vaultquery"], "vaultquery");
+  } else {
+    codeBlock20Code.textContent = "SELECT\n  status,\n  COUNT(*) as count,\n  percentage(COUNT(*), (SELECT COUNT(*) FROM tasks)) || '%' as pct\nFROM tasks\nGROUP BY status";
+  }
+  codeBlock20.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "String utilities" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Truncate with ellipsis" });
-  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock21Code = codeBlock21.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock21Code.textContent = "function truncate(text, maxLen) {\n  if (!text) return null;\n  if (text.length <= maxLen) return text;\n  return text.substring(0, maxLen - 3) + '...';\n}";
-  codeBlock21.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock21Code); }
+  const codeBlock21 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock21Code = codeBlock21.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock21Code.innerHTML = Prism.highlight("function truncate(text, maxLen) {\n  if (!text) return null;\n  if (text.length <= maxLen) return text;\n  return text.substring(0, maxLen - 3) + '...';\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock21Code.textContent = "function truncate(text, maxLen) {\n  if (!text) return null;\n  if (text.length <= maxLen) return text;\n  return text.substring(0, maxLen - 3) + '...';\n}";
+  }
+  codeBlock21.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   container.createEl('h3', { cls: 'vaultquery-help-heading vaultquery-help-h3', text: "Remove markdown" });
-  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock' });
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "```vaultquery-function\n" });
-  const codeBlock22Code = codeBlock22.createEl('code', { cls: 'language-vaultquery-function' });
-  codeBlock22Code.textContent = "function strip_markdown(text) {\n  if (!text) return null;\n  return text\n    .replace(/\\*\\*(.+?)\\*\\*/g, '$1')\n    .replace(/\\*(.+?)\\*/g, '$1')\n    .replace(/\\[\\[(.+?)\\]\\]/g, '$1')\n    .replace(/\\[(.+?)\\]\\(.+?\\)/g, '$1')\n    .replace(/^#+\\s*/gm, '')\n    .replace(/^[-*]\\s*/gm, '');\n}";
-  codeBlock22.createSpan({ cls: 'vaultquery-help-fence', text: "\n```" });
-  if (typeof Prism !== 'undefined' && Prism.highlightElement) { Prism.highlightElement(codeBlock22Code); }
+  const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-function\n" });
+  const codeBlock22Code = codeBlock22.createEl('code');
+  if (typeof Prism !== 'undefined' && Prism.languages["vaultquery-function"]) {
+    codeBlock22Code.innerHTML = Prism.highlight("function strip_markdown(text) {\n  if (!text) return null;\n  return text\n    .replace(/\\*\\*(.+?)\\*\\*/g, '$1')\n    .replace(/\\*(.+?)\\*/g, '$1')\n    .replace(/\\[\\[(.+?)\\]\\]/g, '$1')\n    .replace(/\\[(.+?)\\]\\(.+?\\)/g, '$1')\n    .replace(/^#+\\s*/gm, '')\n    .replace(/^[-*]\\s*/gm, '');\n}", Prism.languages["vaultquery-function"], "vaultquery-function");
+  } else {
+    codeBlock22Code.textContent = "function strip_markdown(text) {\n  if (!text) return null;\n  return text\n    .replace(/\\*\\*(.+?)\\*\\*/g, '$1')\n    .replace(/\\*(.+?)\\*/g, '$1')\n    .replace(/\\[\\[(.+?)\\]\\]/g, '$1')\n    .replace(/\\[(.+?)\\]\\(.+?\\)/g, '$1')\n    .replace(/^#+\\s*/gm, '')\n    .replace(/^[-*]\\s*/gm, '');\n}";
+  }
+  codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
 }

@@ -1,6 +1,10 @@
 import type { EntityHandler, EntityHandlerContext, PreviewResult, EditPlannerPreviewResult } from './types';
+import { stringifyYaml } from 'obsidian';
 import { escapeRegex, processEscapeSequences } from '../utils/StringUtils';
 import { extractSql, createEmptyResult } from './types';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('WriteSync');
 
 /**
  * Handler for content-based operations: notes, tags, links
@@ -13,10 +17,7 @@ export class ContentHandler implements EntityHandler {
     return this.supportedTables.includes(table);
   }
 
-  async convertPreviewResult(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  async convertPreviewResult(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const effectiveTable = this.getEffectiveTable(previewResult.table);
 
     switch (effectiveTable) {
@@ -31,10 +32,7 @@ export class ContentHandler implements EntityHandler {
     }
   }
 
-  async handleInsertOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  async handleInsertOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const effectiveTable = this.getEffectiveTable(previewResult.table);
 
     switch (effectiveTable) {
@@ -56,12 +54,8 @@ export class ContentHandler implements EntityHandler {
     return viewToTable[table] || table;
   }
 
-  // ============= Notes Operations =============
 
-  private handleNotesOperation(
-    previewResult: PreviewResult,
-    _context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private handleNotesOperation(previewResult: PreviewResult, _context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'delete') {
       if (!_context.settings.allowDeleteNotes) {
         throw new Error('DELETE FROM notes is disabled. Enable "Allow file deletion" in VaultQuery settings to delete files.');
@@ -81,7 +75,6 @@ export class ContentHandler implements EntityHandler {
         return Promise.resolve(this.handleNotesWithPropertiesUpdate(previewResult));
       }
 
-      // Regular notes table update (content only)
       const contentUpdates = previewResult.after
         .filter(row => row.content !== undefined)
         .map(row => ({
@@ -112,12 +105,10 @@ export class ContentHandler implements EntityHandler {
       const beforeRow = previewResult.before[i];
       const path = afterRow.path as string;
 
-      // Handle content updates
       if (afterRow.content !== undefined && afterRow.content !== beforeRow?.content) {
         contentUpdates.push({ path, content: processEscapeSequences(afterRow.content as string) });
       }
 
-      // Handle property column changes
       for (const [key, afterValue] of Object.entries(afterRow)) {
         if (notesCoreColumns.includes(key)) continue;
 
@@ -168,14 +159,8 @@ export class ContentHandler implements EntityHandler {
         }
 
         if (Object.keys(properties).length > 0) {
-          const yamlLines = Object.entries(properties).map(([k, v]) => {
-            if (v.includes(':') || v.includes('#') || v.includes('\n') || v.startsWith('"') || v.startsWith("'")) {
-              return `${k}: "${v.replace(/"/g, '\\"')}"`;
-            }
-            return `${k}: ${v}`;
-          });
-          // eslint-disable-next-line obsidianmd/prefer-stringify-yaml -- intentional: building file content from scratch during file creation
-          const frontmatter = `---\n${yamlLines.join('\n')}\n---\n\n`;
+          const frontmatterYaml = stringifyYaml(properties).trimEnd();
+          const frontmatter = ["---", frontmatterYaml, "---", "", ""].join("\n");
           content = frontmatter + content;
         }
       }
@@ -192,12 +177,8 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  // ============= Tags Operations =============
 
-  private async handleTagsOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTagsOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'update') {
       return this.handleTagsUpdate(previewResult, context);
     }
@@ -209,10 +190,7 @@ export class ContentHandler implements EntityHandler {
     return createEmptyResult(extractSql(previewResult));
   }
 
-  private async handleTagsUpdate(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTagsUpdate(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const tagChangesByPath = new Map<string, Array<{ oldTag: string; newTag: string }>>();
 
     for (let i = 0; i < previewResult.before.length; i++) {
@@ -252,10 +230,7 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  private async handleTagsDelete(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTagsDelete(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const tagDeletesByPath = new Map<string, string[]>();
 
     for (const row of previewResult.before) {
@@ -289,10 +264,7 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  private async handleTagsInsert(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleTagsInsert(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const inlineTagsByPath = new Map<string, Array<{
       tagName: string;
       lineNumber: number;
@@ -331,7 +303,7 @@ export class ContentHandler implements EntityHandler {
       }
 
       catch (e) {
-        console.warn('[VaultQuery] ContentHandler: Failed to read file for tag insert', path, e);
+        logger.warn('ContentHandler: Failed to read file for tag insert', path, e);
         continue;
       }
 
@@ -372,7 +344,6 @@ export class ContentHandler implements EntityHandler {
       contentUpdates.push({ path, content });
     }
 
-    // Handle frontmatter tags
     const propertiesAfter: Array<{ path: string; key: string; value: string | null; type: string | null }> = [];
 
     for (const [path, newTags] of frontmatterTagsByPath) {
@@ -406,12 +377,8 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  // ============= Links Operations =============
 
-  private async handleLinksOperation(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleLinksOperation(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'update') {
       return this.handleLinksUpdate(previewResult, context);
     }
@@ -423,10 +390,7 @@ export class ContentHandler implements EntityHandler {
     return createEmptyResult(extractSql(previewResult));
   }
 
-  private async handleLinksUpdate(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleLinksUpdate(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const linkChangesByPath = new Map<string, Array<{ oldTarget: string; oldText: string; newTarget: string; newText: string }>>();
 
     for (let i = 0; i < previewResult.before.length; i++) {
@@ -488,10 +452,7 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  private async handleLinksDelete(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleLinksDelete(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const linkDeletesByPath = new Map<string, Array<{ target: string; text: string }>>();
 
     for (const row of previewResult.before) {
@@ -535,10 +496,7 @@ export class ContentHandler implements EntityHandler {
     };
   }
 
-  private async handleLinksInsert(
-    previewResult: PreviewResult,
-    context: EntityHandlerContext
-  ): Promise<EditPlannerPreviewResult> {
+  private async handleLinksInsert(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     const linksByPath = new Map<string, Array<{
       target: string;
       text: string;
@@ -567,7 +525,7 @@ export class ContentHandler implements EntityHandler {
       }
 
       catch (e) {
-        console.warn('[VaultQuery] ContentHandler: Failed to read file for link insert', path, e);
+        logger.warn('ContentHandler: Failed to read file for link insert', path, e);
         continue;
       }
 

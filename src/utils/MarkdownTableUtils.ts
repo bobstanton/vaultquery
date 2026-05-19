@@ -1,5 +1,3 @@
-import { ContentLocationService } from '../Services/ContentLocationService';
-
 interface MarkdownTable {
   table_index: number;
   table_name?: string;
@@ -10,10 +8,46 @@ interface MarkdownTable {
 
 export class MarkdownTableUtils {
   /**
+   * Split a markdown table row on unescaped pipe characters.
+   * Leading/trailing table delimiters are removed, escaped pipes are kept as cell text.
+   */
+  static splitTableRow(line: string): string[] {
+    const cells: string[] = [];
+    let current = '';
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const next = line[i + 1];
+
+      if (char === '\\' && next === '|') {
+        current += '|';
+        i++;
+        continue;
+      }
+
+      if (char === '|') {
+        cells.push(current.trim());
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    cells.push(current.trim());
+
+    if (cells.length > 0 && cells[0] === '') {
+      cells.shift();
+    }
+    if (cells.length > 0 && cells[cells.length - 1] === '') {
+      cells.pop();
+    }
+
+    return cells;
+  }
+
+  /**
    * Detect all markdown tables in content.
-   * @param content The markdown content to scan
-   * @param contentOffset Character offset to add to positions
-   * @param noteTitle Optional fallback name when no heading or block_id exists
    */
   static detectAllTables(content: string, contentOffset: number = 0, noteTitle?: string): MarkdownTable[] {
     const lines = content.split('\n');
@@ -33,7 +67,7 @@ export class MarkdownTableUtils {
       }
 
       if (i < lines.length - 1 && isTableHeader(lines[i]) && isAlignRow(lines[i + 1])) {
-        const start_offset = ContentLocationService.getLineStartOffset(content, i) + contentOffset;
+        const start_offset = this.getLineStartOffset(content, i) + contentOffset;
         let j = i + 2;
         while (j < lines.length && isTableRow(lines[j])) j++;
 
@@ -46,8 +80,7 @@ export class MarkdownTableUtils {
           }
         }
 
-        const end_offset = ContentLocationService.getLineStartOffset(content, j) + contentOffset;
-        // Priority: block_id > heading > note title
+        const end_offset = this.getLineStartOffset(content, j) + contentOffset;
         const table_name = block_id ?? currentHeading ?? noteTitle;
         tables.push({
           table_index: tableIdx++,
@@ -77,14 +110,14 @@ export class MarkdownTableUtils {
         /^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/.test(nextLine)) {
         
         if (found === tableIndex) {
-          const start = ContentLocationService.getLineStartOffset(content, i);
+          const start = this.getLineStartOffset(content, i);
           let j = i + 2;
 
           while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) {
             j++;
           }
 
-          const end = ContentLocationService.getLineStartOffset(content, j);
+          const end = this.getLineStartOffset(content, j);
           return { start, end };
         }
         
@@ -109,5 +142,14 @@ export class MarkdownTableUtils {
     if (!/^\s*\|.*\|\s*$/.test(lines[0])) return false;
     if (!/^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/.test(lines[1])) return false;
     return true;
+  }
+
+  private static getLineStartOffset(content: string, lineIndex: number): number {
+    const lines = content.split('\n');
+    let offset = 0;
+    for (let i = 0; i < lineIndex && i < lines.length; i++) {
+      offset += lines[i].length + 1;
+    }
+    return offset;
   }
 }

@@ -7,6 +7,8 @@ node_modules/
 
 # Build outputs
 main.js
+api.js
+api.d.ts
 *.js.map
 /styles.css
 /main.css

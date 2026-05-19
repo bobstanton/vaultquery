@@ -32,10 +32,16 @@ Add VaultQuery as a dev dependency to import types:
 npm install --save-dev github:bobstanton/vaultquery
 ```
 
-Then import the types you need:
+Then import the required types:
 
 ```typescript
-import type { IVaultQueryAPI, VaultQueryPlugin, QueryResult, PreviewResult } from 'vaultquery';
+import type {
+  IVaultQueryAPI,
+  VaultQueryPlugin,
+  QueryResult,
+  PreviewResult,
+  VaultQueryTableProvider
+} from 'vaultquery/api';
 
 const vaultQuery = this.app.plugins.getPlugin('vaultquery') as VaultQueryPlugin | undefined;
 if (!vaultQuery?.api) return;
@@ -57,6 +63,7 @@ Available types:
 | `VaultIndexedEvent`  | Event data for `vault-indexed`                 |
 | `EventRef`           | Event subscription reference                   |
 | `IndexingStats`      | Performance statistics                         |
+| `VaultQueryTableProvider` | Third-party provider tables API contract |
 
 ## Core API Methods
 
@@ -221,7 +228,7 @@ Use `execute()` for statements that don't return query results. It returns the n
 
 ```typescript
 // Create a custom view (returns 0 for DDL)
-const affected = api.execute(`
+const affected = await api.execute(`
   CREATE VIEW IF NOT EXISTS recent_notes AS
   SELECT path, title, modified
   FROM notes
@@ -269,6 +276,7 @@ The capabilities object includes:
 |------------------------|----------------------------------------------|
 | `writeEnabled`         | INSERT/UPDATE/DELETE operations are allowed  |
 | `fileDeleteEnabled`    | DELETE FROM notes (file deletion) is allowed |
+| `thirdPartyProviderTablesEnabled` | Third-party provider tables are enabled |
 | `indexing.content`     | Note content is indexed                      |
 | `indexing.frontmatter` | `properties` table is available              |
 | `indexing.tables`      | `table_cells` table is available             |
@@ -283,10 +291,135 @@ The capabilities object includes:
 Get the current database schema as markdown:
 
 ```typescript
-const schemaMarkdown = api.getSchemaInfo();
+const schemaMarkdown = await api.getSchemaInfo();
 console.log(schemaMarkdown);
 // Returns formatted markdown with all tables, columns, and types
 ```
+
+## Third-party provider tables
+
+Third-party plugins can register third-party provider tables when **Third-party provider tables** is enabled in VaultQuery settings.
+
+Third-party provider tables are useful for external or plugin-owned datasets such as weather, tides, calendars, RSS feeds, bookmarks, or API-backed records. VaultQuery owns SQLite table creation, status tracking, generic rendered definition blocks, and query access. The provider plugin owns parsing, fetching, caching, normalization, and returned rows.
+
+### Registering Providers
+
+Use `registerVaultQueryTableProviders()` from plugin startup code. It waits for VaultQuery with mobile-safe retries, checks whether the feature is enabled, registers every provider, re-registers after mobile database recovery, and returns a handle you can dispose during plugin unload.
+
+```typescript
+import {
+  registerVaultQueryTableProviders,
+  type ManagedVaultQueryTableProviderRegistration
+} from 'vaultquery/api';
+
+private vaultQueryTables: ManagedVaultQueryTableProviderRegistration | null = null;
+
+async onload() {
+  this.vaultQueryTables = await registerVaultQueryTableProviders(this.app, {
+    pluginId: 'places-environment',
+    providers: [
+      createPlacesWeatherProvider(this.weatherDataService),
+      createPlacesTideProvider(this.tideDataService),
+      createPlacesSolarProvider(this)
+    ],
+    logger: {
+      info: message => Logger.info('Places', message),
+      warn: message => Logger.warn('Places', message),
+      error: (message, error) => Logger.error('Places', message, error)
+    }
+  });
+}
+
+async onunload() {
+  await this.vaultQueryTables?.dispose();
+}
+```
+
+`registerTableProvider()` remains available for advanced integrations that need to own their own lifecycle.
+
+```typescript
+import type { VaultQueryTableProvider } from 'vaultquery/api';
+
+const provider: VaultQueryTableProvider = {
+  id: 'places-environment.weather',
+  displayName: 'Places Environment Weather',
+  tables: [
+    {
+      name: 'weather_daily',
+      description: 'Daily weather rows from Places Environment.',
+      primaryKey: ['id', 'date', 'units'],
+      defaultStaleAfterMs: 2 * 60 * 60 * 1000,
+      columns: [
+        { name: 'id', type: 'TEXT', description: 'Stable location identifier.' },
+        { name: 'name', type: 'TEXT', nullable: true },
+        { name: 'date', type: 'TEXT' },
+        { name: 'units', type: 'TEXT' },
+        { name: 'temperature_2m_max', type: 'REAL', nullable: true },
+        { name: 'temperature_2m_min', type: 'REAL', nullable: true }
+      ],
+      indexes: [
+        { name: 'idx_weather_daily_id_date', columns: ['id', 'date'] }
+      ]
+    }
+  ],
+  definitionBlock: {
+    language: 'places-weather-vaultquery',
+    parse: (source, context) => parseWeatherDefinition(source, context)
+  },
+  refresh: async (context) => refreshWeatherRows(context)
+};
+
+await api.registerTableProvider(provider);
+```
+
+VaultQuery discovers matching fenced code blocks during indexing, calls the provider parser, stores refresh definitions in memory, and renders a generic status block with the standard floating refresh button.
+
+Registered provider definition languages also participate in VaultQuery editor behavior:
+
+- Provider blocks use generic config-style highlighting rather than VaultQuery-owned config semantics
+- VaultQuery currently ships provider-definition key/value autocomplete for the built-in Places provider block languages (`places-weather-vaultquery`, `places-tides-vaultquery`, and `places-solar-vaultquery`)
+- Other registered provider block languages get generic highlighting and rendered status controls, but there is not yet a public provider-specific autocomplete extension point
+- Normal `vaultquery` SQL blocks can autocomplete third-party provider tables and columns once those tables exist in the schema
+- SQL autocomplete is clause-aware and alias-aware, so third-party provider tables participate in relation and column suggestions the same way built-in tables do
+
+### Refresh Results
+
+Provider refresh callbacks return rows grouped by table name:
+
+```typescript
+return {
+  tables: {
+    weather_daily: {
+      replaceWhere: { id: 'scranton-pa', units: 'imperial' },
+      rows: [
+        {
+          id: 'scranton-pa',
+          name: 'Scranton, PA',
+          date: '2026-04-21',
+          units: 'imperial',
+          temperature_2m_max: 68,
+          temperature_2m_min: 42
+        }
+      ]
+    }
+  }
+};
+```
+
+`replaceWhere` is optional. When present, VaultQuery deletes rows matching those declared column values inside the same transaction before upserting the returned rows.
+
+### Status and Cleanup
+
+```typescript
+const status = await api.getTableProviderStatus('places-environment.weather');
+console.table(status);
+
+await api.unregisterTableProvider('places-environment.weather');
+```
+
+Provider rows remain queryable after unregistering. Refresh attempts are blocked until the provider registers again.
+
+Schema output reports third-party provider table rows from VaultQuery's provider refresh status. For providers with multiple refresh definitions or upserted partitions, the displayed row count represents the largest recorded refresh result for that table, not necessarily `SELECT COUNT(*)` over the physical table.
 
 ## Utility Methods
 

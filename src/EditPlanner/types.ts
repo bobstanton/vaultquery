@@ -1,6 +1,6 @@
-import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range } from '../Services/ContentLocationService';
+import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range, InsertionPoint } from '../Services/ContentLocationService';
 
-export type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range };
+export type { TaskRow, HeadingRow, ListItemRow, TableCellRow };
 
 export type FrontmatterValue = string | number | boolean | null | undefined | Date | FrontmatterValue[] | { [key: string]: FrontmatterValue };
 export type FrontmatterData = { [key: string]: FrontmatterValue };
@@ -20,8 +20,8 @@ export type FrontmatterEdit = {
   reason?: string;
 };
 
-export type CreateFileEdit = { type: "createFile"; path: string; text: string; reason?: string };
-export type DeleteFileEdit = { type: "deleteFile"; path: string; reason?: string };
+type CreateFileEdit = { type: "createFile"; path: string; text: string; reason?: string };
+type DeleteFileEdit = { type: "deleteFile"; path: string; reason?: string };
 
 export type Edit = ReplaceRangeEdit | FrontmatterEdit | CreateFileEdit | DeleteFileEdit;
 
@@ -52,6 +52,34 @@ export interface EntityPlannerContext {
 export interface EntityPlanResult {
   edits: ReplaceRangeEdit[];
   warnings: string[];
+}
+
+export function validateLineNumberBatch<T extends { line_number?: number | null }>(
+  items: T[],
+  entityName: string,
+  warnings: string[]
+): number {
+  items.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
+  const lineNumbers = items.map(x => x.line_number!);
+  const minLineNumber = lineNumbers[0];
+  const maxLineNumber = lineNumbers[lineNumbers.length - 1];
+  const isConsecutive = (maxLineNumber - minLineNumber) <= (items.length - 1);
+  if (!isConsecutive) {
+    warnings.push(`Non-consecutive line numbers detected (${minLineNumber} to ${maxLineNumber} for ${items.length} ${entityName}). Use consecutive line numbers like +1, +2, +3 for batch inserts.`);
+  }
+  return minLineNumber;
+}
+
+export function pushInsertionEdit(edits: ReplaceRangeEdit[], ctx: EntityPlannerContext, insertionPoint: InsertionPoint, text: string, reason: string): void {
+  const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
+  const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
+  edits.push({
+    type: "replaceRange",
+    path: ctx.path,
+    range: { start: insertionPoint.offset, end: insertionPoint.offset },
+    text: prefix + text + suffix,
+    reason
+  });
 }
 
 /**

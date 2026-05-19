@@ -1,8 +1,17 @@
-import { App, TFile, normalizePath } from 'obsidian';
-import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
-import type VaultQueryPlugin from '../main';
+import { App, TFile, normalizePath, type TAbstractFile } from 'obsidian';
+import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { logger as rootLogger } from '../utils/logger';
 
 declare const activeWindow: Window;
+
+/** Debounce time for file modifications (ms) - balances responsiveness vs redundant indexing */
+const FILE_MODIFY_DEBOUNCE_MS = 300;
+const logger = rootLogger.scope('Indexing');
+
+function isVaultFile(file: TAbstractFile): file is TFile {
+  return file instanceof TFile;
+}
 
 export class IndexingStateManager {
   private indexingQueue: Set<string> = new Set();
@@ -11,11 +20,10 @@ export class IndexingStateManager {
   private currentlyIndexingFiles: Set<string> = new Set();
   private fileModifyTimers: Map<string, number> = new Map();
 
-  public constructor(private app: App, private plugin: VaultQueryPlugin) {}
+  public constructor(private app: App, private plugin: VaultQueryPluginContext) {}
 
   public isIndexing(): boolean {
-    const serviceIsIndexing = this.plugin.api?.getIndexingStatus().isIndexing ?? false;
-    return serviceIsIndexing || this.hasPendingFileModifications();
+    return (this.plugin.api?.getIndexingStatus().isIndexing ?? false) || this.hasPendingFileModifications();
   }
 
   public hasPendingFileModifications(): boolean {
@@ -60,7 +68,7 @@ export class IndexingStateManager {
           indexedPaths.push(filePath);
         }
         catch (error) {
-          console.error('[VaultQuery] Error indexing', filePath, error);
+          logger.error('Error indexing', filePath, error);
         } finally {
           this.currentlyIndexingFiles.delete(filePath);
         }
@@ -75,7 +83,7 @@ export class IndexingStateManager {
       }
 
       if (this.plugin.settings.autoRefreshOnIndexChange) {
-        void SlickGridRenderer.refreshAllGrids(indexedPaths);
+        void QueryRefreshRegistry.refreshAll(indexedPaths);
       }
     }
   }
@@ -89,7 +97,7 @@ export class IndexingStateManager {
       await this.plugin.api.indexNote(file);
     }
     catch (error) {
-      console.error(`[VaultQuery] Failed to index file ${file.path}:`, error);
+      logger.error(`Failed to index file ${file.path}`, error);
     }
   }
 
@@ -103,7 +111,7 @@ export class IndexingStateManager {
       if (!this.plugin.api) return;
       this.queueIndexing(file.path);
       this.fileModifyTimers.delete(file.path);
-    }, 100);
+    }, FILE_MODIFY_DEBOUNCE_MS);
 
     this.fileModifyTimers.set(file.path, timer);
   }
@@ -124,20 +132,11 @@ export class IndexingStateManager {
   }
 
   public shouldProcessFile(file: TFile): boolean {
-    if (!this.plugin.api) {
-      return false;
-    }
-
-    return file instanceof TFile && file.extension === 'md' && this.plugin.api.shouldIndexFile(file);
+    return !!this.plugin.api && file.extension === 'md' && this.plugin.api.shouldIndexFile(file);
   }
 
   public canProcessFiles(): boolean {
-    if (!this.plugin.api) {
-      return false;
-    }
-
-    const status = this.plugin.api.getIndexingStatus();
-    return !status.isIndexing;
+    return !!this.plugin.api && !this.plugin.api.getIndexingStatus().isIndexing;
   }
 
   public async waitForIndexingComplete(maxWaitMs: number = 5000): Promise<void> {
@@ -146,7 +145,7 @@ export class IndexingStateManager {
 
     while (this.hasPendingFileModifications()) {
       if (Date.now() - startTime > maxWaitMs) {
-        console.warn('[VaultQuery] Timed out waiting for pending modifications');
+        logger.warn('Timed out waiting for pending modifications');
         return;
       }
       await new Promise(resolve => activeWindow.setTimeout(resolve, checkInterval));
@@ -163,10 +162,10 @@ export class IndexingStateManager {
       return;
     }
 
-    this.plugin.registerEvent(this.app.vault.on('create', (file) => { if (file instanceof TFile) this.handleFileCreate(file); }));
-    this.plugin.registerEvent(this.app.vault.on('modify', (file) => { if (file instanceof TFile) this.handleFileModify(file); }));
-    this.plugin.registerEvent(this.app.vault.on('delete', (file) => { if (file instanceof TFile) this.handleFileDelete(file); }));
-    this.plugin.registerEvent(this.app.vault.on('rename', (file, oldPath) => { if (file instanceof TFile) this.handleFileRename(file, oldPath); }));
+    this.plugin.registerEvent(this.app.vault.on('create', (file) => { if (isVaultFile(file)) this.handleFileCreate(file); }));
+    this.plugin.registerEvent(this.app.vault.on('modify', (file) => { if (isVaultFile(file)) this.handleFileModify(file); }));
+    this.plugin.registerEvent(this.app.vault.on('delete', (file) => { if (isVaultFile(file)) this.handleFileDelete(file); }));
+    this.plugin.registerEvent(this.app.vault.on('rename', (file, oldPath) => { if (isVaultFile(file)) this.handleFileRename(file, oldPath); }));
   }
 
   private handleFileCreate(file: TFile): void {
@@ -192,14 +191,14 @@ export class IndexingStateManager {
   }
 
   private handleFileDelete(file: TFile): void {
-    if (file instanceof TFile && file.extension === 'md' && this.canProcessFiles()) {
-      this.plugin.api?.removeNote(file.path);
+    if (file.extension === 'md' && this.canProcessFiles()) {
+      void this.plugin.api?.removeNote(file.path);
     }
   }
 
   private handleFileRename(file: TFile, oldPath: string): void {
-    if (file instanceof TFile && file.extension === 'md' && this.canProcessFiles()) {
-      this.plugin.api?.removeNote(oldPath);
+    if (file.extension === 'md' && this.canProcessFiles()) {
+      void this.plugin.api?.removeNote(oldPath);
       if (this.plugin.api?.shouldIndexFile(file)) {
         this.queueIndexing(file.path);
       }

@@ -1,6 +1,6 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
 import type { TaskRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext } from './types';
-import { getBlockIdSuffix } from './types';
+import { getBlockIdSuffix, validateLineNumberBatch, pushInsertionEdit } from './types';
 
 interface TaskStyle { bullet: "-" | "*" | "+"; indent: string; }
 
@@ -37,47 +37,16 @@ export class TaskEditPlanner {
     }
 
     if (tasksWithLineNumber.length > 0) {
-      tasksWithLineNumber.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
-
-      const lineNumbers = tasksWithLineNumber.map(t => t.line_number!);
-      const minLineNumber = lineNumbers[0];
-      const maxLineNumber = lineNumbers[lineNumbers.length - 1];
-      const isConsecutive = (maxLineNumber - minLineNumber) <= (tasksWithLineNumber.length - 1);
-
-      if (!isConsecutive) {
-        warnings.push(`Non-consecutive line numbers detected (${minLineNumber} to ${maxLineNumber} for ${tasksWithLineNumber.length} tasks). Use consecutive line numbers like +1, +2, +3 for batch inserts.`);
-      }
-
+      const minLineNumber = validateLineNumberBatch(tasksWithLineNumber, 'tasks', warnings);
       const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
-      const taskLines = tasksWithLineNumber.map(task => this.emitTaskLine(task, !!task.completed));
-      const combinedText = taskLines.join('\n');
-
-      const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-      const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: { start: insertionPoint.offset, end: insertionPoint.offset },
-        text: prefix + combinedText + suffix,
-        reason: "insert tasks at specified line"
-      });
+      const combinedText = tasksWithLineNumber.map(t => this.emitTaskLine(t, !!t.completed)).join('\n');
+      pushInsertionEdit(edits, ctx, insertionPoint, combinedText, 'insert tasks at specified line');
     }
 
     if (newTasks.length > 0) {
       const insertionPoint = this.contentLocationService.findTaskInsertionPoint(ctx.content);
-      const newTaskText = newTasks.map(task => this.emitTaskLine(task, !!task.completed)).join('\n');
-
-      const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-      const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
-
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: { start: insertionPoint.offset, end: insertionPoint.offset },
-        text: prefix + newTaskText + suffix,
-        reason: "insert new tasks"
-      });
+      const newTaskText = newTasks.map(t => this.emitTaskLine(t, !!t.completed)).join('\n');
+      pushInsertionEdit(edits, ctx, insertionPoint, newTaskText, 'insert new tasks');
     }
 
     for (const row of tasksToDelete) {
@@ -129,7 +98,6 @@ export class TaskEditPlanner {
 
     let text = base.task_text ?? "";
 
-    // Strip existing metadata markers from task_text to avoid duplication
     text = text.replace(/🔺|⏫|🔼|🔽|⏬/g, '');
     text = text.replace(/➕\s*\d{4}-\d{2}-\d{2}/g, '');
     text = text.replace(/⏳\s*\d{4}-\d{2}-\d{2}/g, '');

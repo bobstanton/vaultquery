@@ -5,19 +5,8 @@ project: vaultquery
 ---
 
 > [!tip]
-> For complete schema reference, use the `vaultquery-schema` code block to see complete details specific to this vault (when dynamic views are enabled).
+> The `vaultquery-schema` code block shows complete details specific to this vault when dynamic views are enabled.
 
-## Discovering the Schema
-
-Use the [SQLite Schema Table](https://www.sqlite.org/schematab.html) to find all tables and views:
-
-```vaultquery
-SELECT name, type, sql
-FROM sqlite_master
-WHERE type IN ('table', 'view')
-  AND name NOT LIKE 'sqlite_%'
-ORDER BY type, name
-```
 
 ## Core Tables
 
@@ -27,7 +16,7 @@ ORDER BY type, name
 | ---------- | ------- | ---------------------------------------------------------- |
 | `path`     | TEXT    | Full file path (e.g., `Projects/my-note.md`)               |
 | `title`    | TEXT    | Note title                                                 |
-| `content`  | TEXT    | Full markdown content (if `Index Note Content` is enabled) |
+| `content`  | TEXT    | Full markdown content (if `Index note content` is enabled) |
 | `created`  | INTEGER | Unix timestamp (milliseconds)                              |
 | `modified` | INTEGER | Unix timestamp (milliseconds)                              |
 | `size`     | INTEGER | File size in bytes                                         |
@@ -45,7 +34,7 @@ LIMIT 10
 ### properties
 
 > [!important] Enable frontmatter indexing
-> Frontmatter queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index frontmatter
+> Frontmatter queries are disabled by default. Enable at Settings → VaultQuery → Index frontmatter.
 
 | Column        | Type    | Description                                                      |
 | ------------- | ------- | ---------------------------------------------------------------- |
@@ -66,7 +55,7 @@ ORDER BY usage_count DESC
 ### tasks
 
 > [!important] Enable task indexing
-> Task queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tasks
+> Task queries are disabled by default. Enable at Settings → VaultQuery → Index tasks.
 
 | Column            | Type    | Description                                  |
 | ----------------- | ------- | -------------------------------------------- |
@@ -137,14 +126,15 @@ WHERE path = '{this.path}' AND block_id = 'task-example'
 ### tags
 
 > [!important] Enable tag indexing
-> Tag queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tags
+> Tag queries are disabled by default. Enable at Settings → VaultQuery → Index tags.
 
-| Column        | Type    | Description                     |
-| ------------- | ------- | ------------------------------- |
-| `id`          | INTEGER | Unique identifier               |
-| `path`        | TEXT    | File path                       |
-| `tag_name`    | TEXT    | Tag without # (e.g., `project`) |
-| `line_number` | INTEGER | Line number where tag appears   |
+| Column            | Type    | Description                         |
+| ----------------- | ------- | ----------------------------------- |
+| `id`              | INTEGER | Unique identifier                   |
+| `path`            | TEXT    | File path                           |
+| `tag_name`        | TEXT    | Tag with # prefix (e.g., `#project`) |
+| `line_number`     | INTEGER | Line number where tag appears       |
+| `insert_position` | TEXT    | Insert location for new tags        |
 
 ```vaultquery
 -- Top twenty tags used across vault
@@ -158,7 +148,7 @@ LIMIT 20
 ### headings
 
 > [!important] Enable heading indexing
-> Heading queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index headings
+> Heading queries are disabled by default. Enable at Settings → VaultQuery → Index headings.
 
 | Column         | Type    | Description                |
 | -------------- | ------- | -------------------------- |
@@ -182,32 +172,35 @@ WHERE level = 1
 ### links
 
 > [!important] Enable link indexing
-> Link queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index links
+> Link queries are disabled by default. Enable at Settings → VaultQuery → Index links.
 
-| Column        | Type    | Description                     |
-| ------------- | ------- | ------------------------------- |
-| `id`          | INTEGER | Unique identifier               |
-| `path`        | TEXT    | Source file path                |
-| `link_target` | TEXT    | Target note path                |
-| `link_text`   | TEXT    | Display text                    |
-| `link_type`   | TEXT    | `internal`, `external`, `embed` |
-| `line_number` | INTEGER | Line number                     |
+| Column             | Type    | Description                           |
+| ------------------ | ------- | ------------------------------------- |
+| `id`               | INTEGER | Unique identifier                     |
+| `path`             | TEXT    | Source file path                      |
+| `link_text`        | TEXT    | Display text or original link text    |
+| `link_target`      | TEXT    | Raw link target                       |
+| `link_target_path` | TEXT    | Resolved note path for internal links |
+| `link_type`        | TEXT    | `internal`, `external`, `embed`       |
+| `line_number`      | INTEGER | Line number                           |
+| `insert_position`  | TEXT    | Insert location for new links         |
 
 ```vaultquery
 -- Find orphan notes (not linked anywhere)
 SELECT n.path
 FROM notes n
-LEFT JOIN links l ON n.path = l.link_target
+LEFT JOIN links l ON n.path = l.link_target_path
 WHERE l.id IS NULL
 ORDER BY n.path
 ```
 
 ```vaultquery
 -- Most linked-to notes
-SELECT link_target, COUNT(*) as incoming_links
+SELECT link_target_path, COUNT(*) as incoming_links
 FROM links
 WHERE link_type = 'internal'
-GROUP BY link_target
+  AND link_target_path IS NOT NULL
+GROUP BY link_target_path
 ORDER BY incoming_links DESC
 LIMIT 10
 ```
@@ -215,7 +208,7 @@ LIMIT 10
 ### list_items
 
 > [!important] Enable list item indexing
-> List item queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index list items
+> List item queries are disabled by default. Enable at Settings → VaultQuery → Index list items.
 
 | Column         | Type    | Description                         |
 | -------------- | ------- | ----------------------------------- |
@@ -272,7 +265,7 @@ ORDER BY item_index
 ```
 
 > [!important] Enable write operations
-> Write operations are disabled by default. To enable go to Settings → VaultQuery → Write operations → Enable write operations
+> Write operations are disabled by default. Enable at Settings → VaultQuery → Enable write operations.
 
 ```vaultquery-write
 -- Update list item content via the view (targets block_id ^list-example above)
@@ -293,7 +286,7 @@ WHERE path = '{this.path}' AND block_id = 'list-example'
 ```
 
 > [!important] Enable table indexing
-> Table queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tables
+> Table queries are disabled by default. Enable at Settings → VaultQuery → Index tables.
 
 ### table_cells
 
@@ -322,10 +315,11 @@ ORDER BY occurrences DESC
 Aggregated view of table cells by row. 
 
 ```vaultquery
-SELECT path, table_index, row_index, row_json
+SELECT path, table_index, row_index, row_json, table_line_number
 FROM table_rows
 WHERE path = '{this.path}'
 ```
+
 
 ### headings_view
 
@@ -413,4 +407,18 @@ SELECT path, value as due_date
 FROM properties
 WHERE key = 'due'
   AND value >= date('now')
+```
+
+
+
+## Discovering the Schema
+
+The [SQLite Schema Table](https://www.sqlite.org/schematab.html) lists all tables and views:
+
+```vaultquery
+SELECT name, type, sql
+FROM sqlite_master
+WHERE type IN ('table', 'view')
+  AND name NOT LIKE 'sqlite_%'
+ORDER BY type, name
 ```

@@ -1,4 +1,5 @@
 import { BaseRenderer } from './BaseRenderer';
+import { QueryRefreshRegistry } from './QueryRefreshRegistry';
 import { SlickGridRenderer } from './SlickGridRenderer';
 import { ColumnUtils } from '../utils/ColumnUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
@@ -8,7 +9,6 @@ import type { RenderContext } from './BaseRenderer';
 import type { PreviewResult } from '../Services/PreviewService';
 
 declare const activeWindow: Window;
-declare const activeDocument: Document;
 
 export interface PreviewRenderContext extends RenderContext {
   onApply?: () => void;
@@ -41,7 +41,7 @@ export class PreviewGridRenderer {
 
     if (context.onRefresh) {
       BaseRenderer.addRefreshButton(buttonContainer, context.onRefresh);
-      SlickGridRenderer.registerRefreshCallback(containerId, context.onRefresh);
+      QueryRefreshRegistry.register(container, { onRefresh: context.onRefresh });
     }
   }
 
@@ -134,8 +134,7 @@ export class PreviewGridRenderer {
         container: gridContainer,
         app: context.app,
         openFile: context.openFile,
-        settings: context.settings,
-        onRefresh: context.onRefresh
+        settings: context.settings
       };
 
       SlickGridRenderer.render(renderContext);
@@ -145,9 +144,9 @@ export class PreviewGridRenderer {
       }
     }
     catch (error: unknown) {
-      gridContainer.createDiv({
-        cls: 'vaultquery-error',
-        text: `Preview rendering failed: ${getErrorMessage(error)}`
+      BaseRenderer.renderError(gridContainer, {
+        title: 'Preview Error',
+        message: `Preview rendering failed: ${getErrorMessage(error)}`
       });
     }
   }
@@ -166,7 +165,6 @@ export class PreviewGridRenderer {
       e.stopPropagation();
       e.preventDefault();
 
-      // Find the row element and get its index
       // SlickGrid uses different attribute names - try both 'row' and data attributes
       const row = cell.closest('.slick-row') as HTMLElement;
       if (!row) return;
@@ -174,17 +172,14 @@ export class PreviewGridRenderer {
       // Try multiple ways to get the row index
       let rowIndex = -1;
 
-      // Method 1: 'row' attribute (some SlickGrid versions)
       const rowAttr = row.getAttribute('row');
       if (rowAttr !== null) {
         rowIndex = parseInt(rowAttr);
       }
 
-      // Method 2: Parse from style.top (SlickGrid uses absolute positioning)
       if (rowIndex < 0) {
         const style = row.style.top;
         if (style) {
-          // Row height is 32px (from options.rowHeight)
           const topPx = parseInt(style);
           if (!isNaN(topPx)) {
             rowIndex = Math.round(topPx / 32);
@@ -200,7 +195,8 @@ export class PreviewGridRenderer {
     gridContainer.addEventListener('click', handleExpandClick, true);
     gridContainer.addEventListener('touchend', handleExpandClick, true);
 
-    activeWindow.setTimeout(() => {
+    const win = gridContainer.ownerDocument.defaultView ?? activeWindow;
+    win.setTimeout(() => {
       const cells = gridContainer.querySelectorAll('.slick-cell');
       cells.forEach(cell => {
         if (cell.textContent?.includes('Click to expand')) {
@@ -225,7 +221,7 @@ export class PreviewGridRenderer {
 
     const rowElement = gridContainer.querySelector(`.slick-row[row="${rowIndex}"]`);
 
-    const detailsContainer = activeDocument.createElement('div');
+    const detailsContainer = gridContainer.ownerDocument.createElement('div');
     detailsContainer.className = 'vaultquery-operation-details';
     detailsContainer.setAttribute('data-details-for', rowIndex.toString());
 
@@ -246,8 +242,7 @@ export class PreviewGridRenderer {
         container: subgridContainer,
         app: context.app,
         openFile: context.openFile,
-        settings: context.settings,
-        onRefresh: context.onRefresh
+        settings: context.settings
       };
 
       SlickGridRenderer.render(subRenderContext);
@@ -300,23 +295,19 @@ export class PreviewGridRenderer {
   private static prepareInsertData(after: Array<Record<string, unknown>>): Record<string, unknown>[] {
     if (after.length === 0) return [];
 
-    const relevantKeys = ColumnUtils.filterRelevantColumns(Object.keys(after[0]));
-    
-    return after.map(row => {
-      const filteredRow: Record<string, unknown> = {};
-      relevantKeys.forEach(key => {
-        filteredRow[key] = row[key] ?? '';
-      });
-      return filteredRow;
-    });
+    return this.pickRelevantColumns(after, Object.keys(after[0]));
   }
 
   private static prepareDeleteData(before: Array<Record<string, unknown>>): Record<string, unknown>[] {
     if (before.length === 0) return [];
 
-    const relevantKeys = ColumnUtils.filterRelevantColumns(Object.keys(before[0]));
-    
-    return before.map(row => {
+    return this.pickRelevantColumns(before, Object.keys(before[0]));
+  }
+
+  private static pickRelevantColumns(rows: Array<Record<string, unknown>>, columns: string[]): Record<string, unknown>[] {
+    const relevantKeys = ColumnUtils.filterRelevantColumns(columns);
+
+    return rows.map(row => {
       const filteredRow: Record<string, unknown> = {};
       relevantKeys.forEach(key => {
         filteredRow[key] = row[key] ?? '';
@@ -328,12 +319,7 @@ export class PreviewGridRenderer {
   private static prepareUpdateData(before: Record<string, unknown>[], after: Record<string, unknown>[], pkCols: string[]): Record<string, unknown>[] {
     if (before.length === 0 || after.length === 0) return [];
 
-    const allColumns = new Set([
-      ...Object.keys(before[0] || {}),
-      ...Object.keys(after[0] || {})
-    ]);
-
-    const relevantColumns = ColumnUtils.filterRelevantColumns(Array.from(allColumns));
+    const relevantColumns = this.getRelevantComparisonColumns(before, after);
     const relevantPkCols = ColumnUtils.filterRelevantColumns(pkCols);
 
     // Use index-based matching since PK columns might have changed
@@ -343,7 +329,6 @@ export class PreviewGridRenderer {
       return [];
     }
 
-    // Determine which PK columns are changing
     const changingPkCols = relevantPkCols.filter(pk => changedFields.includes(pk));
     const stablePkCols = relevantPkCols.filter(pk => !changedFields.includes(pk));
 
@@ -351,32 +336,27 @@ export class PreviewGridRenderer {
       const afterRow = after[index] || {};
       const resultRow: Record<string, unknown> = {};
 
-      // Add stable PK columns (not changing) as simple values
       stablePkCols.forEach(pk => {
         const value = beforeRow[pk];
         // Skip array_index if null/empty
-        if (pk === 'array_index' && (value === null || value === undefined || value === '')) {
+        if (pk === 'array_index' && (value == null || value === '')) {
           return;
         }
         resultRow[pk] = value ?? '';
       });
 
-      // Add path if not already included
       if (beforeRow.path !== undefined && !stablePkCols.includes('path') && !changingPkCols.includes('path')) {
         resultRow['path'] = beforeRow.path;
       }
 
-      // Add task_text if present, not a PK, and not being changed
       if (beforeRow.task_text !== undefined && !relevantPkCols.includes('task_text') && !changedFields.includes('task_text')) {
         resultRow['task_text'] = beforeRow.task_text;
       }
 
-      // For properties table, always show value if present
       if (beforeRow.value !== undefined && !changedFields.includes('value')) {
         resultRow['value'] = beforeRow.value;
       }
 
-      // Show ALL changed fields (including PK columns and task_text) with current/proposed
       changedFields.forEach(col => {
         if (col !== 'path') {
           const beforeValue = beforeRow[col] ?? '';
@@ -384,8 +364,8 @@ export class PreviewGridRenderer {
 
           // Skip array_index if both values are null/empty
           if (col === 'array_index' &&
-            (beforeValue === null || beforeValue === undefined || beforeValue === '') &&
-            (afterValue === null || afterValue === undefined || afterValue === '')) {
+            (beforeValue == null || beforeValue === '') &&
+            (afterValue == null || afterValue === '')) {
             return;
           }
 
@@ -403,21 +383,35 @@ export class PreviewGridRenderer {
 
   private static findChangedFieldsByIndex(before: Record<string, unknown>[], after: Record<string, unknown>[], allColumns: string[]): string[] {
     const changedFields = new Set<string>();
+    this.collectChangedFields(before, after, allColumns, changedFields, false);
+    return Array.from(changedFields);
+  }
+
+  private static getRelevantComparisonColumns(before: Record<string, unknown>[], after: Record<string, unknown>[]): string[] {
+    const allColumns = new Set([
+      ...Object.keys(before[0] || {}),
+      ...Object.keys(after[0] || {})
+    ]);
+
+    return ColumnUtils.filterRelevantColumns(Array.from(allColumns));
+  }
+
+  private static collectChangedFields(before: Record<string, unknown>[], after: Record<string, unknown>[], columns: string[], changedFields: Set<string>, compareMissingRows: boolean): void {
     const maxLength = Math.max(before.length, after.length);
 
     for (let i = 0; i < maxLength; i++) {
       const beforeRow = before[i];
       const afterRow = after[i];
-      if (!beforeRow || !afterRow) continue;
+      if (compareMissingRows ? (!beforeRow && !afterRow) : (!beforeRow || !afterRow)) continue;
 
-      allColumns.forEach(col => {
-        if (beforeRow[col] !== afterRow[col]) {
+      columns.forEach(col => {
+        const beforeValue = beforeRow?.[col];
+        const afterValue = afterRow?.[col];
+        if (beforeValue !== afterValue) {
           changedFields.add(col);
         }
       });
     }
-
-    return Array.from(changedFields);
   }
 
   private static prepareMultiStatementData(previewResult: PreviewResult): Record<string, unknown>[] {
@@ -474,11 +468,13 @@ export class PreviewGridRenderer {
       text: 'Apply changes'
     });
 
-    applyButton.addEventListener('click', async () => {
-      if (await this.confirmApply(previewResult, context)) {
-        container.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-        context.onApply?.();
-      }
+    applyButton.addEventListener('click', () => {
+      void (async () => {
+        if (await this.confirmApply(previewResult, context)) {
+          container.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          context.onApply?.();
+        }
+      })();
     });
 
     const cancelButton = buttonsDiv.createEl('button', {
@@ -498,17 +494,17 @@ export class PreviewGridRenderer {
     let message = '';
     switch (op) {
       case 'insert':
-        message = `Are you sure you want to insert ${rowCount} row${rowCount !== 1 ? 's' : ''} into "${table}"?`;
+        message = `Insert ${rowCount} row${rowCount !== 1 ? 's' : ''} into "${table}"?`;
         break;
       case 'update':
-        message = `Are you sure you want to update ${rowCount} row${rowCount !== 1 ? 's' : ''} in "${table}"?`;
+        message = `Update ${rowCount} row${rowCount !== 1 ? 's' : ''} in "${table}"?`;
         break;
       case 'delete':
-        message = `Are you sure you want to delete ${rowCount} row${rowCount !== 1 ? 's' : ''} from "${table}"?\n\nThis action cannot be undone.`;
+        message = `Delete ${rowCount} row${rowCount !== 1 ? 's' : ''} from "${table}"?\n\nThis action cannot be undone.`;
         break;
       case 'multi':
         const operations = previewResult.multiResults?.length || 0;
-        message = `Are you sure you want to execute ${operations} operations affecting multiple tables?`;
+        message = `Execute ${operations} operations affecting multiple tables?`;
         break;
     }
 
@@ -519,29 +515,8 @@ export class PreviewGridRenderer {
   private static countChangedFields(before: Record<string, unknown>[], after: Record<string, unknown>[]): number {
     if (before.length === 0 || after.length === 0) return 0;
 
-    const allColumns = new Set([
-      ...Object.keys(before[0] || {}),
-      ...Object.keys(after[0] || {})
-    ]);
-    const relevantColumns = ColumnUtils.filterRelevantColumns(Array.from(allColumns));
-
     const changedFields = new Set<string>();
-    const maxLength = Math.max(before.length, after.length);
-
-    for (let i = 0; i < maxLength; i++) {
-      const beforeRow = before[i];
-      const afterRow = after[i];
-
-      if (!beforeRow && !afterRow) continue;
-
-      relevantColumns.forEach(col => {
-        const beforeValue = beforeRow?.[col];
-        const afterValue = afterRow?.[col];
-        if (beforeValue !== afterValue) {
-          changedFields.add(col);
-        }
-      });
-    }
+    this.collectChangedFields(before, after, this.getRelevantComparisonColumns(before, after), changedFields, true);
 
     return changedFields.size;
   }

@@ -1,6 +1,9 @@
 import { Database } from 'sql.js';
-import { App, normalizePath } from 'obsidian';
 import { friendlySqliteError } from '../utils/ErrorMessages';
+import { collectStatementRows } from '../Database/StatementRows';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('Preview');
 
 type Row = Record<string, unknown>;
 type SqlAndParams = { sql: string; params?: unknown[] };
@@ -18,7 +21,7 @@ export type PreviewResult = {
 };
 
 export class PreviewService {
-  public constructor(private db: Database, private app?: App) {}
+  public constructor(private db: Database) {}
 
   public previewDmlFromSql(sql: string, params: unknown[] = []): PreviewResult {
 
@@ -187,77 +190,26 @@ export class PreviewService {
       'note_properties': ['path', 'key'],
     };
 
-    if (viewKeyPatterns[table]) {
-      const keys = viewKeyPatterns[table];
-      if (keys.every(k => k in sampleRow)) {
-        return keys;
-      }
-    }
+    const patternKeys = viewKeyPatterns[table];
+    if (patternKeys?.every(k => k in sampleRow)) return patternKeys;
 
-    if ('id' in sampleRow) {
-      return ['id'];
-    }
-
-    if ('path' in sampleRow && 'line_number' in sampleRow) {
-      return ['path', 'line_number'];
-    }
-
-    if ('path' in sampleRow) {
-      return ['path'];
-    }
+    if ('id' in sampleRow) return ['id'];
+    if ('path' in sampleRow && 'line_number' in sampleRow) return ['path', 'line_number'];
+    if ('path' in sampleRow) return ['path'];
 
     return [];
   }
 
-  public enhanceWithVaultValidation(result: PreviewResult): PreviewResult & { warnings?: string[] } {
-    if (!this.app?.vault || !this.app?.metadataCache) return result;
-
-    const warnings: string[] = [];
-    
-    if (result.table === 'notes' || result.table === 'notes_with_properties') {
-      [...result.before, ...result.after].forEach(row => {
-        if (row.path) {
-          const pathStr = String(row.path);
-          const file = this.app?.vault.getAbstractFileByPath(normalizePath(pathStr));
-          if (!file && result.op !== 'insert') {
-            warnings.push(`File not found in vault: ${pathStr}`);
-          }
-          else if (file && result.op === 'insert') {
-            warnings.push(`File already exists in vault: ${pathStr}`);
-          }
-        }
-      });
-    }
-
-    return {
-      ...result,
-      warnings: warnings.length > 0 ? warnings : undefined
-    } as PreviewResult & { warnings?: string[] };
-  }
 }
 
 function selectRows(db: Database, sql: string, params: unknown[] = []): Row[] {
   const stmt = db.prepare(sql);
-  const out: Row[] = [];
   try {
     stmt.bind(params as (string | number | null | Uint8Array)[]);
-    const columnNames = stmt.getColumnNames();
-    while (stmt.step()) {
-      // Use "first wins" behavior for duplicate column names (important for JOINs)
-      const values = stmt.get();
-      const row: Row = {};
-      for (let i = 0; i < columnNames.length; i++) {
-        const colName = columnNames[i];
-        if (!(colName in row)) {
-          row[colName] = values[i];
-        }
-      }
-      out.push(row);
-    }
+    return collectStatementRows(stmt);
   } finally {
     stmt.free();
   }
-  return out;
 }
 
 function buildReturningList(pkCols: string[], tryRowid: boolean): string {
@@ -269,29 +221,31 @@ function buildReturningList(pkCols: string[], tryRowid: boolean): string {
 }
 
 function withReturning(sql: string, returningList: string): string {
-  const cleaned = stripComments(sql);
-  const s = stripTrailingSemicolon(cleaned);
-
-  const returningPos = findKeywordOutsideStrings(s, 'returning');
+  const { statement, returningPos } = normalizeReturningStatement(sql);
 
   if (returningPos >= 0) {
-    return s.substring(0, returningPos) + `RETURNING ${returningList}`;
+    return statement.substring(0, returningPos) + `RETURNING ${returningList}`;
   }
 
-  return `${s} RETURNING ${returningList}`;
+  return `${statement} RETURNING ${returningList}`;
 }
 
 function stripReturning(sql: string): string {
-  const cleaned = stripComments(sql);
-  const s = stripTrailingSemicolon(cleaned);
-
-  const returningPos = findKeywordOutsideStrings(s, 'returning');
+  const { statement, returningPos } = normalizeReturningStatement(sql);
 
   if (returningPos >= 0) {
-    return s.substring(0, returningPos).replace(/\s+$/, '');
+    return statement.substring(0, returningPos).replace(/\s+$/, '');
   }
 
-  return s;
+  return statement;
+}
+
+function normalizeReturningStatement(sql: string): { statement: string; returningPos: number } {
+  const statement = stripTrailingSemicolon(stripComments(sql));
+  return {
+    statement,
+    returningPos: findKeywordOutsideStrings(statement, 'returning')
+  };
 }
 
 function findKeywordOutsideStrings(sql: string, keyword: string): number {
@@ -307,7 +261,7 @@ function findKeywordOutsideStrings(sql: string, keyword: string): number {
 
     if (c === "'" && !inDoubleQuote && !inBacktick && !inBracket) {
       if (sql[i + 1] === "'") {
-        i++; // Skip escaped quote
+        i++;
         continue;
       }
       inSingleQuote = !inSingleQuote;
@@ -438,7 +392,7 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
       }
     }
     catch (error) {
-      console.warn('[VaultQuery] Failed to check if target is a view:', error);
+      logger.warn('Failed to check if target is a view', error);
     }
   }
   try {
@@ -478,7 +432,7 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
   }
     
   catch (error) {
-    console.warn('[VaultQuery] EXPLAIN rootpage mapping failed, falling back to regex parsing:', error);
+    logger.warn('EXPLAIN rootpage mapping failed, falling back to regex parsing', error);
     return extractTargetTableFallback(sql);
   }
   
@@ -697,24 +651,4 @@ function unquoteIdent(name: string): string {
   return name
     .replace(/^["`[]/, "").replace(/["`\]]$/, "")
     .replace(/""/g, '"');
-}
-
-export function applyBatch(db: Database, batch: SqlAndParams[]) {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for (const { sql, params } of batch) {
-      const stmt = db.prepare(sql);
-      try {
-        stmt.bind((params ?? []) as (string | number | null | Uint8Array)[]);
-        stmt.step();
-      } finally {
-        stmt.free();
-      }
-    }
-    db.exec("COMMIT");
-  }
-  catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
 }

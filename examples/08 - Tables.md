@@ -4,11 +4,11 @@ category: tables
 ---
 
 > [!important] Enable Table Indexing
-> Table queries require **Settings → VaultQuery → Index Tables** to be enabled. Without this setting, the `table_cells` and `tables` tables will be empty.
+> Table queries require **Settings → VaultQuery → Index tables** to be enabled. Without this setting, `table_cells`, `tables`, `table_rows`, and dynamic table views will be empty or unavailable.
 
 ### Verify table indexing is working
 
-Run this query to check if tables in this file are indexed:
+This query checks whether tables in this file are indexed:
 
 ```vaultquery
 SELECT table_index, table_name, block_id
@@ -16,7 +16,7 @@ FROM tables
 WHERE path = '{this.path}'
 ```
 
-If no results appear, ensure table indexing is enabled and re-index the vault.
+If no results appear, ensure table indexing is enabled and reindex the vault.
 
 ## Table Schema
 
@@ -27,6 +27,7 @@ Tables are stored in related structures:
 | `table_cells` | Individual cell values with position metadata |
 | `tables`      | Table-level metadata (block_id, offsets)      |
 | `table_rows`  | View for row-based operations with JSON       |
+| `table_columns` | View listing column names per table        |
 
 ### table_cells columns
 
@@ -38,6 +39,7 @@ Tables are stored in related structures:
 | `row_index`   | Row number (0-based, excluding header) |
 | `column_name` | Header text for this column            |
 | `cell_value`  | The cell's content                     |
+| `value_type`  | Detected cell type (`text`, `number`)   |
 | `line_number` | Line number (for INSERT positioning)   |
 
 ### tables columns
@@ -66,22 +68,15 @@ Tables are stored in related structures:
 
 ### Discover available table views
 
-Enable "Dynamic Table Views" in Settings → VaultQuery to query tables directly. View names are derived from the heading above each table, or from a block ID if specified.
+Enable **Settings → VaultQuery → Enable dynamic table views** to query tables directly. View names are derived from matching table structures and table names. A block ID is used as the table name when present; otherwise the nearest heading is used.
 
-List all dynamic table views with their headings:
+List generated dynamic table views:
 
 ```vaultquery
-SELECT
-  v.name as view_name,
-  tc.path,
-  tc.table_index,
-  tc.table_name as heading
+SELECT v.name as view_name
 FROM sqlite_master v
-JOIN table_cells tc ON tc.table_name = REPLACE(v.name, '_table', '')
-  OR LOWER(REPLACE(REPLACE(tc.table_name, ' ', '_'), '-', '_')) || '_table' = v.name
 WHERE v.type = 'view'
   AND v.name LIKE '%_table'
-GROUP BY v.name, tc.path, tc.table_index
 ORDER BY v.name
 ```
 
@@ -100,7 +95,7 @@ Add a block ID after a table to give it an explicit name:
 SELECT * FROM products_table
 ```
 
-The view name is `{block_id}_table`. If disabled, an error message stating: `no such table: products_table` will be returned.
+The view name is the sanitized table name plus `_table`. If dynamic table views are disabled, SQLite returns `no such table: products_table`.
 
 ### Query by heading
 
@@ -122,7 +117,7 @@ The heading "Team Members" becomes `team_members_table` (lowercase, spaces to un
 
 ### Query using raw table_cells
 
-Without dynamic views, use `table_cells` with pivot aggregation. Use the `tables` table to find the table by block_id:
+Without dynamic views, `table_cells` supports pivot aggregation. The `tables` table locates the table by `block_id`:
 
 ```vaultquery
 SELECT
@@ -148,7 +143,7 @@ JOIN table_cells tc2 ON tc1.path = tc2.path
 WHERE tc1.path = '{this.path}'
   AND tc1.column_name = 'Product'
   AND tc2.column_name = 'Stock'
-  AND CAST(tc2.cell_value AS INTEGER) < 50
+  AND CAST(tc2.cell_value AS INTEGER) < 300
 ```
 
 ### Count tables in vault
@@ -254,7 +249,7 @@ WHERE path = '{this.path}' AND block_id = 'the-list'
 
 ### Insert a new table row
 
-Use `SELECT` instead of `VALUES` to avoid NULL constraint errors when the table doesn't exist:
+`SELECT` avoids NULL constraint errors when the table does not exist:
 
 ```vaultquery-write
 INSERT INTO table_rows (path, table_index, row_json)
@@ -270,11 +265,11 @@ WHERE path = '{this.path}' AND block_id = 'supplies'
 
 ## Creating Tables at Specific Positions
 
-By default, new tables are appended at the end of the file. Use `line_number` or `table_line_number` to insert tables at specific positions.
+By default, new tables are appended at the end of the file. `line_number` or `table_line_number` inserts tables at specific positions.
 
 ### Create table at specific line using table_rows
 
-Use `table_line_number` to position a new table. The table will be inserted at that line, pushing existing content down:
+`table_line_number` positions a new table and pushes existing content down:
 
 ```vaultquery-write
 -- Create a new table after line 30
@@ -285,11 +280,11 @@ INSERT INTO table_rows (path, table_index, row_json, table_line_number) VALUES
 ```
 
 > [!tip] Table index for new tables
-> Use a high `table_index` (like 99) for new tables to avoid conflicts with existing tables. After re-indexing, tables are renumbered based on their position in the file.
+> A high `table_index` value, such as 99, avoids conflicts with existing tables. After reindexing, tables are renumbered based on their position in the file.
 
 ### Create table at specific line using table_cells
 
-Use `line_number` on the first cell to position the new table:
+`line_number` on the first cell positions the new table:
 
 ```vaultquery-write
 -- Create a new table at line 35
@@ -339,7 +334,7 @@ Scranton branch quarterly metrics:
 | Metric         | Value |
 | -------------- | ----- |
 | Paper Sales    | 50000 |
-| Office Supplies| 12000 |
+| Office Supplies | 12000 |
 | Complaints     | 3     |
 | Dundies Won    | 7     |
 ^metrics
@@ -429,7 +424,7 @@ WHERE row_count > 0
 ```
 
 > [!note] If the preview shows "0 rows will be inserted"
-> This means the source table wasn't found. Run this to verify it's indexed:
+> The source table was not found. This query verifies indexing:
 > ```sql
 > SELECT table_index, block_id FROM tables WHERE path = '{this.path}' AND block_id = 'metrics'
 > ```
@@ -471,9 +466,9 @@ FROM table_cells
 ## Inline Buttons
 
 > [!important] Enable Inline Buttons
-> Inline buttons require **Settings → VaultQuery → Enable write operations** AND **Enable inline buttons** to be enabled.
+> Inline buttons require **Settings → VaultQuery → Enable write operations** and **Enable inline buttons** to be enabled.
 
-Inline buttons let you execute SQL with a single click, without showing a preview modal. Use the syntax:
+Inline buttons execute SQL with a single click, without showing a preview modal. Syntax:
 
 ```
 `vq[Button Label]{SQL QUERY}`
@@ -491,11 +486,11 @@ Add a row to the supplies table with today's date:
 | 2024-01-16 | Staples | 50 |
 ^daily-supplies
 
-Click to add: `vq[+ Paper]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Copy Paper', 'Quantity', '1') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}` `vq[+ Pens]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Ballpoint Pens', 'Quantity', '12') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}` `vq[+ Folders]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Manila Folders', 'Quantity', '25') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}`
+Add row buttons: `vq[+ Paper]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Copy Paper', 'Quantity', '1') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}` `vq[+ Pens]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Ballpoint Pens', 'Quantity', '12') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}` `vq[+ Folders]{INSERT INTO table_rows (path, table_index, row_json) SELECT '{this.path}', table_index, json_object('Date', date('now'), 'Item', 'Manila Folders', 'Quantity', '25') FROM tables WHERE path = '{this.path}' AND block_id = 'daily-supplies'}`
 
 ### Daily log entry (insert at top)
 
-Perfect for daily journals where newest entries should appear first. Use `row_index = 0` to insert at the top:
+For daily journals where newest entries should appear first, `row_index = 0` inserts at the top:
 
 | Date | Notes |
 | ---- | ----- |
@@ -506,7 +501,7 @@ Perfect for daily journals where newest entries should appear first. Use `row_in
 
 ### Insert in the middle
 
-Use a subquery to compute the middle index dynamically:
+A subquery can compute the middle index dynamically:
 
 | Priority | Task |
 | -------- | ---- |
@@ -557,13 +552,13 @@ Track timestamps for time-sensitive data:
 
 - **Label**: Text between `[` and `]` becomes the button text
 - **SQL**: Everything between `{` and `}` is executed as SQL
-- **Template vars**: Use `{this.path}`, `{this.folder}`, `{this.title}`
-- **Dates**: Use SQLite functions like `date('now')`, `datetime('now', 'localtime')`
+- **Template vars**: `{this.path}`, `{this.folder}`, `{this.title}`
+- **Dates**: SQLite functions such as `date('now')`, `datetime('now', 'localtime')`
 - **Escaping**: If SQL contains `}`, the button won't parse correctly—keep SQL simple
 
 ### Custom button classes
 
-Add CSS classes to customize button appearance using dot notation before the label:
+CSS classes can customize button appearance with dot notation before the label:
 
 ```
 `vq.[Label]{SQL}`              -- plain button (no accent color)

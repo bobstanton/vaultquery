@@ -4,20 +4,50 @@ import { getDatabaseDir, getDatabasePath } from '../Settings/Settings';
 import type { WasmSettings } from '../Settings/Settings';
 import { PreviewService } from '../Services/PreviewService';
 import { getTablesOnlySQL, getIndexesForFeatures, EnabledFeatures } from './DatabaseSchema';
+import { PRAGMA_STATEMENTS } from './SchemaQueries';
+import {
+  INDEXING_SQL,
+  PREPARED_STATEMENT_CACHE_LIMIT,
+  MAX_ROWS_PER_INSERT_BATCH,
+  noteToParams,
+  noteToUpdateParams,
+} from './IndexingQueries';
+import {
+  replaceTasksCore,
+  replaceHeadingsCore,
+  replaceListItemsCore,
+  replacePropertiesCore,
+  replaceUserFunctionsCore,
+  replaceUserTriggersCore,
+  performIndexingOperationsCore,
+  type IndexingDbAdapter,
+} from './IndexingOperations';
 import { CustomSQLFunctions } from './CustomSQLFunctions';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
+import { type VaultFileAdapter } from './DatabaseInterface';
+import { loadWasmBinary, cacheWasmBinaryIfNeeded, CDN_URL } from './WasmLoader';
+import { collectStatementRows, getCachedMultiRowInsertSql, runPreparedStatement } from './StatementRows';
+import { batchDeleteRowsByIds } from './BatchDelete';
 import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
-import type { IndexNoteData, DatabaseTableCell, NoteRecord, ListItemData, TaskData } from '../types';
+import { rewriteTriggerWithPrefix } from '../utils/SQLParsingUtils';
+import { hashString } from '../utils/StringUtils';
+import { type SqlResult } from './ChangeDetection';
+import type { TriggerFunctions } from '../Triggers';
+import type { IndexNoteData, NoteRecord } from '../types';
 import type { PreviewResult } from '../Services/PreviewService';
+import { logger as rootLogger } from '../utils/logger';
 
-const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
-const DEFAULT_WASM_FILENAME = 'sql-wasm.wasm';
 
-export interface VaultFileAdapter {
-  readBinary(path: string): Promise<ArrayBuffer>;
-  writeBinary(path: string, data: ArrayBuffer): Promise<void>;
-  exists(path: string): Promise<boolean>;
-  mkdir(path: string): Promise<void>;
+const logger = rootLogger.scope('Database');
+
+/** Options for creating a VaultDatabase instance */
+interface DatabaseOptions {
+  fileAdapter?: VaultFileAdapter | null;
+  useMemoryStorage?: boolean;
+  databasePath?: string;
+  pluginDir?: string;
+  wasmAdapter?: VaultFileAdapter;
+  wasmSettings?: WasmSettings;
 }
 
 declare const activeWindow: Window;
@@ -30,8 +60,10 @@ export class VaultDatabase {
   public readonly useMemoryStorage: boolean;
 
   private preparedStatements = new Map<string, Statement>();
+  private multiRowInsertSqlCache = new Map<string, string>();
   private previewService: PreviewService;
-  private schemaManager: DatabaseSchemaManager;
+  public readonly schema: DatabaseSchemaManager;
+  private triggerFunctions: TriggerFunctions | null = null;
 
   private txDepth = 0;
 
@@ -46,107 +78,39 @@ export class VaultDatabase {
     this.databasePath = databasePath;
     this.configDir = configDir;
     this.previewService = new PreviewService(db);
-    this.schemaManager = new DatabaseSchemaManager(db);
+    this.schema = new DatabaseSchemaManager(db);
   }
 
-  /**
-   * Load WASM binary based on settings
-   * @returns Object with wasmBinary (or undefined) and whether it came from CDN
-   */
-  private static async loadWasmBinary(
-    adapter: VaultFileAdapter | null,
-    pluginDir: string | undefined,
-    wasmSettings?: WasmSettings
-  ): Promise<{ wasmBinary: ArrayBuffer | undefined; fromCdn: boolean }> {
-    const source = wasmSettings?.source ?? 'auto';
-    const customPath = wasmSettings?.customPath;
-
-    // Determine the local path to try
-    const getLocalPath = (): string | null => {
-      if (customPath) return customPath;
-      if (pluginDir) return `${pluginDir}/${DEFAULT_WASM_FILENAME}`;
-      return null;
-    };
-
-    // Try to load from local file
-    const tryLoadLocal = async (): Promise<ArrayBuffer | null> => {
-      const localPath = getLocalPath();
-      if (!localPath || !adapter) return null;
-
-      try {
-        return await adapter.readBinary(localPath);
-      }
-      catch {
-        return null;
-      }
-    };
-
-    // Load from CDN
-    const loadFromCdn = async (): Promise<ArrayBuffer> => {
-      const response = await fetch(CDN_URL);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch WASM from CDN: ${response.status} ${response.statusText}`);
-      }
-      return await response.arrayBuffer();
-    };
-
-    switch (source) {
-      case 'local': {
-        const localBinary = await tryLoadLocal();
-        if (!localBinary) {
-          const localPath = getLocalPath();
-          throw new Error(`WASM source is set to 'local' but file not found at: ${localPath || '(no path configured)'}`);
-        }
-        return { wasmBinary: localBinary, fromCdn: false };
-      }
-
-      case 'cdn': {
-        const cdnBinary = await loadFromCdn();
-        return { wasmBinary: cdnBinary, fromCdn: true };
-      }
-
-      case 'auto':
-      default: {
-        // Try local first, then fall back to CDN
-        const localBinary = await tryLoadLocal();
-        if (localBinary) {
-          return { wasmBinary: localBinary, fromCdn: false };
-        }
-
-        // Fall back to CDN - fetch ourselves so we can cache it
-        try {
-          const cdnBinary = await loadFromCdn();
-          return { wasmBinary: cdnBinary, fromCdn: true };
-        }
-        catch {
-          // If CDN fetch fails, return undefined and let initSqlJs try its own mechanism
-          return { wasmBinary: undefined, fromCdn: false };
-        }
-      }
-    }
-  }
-
-  public static async create(app: App, configDir: string, fileAdapter: VaultFileAdapter | null = null, useMemoryStorage: boolean = true, databasePath?: string, pluginDir?: string, wasmAdapter?: VaultFileAdapter, wasmSettings?: WasmSettings): Promise<VaultDatabase> {
+  public static async createFromBinary(app: App, configDir: string, data: ArrayBuffer, options: DatabaseOptions = {}): Promise<VaultDatabase> {
+    const { fileAdapter = null, useMemoryStorage = true, databasePath, pluginDir, wasmAdapter, wasmSettings } = options;
     const actualDatabasePath = databasePath || getDatabasePath(configDir);
     const adapter = wasmAdapter || fileAdapter;
 
-    const { wasmBinary, fromCdn } = await VaultDatabase.loadWasmBinary(
-      adapter,
-      pluginDir,
-      wasmSettings
-    );
+    const { wasmBinary } = await loadWasmBinary(adapter, pluginDir, wasmSettings);
 
-    // Cache the WASM locally if it was loaded from CDN and caching is enabled
-    if (fromCdn && wasmBinary && wasmSettings?.cacheLocally && adapter && pluginDir) {
-      try {
-        const cachePath = `${pluginDir}/${DEFAULT_WASM_FILENAME}`;
-        await adapter.writeBinary(cachePath, wasmBinary);
-        console.debug('[VaultQuery] Cached WASM binary to:', cachePath);
-      }
-      catch (error) {
-        console.warn('[VaultQuery] Failed to cache WASM binary:', getErrorMessage(error));
-      }
-    }
+    const sqlJs = await initSqlJs({
+      wasmBinary,
+      locateFile: wasmBinary ? undefined : (() => CDN_URL)
+    });
+
+    const db = new sqlJs.Database(new Uint8Array(data));
+
+    const instance = new VaultDatabase(db, fileAdapter, useMemoryStorage, actualDatabasePath, configDir);
+
+    instance.runPragmaStatements();
+    CustomSQLFunctions.register(db, app);
+
+    return instance;
+  }
+
+  public static async create(app: App, configDir: string, options: DatabaseOptions = {}): Promise<VaultDatabase> {
+    const { fileAdapter = null, useMemoryStorage = true, databasePath, pluginDir, wasmAdapter, wasmSettings } = options;
+    const actualDatabasePath = databasePath || getDatabasePath(configDir);
+    const adapter = wasmAdapter || fileAdapter;
+
+    const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
+    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings, 'VaultQuery');
+    const { wasmBinary } = wasmLoadResult;
 
     const sqlJs = await initSqlJs({
       wasmBinary,
@@ -155,12 +119,15 @@ export class VaultDatabase {
 
     let db: Database;
 
-    if (useMemoryStorage || !(fileAdapter && await fileAdapter.exists(actualDatabasePath))) {
+    const shouldLoadFromDisk = !useMemoryStorage
+      && fileAdapter
+      && await fileAdapter.exists(actualDatabasePath);
+
+    if (!shouldLoadFromDisk) {
       db = new sqlJs.Database();
-    }
-    else {
+    } else {
       try {
-        const data = await fileAdapter.readBinary(actualDatabasePath);
+        const data = await fileAdapter!.readBinary(actualDatabasePath);
         db = new sqlJs.Database(new Uint8Array(data));
       }
       catch (error) {
@@ -178,7 +145,7 @@ export class VaultDatabase {
       instance.db.run('PRAGMA optimize');
     }
     catch (error) {
-      console.warn(`[VaultQuery] ${WARNING_MESSAGES.PRAGMA_OPTIMIZE_UNAVAILABLE}:`, error);
+      logger.warn(WARNING_MESSAGES.PRAGMA_OPTIMIZE_UNAVAILABLE, error);
     }
 
     return instance;
@@ -198,23 +165,18 @@ export class VaultDatabase {
       await this.fileAdapter.writeBinary(this.databasePath, ab as ArrayBuffer);
     }
     catch (error) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.DATABASE_SAVE_FAILED}:`, error);
+      logger.error(CONSOLE_ERRORS.DATABASE_SAVE_FAILED, error);
     }
   }
-  
-  
+
   private runPragmaStatements(): void {
     try {
-      this.db.run('PRAGMA journal_mode = MEMORY');
-      this.db.run('PRAGMA synchronous = OFF');
-      this.db.run('PRAGMA cache_size = -64000');  // 64MB cache (negative = KB)
-      this.db.run('PRAGMA temp_store = MEMORY');
-      this.db.run('PRAGMA locking_mode = EXCLUSIVE');
-      this.db.run('PRAGMA page_size = 4096');
-      this.db.run('PRAGMA mmap_size = 268435456');  // 256MB memory-mapped I/O
+      for (const pragma of PRAGMA_STATEMENTS) {
+        this.db.run(pragma);
+      }
     }
     catch (error) {
-      console.warn(`[VaultQuery] ${WARNING_MESSAGES.DATABASE_OPTIMIZATIONS_UNAVAILABLE}:`, error);
+      logger.warn(WARNING_MESSAGES.DATABASE_OPTIMIZATIONS_UNAVAILABLE, error);
     }
   }
 
@@ -270,7 +232,7 @@ export class VaultDatabase {
           this.db.run('ROLLBACK');
         }
         catch (rollbackError) {
-          console.error(`[VaultQuery] ${CONSOLE_ERRORS.DATABASE_ROLLBACK_FAILED}:`, rollbackError);
+          logger.error(CONSOLE_ERRORS.DATABASE_ROLLBACK_FAILED, rollbackError);
         }
       }
       else {
@@ -278,7 +240,7 @@ export class VaultDatabase {
           this.db.exec(`ROLLBACK TO ${sp}; RELEASE ${sp}`);
         }
         catch (rollbackError) {
-          console.error(`[VaultQuery] ${CONSOLE_ERRORS.DATABASE_SAVEPOINT_ROLLBACK_FAILED}:`, rollbackError);
+          logger.error(CONSOLE_ERRORS.DATABASE_SAVEPOINT_ROLLBACK_FAILED, rollbackError);
         }
       }
       throw error;
@@ -291,21 +253,33 @@ export class VaultDatabase {
   }
 
   private getPreparedStatement(sql: string): Statement {
-    if (!this.preparedStatements.has(sql)) {
-      try {
-        const stmt = this.db.prepare(sql);
-        this.preparedStatements.set(sql, stmt);
-      }
-      catch (error: unknown) {
-        throw new Error(getErrorMessage(error) || ERROR_MESSAGES.SQL_PREPARE_FAILED);
-      }
+    const cached = this.preparedStatements.get(sql);
+    if (cached) {
+      this.preparedStatements.delete(sql);
+      this.preparedStatements.set(sql, cached);
+      return cached;
     }
 
-    const stmt = this.preparedStatements.get(sql);
-    if (!stmt) {
-      throw new Error(ERROR_MESSAGES.SQL_STATEMENT_NOT_FOUND);
+    try {
+      const stmt = this.db.prepare(sql);
+      this.preparedStatements.set(sql, stmt);
+
+      if (this.preparedStatements.size > PREPARED_STATEMENT_CACHE_LIMIT) {
+        const firstKey = this.preparedStatements.keys().next().value;
+        if (firstKey) {
+          const oldStmt = this.preparedStatements.get(firstKey);
+          if (oldStmt) {
+            try { oldStmt.free(); } catch { /* statement may already be freed */ }
+          }
+          this.preparedStatements.delete(firstKey);
+        }
+      }
+
+      return stmt;
     }
-    return stmt;
+    catch (error: unknown) {
+      throw new Error(getErrorMessage(error) || ERROR_MESSAGES.SQL_PREPARE_FAILED);
+    }
   }
 
   private cleanupPreparedStatements(): void {
@@ -314,7 +288,7 @@ export class VaultDatabase {
         stmt.free();
       }
       catch (error) {
-        console.warn(`[VaultQuery] ${WARNING_MESSAGES.STATEMENT_FREE_ERROR}:`, error);
+        logger.warn(WARNING_MESSAGES.STATEMENT_FREE_ERROR, error);
       }
     }
     this.preparedStatements.clear();
@@ -360,119 +334,156 @@ export class VaultDatabase {
       this.indexesCreated = true;
     }
     catch (error) {
-      console.warn('[VaultQuery] Error creating indexes (may already exist):', error);
+      logger.warn('Error creating indexes (may already exist)', error);
       this.indexesCreated = true; 
     }
   }
 
   public async indexNote(data: IndexNoteData): Promise<void> {
+    logger.debug(`indexNote called for: ${data.note.path}`);
     this.createIndexes();
     return this.withTx(() => this.performIndexingOperations(data, false));
   }
 
-  private performIndexingOperations = (data: IndexNoteData, skipDeletes: boolean): void => {
-    const { note, frontmatterData, tables, tableCells, tasks, headings, links, tags, listItems, userViews, userFunctions } = data;
+  private performIndexingOperations(data: IndexNoteData, skipDeletes: boolean, skipAutoSync: boolean = false): void {
+    const adapter = this.createIndexingAdapter();
+    performIndexingOperationsCore(adapter, data, skipDeletes, {
+      insertNote: (note) => this.insertNote(note),
+      replaceProperties: (path, frontmatterData, shouldSkipDeletes) =>
+        this.replaceProperties(path, frontmatterData, shouldSkipDeletes, skipAutoSync),
+      replaceTasks: (path, tasks, shouldSkipDeletes) =>
+        this.replaceTasks(path, tasks, shouldSkipDeletes, skipAutoSync),
+      replaceHeadings: (path, headings, shouldSkipDeletes) =>
+        this.replaceHeadings(path, headings, shouldSkipDeletes, skipAutoSync),
+      replaceListItems: (path, listItems, shouldSkipDeletes) =>
+        this.replaceListItems(path, listItems, shouldSkipDeletes, skipAutoSync),
+      replaceUserFunctions: (path, userFunctions, shouldSkipDeletes) =>
+        this.replaceUserFunctions(path, userFunctions, shouldSkipDeletes),
+      replaceUserTriggers: (path, userTriggers, shouldSkipDeletes) =>
+        this.replaceUserTriggers(path, userTriggers, shouldSkipDeletes),
+    }, logger);
+  }
 
-    this.insertNote(note);
+  // Indexing operations - using shared SQL constants and row transformations
+  // Use separate INSERT/UPDATE to allow AFTER UPDATE triggers to modify the row
+  // UPSERT conflicts with triggers that UPDATE the same row during execution
+  private insertNote(note: NoteRecord): void {
+    const exists = this.db.exec(INDEXING_SQL.CHECK_NOTE_EXISTS, [note.path]);
 
-    if (frontmatterData !== undefined) {
-      this.replaceProperties(note.path, frontmatterData, skipDeletes);
-    }
-    if (tables !== undefined) {
-      this.replaceTables(note.path, tables, skipDeletes);
-    }
-    if (tableCells !== undefined) {
-      this.replaceTableCells(note.path, tableCells, skipDeletes);
-    }
-    if (tasks !== undefined) {
-      this.replaceTasks(note.path, tasks, skipDeletes);
-    }
-    if (headings !== undefined) {
-      this.replaceHeadings(note.path, headings, skipDeletes);
-    }
-    if (links !== undefined) {
-      this.replaceLinks(note.path, links, skipDeletes);
-    }
-    if (tags !== undefined) {
-      this.replaceTags(note.path, tags, skipDeletes);
-    }
-    if (listItems !== undefined) {
-      this.replaceListItems(note.path, listItems, skipDeletes);
-    }
-
-    this.replaceUserViews(note.path, userViews, skipDeletes);
-    this.replaceUserFunctions(note.path, userFunctions, skipDeletes);
-  };
-
-  private insertNote = (note: NoteRecord): void => {
-    const insertNoteSQL = 'INSERT OR REPLACE INTO notes (path, title, content, created, modified, size) VALUES (?, ?, ?, ?, ?, ?)';
-    this.runWithPreparedStatement(insertNoteSQL, [note.path, note.title, note.content, note.created, note.modified, note.size]);
-  };
-
-  private replaceProperties = (path: string, propertiesData?: Array<{key: string; value: string; valueType: string; arrayIndex: number | null}>, skipDeletes: boolean = false): void => {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM properties WHERE path = ?', [path]);
+    if (exists.length > 0 && exists[0].values && exists[0].values.length > 0) {
+      // Note exists - run UPDATE (fires AFTER UPDATE triggers)
+      this.runWithPreparedStatement(INDEXING_SQL.UPDATE_NOTE, noteToUpdateParams(note));
+    } else {
+      // Note doesn't exist - run INSERT (fires AFTER INSERT triggers)
+      this.runWithPreparedStatement(INDEXING_SQL.INSERT_NOTE, noteToParams(note));
     }
 
-    if (propertiesData?.length) {
-      const insertSQL = 'INSERT INTO properties (path, key, value, value_type, array_index) VALUES (?, ?, ?, ?, ?)';
-      for (const property of propertiesData) {
-        try {
-          this.runWithPreparedStatement(insertSQL, [
-            path,
-            property.key,
-            property.value,
-            property.valueType,
-            property.arrayIndex
-          ]);
-        }
-        catch (error: unknown) {
-          console.warn(`[VaultQuery] ${WARNING_MESSAGES.DUPLICATE_PROPERTY_SKIPPED(path, property.key, property.arrayIndex)}`, getErrorMessage(error));
+    // NOTE: Auto-sync for notes.content is DISABLED.
+    // Direct SQL changes to notes.content (like `UPDATE notes SET content = ...`) will NOT sync to files.
+    // Avoids conflicts when both direct SQL triggers and vq_* functions are used in the same indexing pass.
+    // To sync content changes to files, use vq_set_content() or vq_replace_content() instead.
+    //
+    // The issue: Direct SQL triggers (like replace_today_db) queue set_content actions,
+    // while vq_* triggers (like archive_completed_task) queue line-based actions (update_task).
+    // When set_content runs first, it can shift line numbers, causing line-based actions to fail.
+  }
+
+  private replaceProperties(path: string, propertiesData?: Array<{key: string; value: string; valueType: string; arrayIndex: number | null}>, skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
+    const originalPropsInDB = new Set<string>();
+    if (!skipAutoSync) {
+      const existingResult = this.db.exec(INDEXING_SQL.SELECT_PROPERTIES_FOR_SYNC, [path]);
+      if (existingResult.length > 0 && existingResult[0].values) {
+        for (const row of existingResult[0].values) {
+          const key = row[0] as string;
+          const arrayIndex = row[1] as number | null;
+          if (arrayIndex === null) {
+            originalPropsInDB.add(key);
+          }
         }
       }
     }
-  };
 
-  private replaceTableCells = (path: string, tableCells?: DatabaseTableCell[], skipDeletes: boolean = false): void => {
+    // Core property replacement (skipDeletes=true, we handle deletes with trigger protection)
+    replacePropertiesCore(this.createIndexingAdapter(), path, propertiesData, true);
+
+    if (!propertiesData?.length) {
+      if (!skipDeletes) {
+        this.runWithPreparedStatement(INDEXING_SQL.DELETE_PROPERTIES, [path]);
+      }
+      return;
+    }
+
+    // Auto-sync: Check if a trigger ADDED new properties BEFORE deleting stale ones
+    const propertyKeysFromFile = new Set(propertiesData.map(p => p.key));
+    if (this.shouldPerformAutoSync(skipAutoSync, propertiesData.length)) {
+      const syncResult = this.db.exec(INDEXING_SQL.SELECT_PROPERTIES_VALUES_FOR_SYNC, [path]);
+      if (syncResult.length > 0 && syncResult[0].values) {
+        for (const row of syncResult[0].values) {
+          const key = row[0] as string;
+          const dbValue = row[1] as string;
+          // Only sync if: not in file AND not in original DB (trigger added it this pass)
+          if (!propertyKeysFromFile.has(key) && !originalPropsInDB.has(key)) {
+            this.triggerFunctions!.queueSetProperty(path, key, dbValue);
+          }
+        }
+      }
+    }
+
     if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM table_cells WHERE path = ?', [path]);
+      const pendingKeys = this.triggerFunctions?.getPendingPropertyKeys(path) ?? new Set<string>();
+
+      const allKeysToKeep: Array<{key: string; arrayIndex: number | null}> = [
+        ...propertiesData.map(p => ({ key: p.key, arrayIndex: p.arrayIndex })),
+        ...Array.from(pendingKeys).map(key => ({ key, arrayIndex: null }))
+      ];
+
+      const tuples = allKeysToKeep.map(p =>
+        `('${p.key.replace(/'/g, "''")}', ${p.arrayIndex ?? -1})`
+      ).join(', ');
+
+      const deleteStaleSQL = `${INDEXING_SQL.DELETE_STALE_PROPERTIES}(VALUES ${tuples})`;
+      this.db.run(deleteStaleSQL, [path]);
     }
-
-    if (tableCells?.length) {
-      const rows = tableCells.map(cell => [path, cell.tableIndex, cell.tableName, cell.rowIndex, cell.columnName, cell.cellValue, 'string', cell.lineNumber]);
-      this.runMultiRowInsert('INSERT INTO table_cells (path, table_index, table_name, row_index, column_name, cell_value, value_type, line_number) VALUES ', 8, rows);
-    }
-  };
-
-
-  private replaceLinks = (path: string, links?: Array<{link_text: string; link_target: string; link_target_path: string | null; link_type: string; line_number: number}>, skipDeletes: boolean = false): void => {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM links WHERE path = ?', [path]);
-    }
-
-    if (links?.length) {
-      const rows = links.map(link => [path, link.link_text, link.link_target, link.link_target_path, link.link_type, link.line_number]);
-      this.runMultiRowInsert('INSERT INTO links (path, link_text, link_target, link_target_path, link_type, line_number) VALUES ', 6, rows);
-    }
-  };
-
-  private replaceTags = (path: string, tags?: Array<{tag_name: string; line_number: number}>, skipDeletes: boolean = false): void => {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM tags WHERE path = ?', [path]);
-    }
-
-    if (tags?.length) {
-      const rows = tags.map(tag => [path, tag.tag_name, tag.line_number]);
-      this.runMultiRowInsert('INSERT INTO tags (path, tag_name, line_number) VALUES ', 3, rows);
-    }
-  };
-
-  public run(sql: string, params: (string | number | null)[] = []): number {
-    this.db.run(sql, params);
-    return this.db.getRowsModified();
   }
 
+  public run(sql: string, params: (string | number | null)[] = []): Promise<number> {
+    this.db.run(sql, params);
+    return Promise.resolve(this.db.getRowsModified());
+  }
+
+  /**
+   * Batch delete rows by ID. More efficient than individual DELETE statements.
+   * Uses chunked IN clauses to avoid SQLite limits.
+   */
+  private batchDeleteByIds(tableName: string, ids: number[]): void {
+    batchDeleteRowsByIds(tableName, ids, (sql, params) => this.db.run(sql, params));
+  }
+
+  /**
+   * Create an adapter for shared indexing operations.
+   * This abstracts the database access methods for use with IndexingOperations.ts.
+   */
+  private createIndexingAdapter(): IndexingDbAdapter {
+    return {
+      exec: (sql, params) => this.db.exec(sql, params as (string | number | null | Uint8Array)[] | undefined) as SqlResult,
+      run: (sql, params) => this.db.run(sql, params as (string | number | null | Uint8Array)[]),
+      runPrepared: (sql, params) => this.runWithPreparedStatement(sql, params),
+      batchDeleteByIds: (table, ids) => this.batchDeleteByIds(table, ids),
+      runMultiRowInsert: (base, cols, rows) => this.runMultiRowInsert(base, cols, rows),
+    };
+  }
+
+  // Cache of registered function source hashes to avoid re-registering unchanged functions
+  private registeredFunctionHashes = new Map<string, string>();
+
   public registerCustomFunction(name: string, source: string): void {
+    const newHash = hashString(source);
+    const existingHash = this.registeredFunctionHashes.get(name);
+    if (existingHash === newHash) {
+      return;
+    }
+
+    // eslint-disable-next-line no-new-func -- user SQL function
     const fn = new Function(`return (${source})`)();
 
     if (typeof fn !== 'function') {
@@ -480,6 +491,49 @@ export class VaultDatabase {
     }
 
     this.db.create_function(name, fn);
+    this.registeredFunctionHashes.set(name, newHash);
+  }
+
+  /**
+   * Check if a view's SQL has changed compared to what's stored.
+   * Returns true if the view needs to be recreated.
+   */
+  public viewNeedsRecreation(viewName: string, newSql: string): boolean {
+    return this.storedHashNeedsUpdate(INDEXING_SQL.SELECT_VIEW_HASH, viewName, newSql);
+  }
+
+  /**
+   * Check if a function's source has changed compared to what's stored.
+   * Returns true if the function needs to be re-registered.
+   */
+  public functionNeedsRecreation(functionName: string, newSource: string): boolean {
+    const newHash = hashString(newSource);
+    const cachedHash = this.registeredFunctionHashes.get(functionName);
+    if (cachedHash === newHash) {
+      return false;
+    }
+    return this.storedHashNeedsUpdate(INDEXING_SQL.SELECT_FUNCTION_HASH, functionName, newSource, newHash);
+  }
+
+  /**
+   * Check if a trigger's SQL has changed compared to what's stored.
+   * Returns true if the trigger needs to be recreated.
+   */
+  public triggerNeedsRecreation(triggerName: string, newSql: string): boolean {
+    return this.storedHashNeedsUpdate(INDEXING_SQL.SELECT_TRIGGER_HASH, triggerName, newSql);
+  }
+
+  private storedHashNeedsUpdate(selectHashSql: string, name: string, source: string, sourceHash = hashString(source)): boolean {
+    try {
+      const result = this.db.exec(selectHashSql, [name]);
+      if (result.length > 0 && result[0].values?.length > 0) {
+        const existingHash = result[0].values[0][0] as string;
+        return existingHash !== sourceHash;
+      }
+    } catch {
+      // Table might not exist, needs creation
+    }
+    return true;
   }
 
   public async all(sql: string, params: (string | number | null)[] = []): Promise<Record<string, unknown>[]> {
@@ -491,23 +545,7 @@ export class VaultDatabase {
           stmt.bind(params);
         }
 
-        const results: Record<string, unknown>[] = [];
-        const columnNames = stmt.getColumnNames();
-
-        while (stmt.step()) {
-          // Use custom object building instead of getAsObject() to handle duplicate column names
-          // With "first wins" behavior - important for LEFT JOINs where left table columns come first
-          const values = stmt.get();
-          const row: Record<string, unknown> = {};
-          for (let i = 0; i < columnNames.length; i++) {
-            const colName = columnNames[i];
-            // Only set if this column name hasn't been seen yet (first wins)
-            if (!(colName in row)) {
-              row[colName] = values[i];
-            }
-          }
-          results.push(row);
-        }
+        const results = collectStatementRows(stmt);
         stmt.reset();
 
         if (results.length > 1000) {
@@ -521,7 +559,7 @@ export class VaultDatabase {
           stmt.reset();
         }
         catch (resetError) {
-          console.warn(`[VaultQuery] ${WARNING_MESSAGES.STATEMENT_RESET_ERROR}:`, resetError);
+          logger.warn(WARNING_MESSAGES.STATEMENT_RESET_ERROR, resetError);
         }
         throw error;
       }
@@ -534,42 +572,29 @@ export class VaultDatabase {
   public runWithPreparedStatement(sql: string, params: (string | number | null)[] = []): void {
     try {
       const stmt = this.getPreparedStatement(sql);
-
-      try {
-        if (params.length > 0) {
-          stmt.bind(params);
-        }
-        stmt.step();
-        stmt.reset();
-      }
-      catch (error) {
-        try {
-          stmt.reset();
-        }
-        catch (resetError) {
-          console.warn(`[VaultQuery] ${WARNING_MESSAGES.STATEMENT_RESET_ERROR}:`, resetError);
-        }
-        throw error;
-      }
+      runPreparedStatement(stmt, params, resetError => {
+        logger.warn(WARNING_MESSAGES.STATEMENT_RESET_ERROR, resetError);
+      });
     }
     catch (error: unknown) {
       throw new Error(ERROR_MESSAGES.SQL_RUN_FAILED(getErrorMessage(error)));
     }
   }
 
-  private runMultiRowInsert(baseSQL: string, columnsCount: number, rows: (string | number | null)[][], maxRowsPerBatch: number = 100): void {
+  private runMultiRowInsert(baseSQL: string, columnsCount: number, rows: (string | number | null)[][], maxRowsPerBatch: number = MAX_ROWS_PER_INSERT_BATCH): void {
     if (rows.length === 0) return;
-
-    const placeholder = `(${Array(columnsCount).fill('?').join(', ')})`;
 
     for (let i = 0; i < rows.length; i += maxRowsPerBatch) {
       const batch = rows.slice(i, i + maxRowsPerBatch);
-      const values = Array(batch.length).fill(placeholder).join(', ');
-      const sql = baseSQL + values;
+      const sql = this.getMultiRowInsertSql(baseSQL, columnsCount, batch.length);
       const params = batch.flat();
 
       this.db.run(sql, params);
     }
+  }
+
+  private getMultiRowInsertSql(baseSQL: string, columnsCount: number, rowCount: number): string {
+    return getCachedMultiRowInsertSql(this.multiRowInsertSqlCache, baseSQL, columnsCount, rowCount);
   }
 
   public async indexNotesBatch(notesData: IndexNoteData[], isInitialIndexing: boolean = false, skipDiskSave: boolean = false): Promise<void> {
@@ -592,7 +617,7 @@ export class VaultDatabase {
         this.db.run('ANALYZE');
       }
       catch (error) {
-        console.warn('[VaultQuery] ANALYZE failed after batch indexing:', error);
+        logger.warn('ANALYZE failed after batch indexing', error);
       }
     }
 
@@ -601,39 +626,94 @@ export class VaultDatabase {
     }
   }
 
-  private performBatchIndexing = (notesData: IndexNoteData[], skipDeletes: boolean = false): void => {
+  private performBatchIndexing(notesData: IndexNoteData[], skipDeletes: boolean = false): void {
     const seen = new Set<string>();
     const duplicates: string[] = [];
 
     for (const data of notesData) {
       if (seen.has(data.note.path)) {
         duplicates.push(data.note.path);
-      }
-      else {
+      } else {
         seen.add(data.note.path);
       }
     }
 
     if (duplicates.length > 0) {
-      console.warn(`[VaultQuery] ${WARNING_MESSAGES.DUPLICATE_NOTES_IN_BATCH(duplicates.length, duplicates)}`);
+      logger.warn(WARNING_MESSAGES.DUPLICATE_NOTES_IN_BATCH(duplicates.length, duplicates));
     }
 
-    notesData.forEach(data => this.performIndexingOperations(data, skipDeletes));
-  };
+    // Skip auto-sync during batch indexing - triggers will process all changes after batch completes
+    notesData.forEach(data => this.performIndexingOperations(data, skipDeletes, true));
+  }
 
   public async previewDML(sql: string, params: unknown[] = []): Promise<PreviewResult> {
     const releaseLock = await this.acquireDbLock();
     try {
-      return this.previewService.previewDmlFromSql(sql, params);
+      // Set preview mode to prevent sync handlers from queuing actions
+      // (EditPlanner handles file sync during preview/apply cycle)
+      this.triggerFunctions?.setPreviewMode(true);
+      const result = this.previewService.previewDmlFromSql(sql, params);
+      return result;
     } finally {
+      this.triggerFunctions?.setPreviewMode(false);
       releaseLock();
     }
   }
 
   public async applyDML(previewResult: PreviewResult): Promise<void> {
-    return this.withTx(() => {
-      this.applyDMLWithoutTransaction(previewResult);
-    });
+    // Set preview mode to prevent sync handlers from queuing actions
+    // (WriteSyncService handles file sync during apply)
+    this.triggerFunctions?.setPreviewMode(true);
+
+    // For INSERT INTO table_rows, set direct apply target to allow cascade
+    // The DIRECT insert is handled by WriteSyncService, but CASCADE inserts
+    // (from triggers like wuphf_broadcast) need to queue
+    const directTarget = this.extractTableRowsTarget(previewResult);
+    if (directTarget) {
+      this.triggerFunctions?.setDirectApplyTarget(directTarget);
+    }
+
+    try {
+      // IMPORTANT: Use await, not return. With return, the finally block runs immediately
+      // after the Promise is created (before SQL executes). With await, finally runs
+      // after the Promise resolves (after SQL completes).
+      await this.withTx(() => {
+        this.applyDMLWithoutTransaction(previewResult);
+      });
+    } finally {
+      this.triggerFunctions?.setPreviewMode(false);
+      this.triggerFunctions?.setDirectApplyTarget(null);
+    }
+  }
+
+  /**
+   * Extract the target table for INSERT INTO table_rows operations.
+   * Used to distinguish direct inserts (handled by WriteSyncService) from
+   * cascade inserts (which should queue for trigger processing).
+   */
+  private extractTableRowsTarget(previewResult: PreviewResult): { path: string; tableIndex: number } | null {
+    for (const { sql, params } of previewResult.sqlToApply) {
+      if (/INSERT\s+INTO\s+table_rows/i.test(sql)) {
+        if (params && params.length >= 2) {
+          const path = params[0];
+          const tableIndex = params[1];
+          if (typeof path === 'string' && typeof tableIndex === 'number') {
+            return { path, tableIndex };
+          }
+        }
+
+        // Fallback: parse inline VALUES from SQL
+        const valuesMatch = sql.match(/VALUES\s*\(\s*'([^']+)'\s*,\s*(\d+)/i);
+        if (valuesMatch) {
+          const path = valuesMatch[1];
+          const tableIndex = parseInt(valuesMatch[2], 10);
+          if (path && !isNaN(tableIndex)) {
+            return { path, tableIndex };
+          }
+        }
+      }
+    }
+    return null;
   }
 
   private applyDMLWithoutTransaction(previewResult: PreviewResult): void {
@@ -644,6 +724,53 @@ export class VaultDatabase {
       } finally {
         stmt.free();
       }
+    }
+  }
+
+  /**
+   * Check if the database is still healthy (WASM memory not reclaimed).
+   * Returns an object with health status and diagnostic info.
+   */
+  public checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
+    const diagnostics: Record<string, unknown> = {
+      timestamp: new Date().toISOString(),
+      useMemoryStorage: this.useMemoryStorage,
+      hasDb: !!this.db,
+      preparedStatementCount: this.preparedStatements.size
+    };
+
+    try {
+      const result = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'");
+      const notesTableExists = result.length > 0 && result[0].values.length > 0;
+
+      diagnostics.notesTableExists = notesTableExists;
+
+      if (!notesTableExists) {
+        const allTables = this.db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+        diagnostics.existingTables = allTables.length > 0
+          ? allTables[0].values.map(row => row[0])
+          : [];
+
+        return {
+          healthy: false,
+          error: 'notes table does not exist',
+          diagnostics
+        };
+      }
+
+      const countResult = this.db.exec("SELECT COUNT(*) FROM notes");
+      diagnostics.noteCount = countResult.length > 0 ? countResult[0].values[0][0] : 0;
+
+      return { healthy: true, diagnostics };
+    } catch (error) {
+      diagnostics.exceptionType = error?.constructor?.name;
+      diagnostics.exceptionMessage = error instanceof Error ? error.message : String(error);
+
+      return {
+        healthy: false,
+        error: `Database query failed: ${error instanceof Error ? error.message : String(error)}`,
+        diagnostics
+      };
     }
   }
 
@@ -660,220 +787,293 @@ export class VaultDatabase {
       return true;
     }
     catch (error) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.DATABASE_CLOSE_ERROR}:`, error);
+      logger.error(CONSOLE_ERRORS.DATABASE_CLOSE_ERROR, error);
       return false;
     }
   }
 
-  private replaceTables(path: string, tables: Array<{ table_index: number; table_name?: string; block_id?: string; start_offset: number; end_offset: number }>, skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM tables WHERE path = ?', [path]);
-    }
-
-    if (tables?.length) {
-      const rows = tables.map(table => [path, table.table_index, table.table_name || null, table.block_id || null, table.start_offset, table.end_offset]);
-      this.runMultiRowInsert('INSERT INTO tables (path, table_index, table_name, block_id, start_offset, end_offset) VALUES ', 6, rows);
-    }
-  }
-
-  private replaceTasks(path: string, tasks: TaskData[], skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM tasks WHERE path = ?', [path]);
-    }
-
-    if (tasks?.length) {
-      const rows = tasks.map(task => [
-        path,
-        task.task_text,
-        task.status || 'TODO',
-        task.priority || null,
-        task.due_date || null,
-        task.scheduled_date || null,
-        task.start_date || null,
-        task.created_date || null,
-        task.done_date || null,
-        task.cancelled_date ?? null,
-        task.recurrence ?? null,
-        task.on_completion ?? null,
-        task.task_id ?? null,
-        task.depends_on ?? null,
-        task.tags ?? null,
-        task.line_number,
-        task.block_id ?? null,
-        task.start_offset ?? null,
-        task.end_offset ?? null,
-        task.anchor_hash ?? null,
-        task.section_heading ?? null
-      ]);
-      this.runMultiRowInsert('INSERT INTO tasks (path, task_text, status, priority, due_date, scheduled_date, start_date, created_date, done_date, cancelled_date, recurrence, on_completion, task_id, depends_on, tags, line_number, block_id, start_offset, end_offset, anchor_hash, section_heading) VALUES ', 21, rows);
-    }
-  }
-
-  private replaceHeadings(path: string, headings: Array<{ level: number; heading_text: string; line_number: number; block_id?: string; start_offset?: number; end_offset?: number; anchor_hash?: string }>, skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM headings WHERE path = ?', [path]);
-    }
-
-    if (headings?.length) {
-      const rows = headings.map(heading => [
-        path,
-        heading.level,
-        heading.heading_text,
-        heading.line_number,
-        heading.block_id ?? null,
-        heading.start_offset ?? null,
-        heading.end_offset ?? null,
-        heading.anchor_hash ?? null
-      ]);
-      this.runMultiRowInsert('INSERT INTO headings (path, level, heading_text, line_number, block_id, start_offset, end_offset, anchor_hash) VALUES ', 8, rows);
-    }
-  }
-
-  private replaceListItems(path: string, listItems: ListItemData[], skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM list_items WHERE path = ?', [path]);
-    }
-
-    if (listItems?.length) {
-      const rows = listItems.map(item => [
-        path,
-        item.list_index,
-        item.item_index,
-        item.parent_index,
-        item.content,
-        item.list_type,
-        item.indent_level,
-        item.line_number,
-        item.block_id ?? null,
-        item.start_offset,
-        item.end_offset,
-        item.anchor_hash ?? null
-      ]);
-      this.runMultiRowInsert('INSERT INTO list_items (path, list_index, item_index, parent_index, content, list_type, indent_level, line_number, block_id, start_offset, end_offset, anchor_hash) VALUES ', 12, rows);
-    }
-  }
-
-  private replaceUserViews(path: string, userViews?: Array<{view_name: string; sql: string}>, skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      const existingViews = this.getViewsForPath(path);
-
-      this.runWithPreparedStatement('DELETE FROM _user_views WHERE path = ?', [path]);
-
-      for (const viewName of existingViews) {
-        try {
-          this.db.run(`DROP VIEW IF EXISTS "${viewName}"`);
-        }
-        catch (error) {
-          console.warn(`[VaultQuery] Failed to drop view "${viewName}":`, error);
-        }
+  private replaceTasks(path: string, tasks: IndexNoteData['tasks'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
+    // We compare against file data, not DB data, to detect trigger modifications
+    const fileTasks = new Map<number, { status: string; task_text: string }>();
+    if (tasks && this.shouldPerformAutoSync(skipAutoSync, tasks.length)) {
+      for (const task of tasks) {
+        fileTasks.set(task.line_number, {
+          status: task.status,
+          task_text: task.task_text
+        });
       }
     }
 
-    if (userViews?.length) {
-      const insertSQL = 'INSERT OR REPLACE INTO _user_views (view_name, path, sql) VALUES (?, ?, ?)';
-      for (const view of userViews) {
-        this.runWithPreparedStatement(insertSQL, [view.view_name, path, view.sql]);
-      }
+    replaceTasksCore(this.createIndexingAdapter(), path, tasks, skipDeletes);
 
-      for (const { view_name, sql } of userViews) {
-        try {
-          this.db.run(`DROP VIEW IF EXISTS "${view_name}"`);
-          this.db.run(sql);
+    // Auto-sync: Check if a trigger modified tasks (compare DB state vs file state)
+    if (this.shouldPerformAutoSync(skipAutoSync, fileTasks.size)) {
+      try {
+        const syncResult = this.db.exec(INDEXING_SQL.SELECT_TASKS_FOR_SYNC, [path]);
+        if (syncResult.length > 0 && syncResult[0].values) {
+          for (const row of syncResult[0].values) {
+            const lineNumber = row[0] as number;
+            const dbStatus = row[1] as string;
+            const dbTaskText = row[2] as string;
+            const fileTask = fileTasks.get(lineNumber);
+            // If DB differs from file, a trigger modified it - queue sync
+            if (fileTask && (fileTask.status !== dbStatus || fileTask.task_text !== dbTaskText)) {
+              this.triggerFunctions!.queueUpdateTask(path, lineNumber, dbStatus, dbTaskText);
+            }
+          }
         }
-        catch (error) {
-          console.error(`[VaultQuery] Failed to create view "${view_name}":`, error);
-        }
+      } catch (error) {
+        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
       }
     }
   }
 
-  private getViewsForPath(path: string): string[] {
+  private replaceHeadings(path: string, headings: IndexNoteData['headings'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
+    const fileHeadingsForSync = new Map<number, { level: number; heading_text: string }>();
+    if (headings && this.shouldPerformAutoSync(skipAutoSync, headings.length)) {
+      for (const heading of headings) {
+        fileHeadingsForSync.set(heading.line_number, {
+          level: heading.level,
+          heading_text: heading.heading_text
+        });
+      }
+    }
+
+    replaceHeadingsCore(this.createIndexingAdapter(), path, headings, skipDeletes);
+
+    // Auto-sync: Check if a trigger modified headings (compare DB state vs file state)
+    if (this.shouldPerformAutoSync(skipAutoSync, fileHeadingsForSync.size)) {
+      try {
+        const syncResult = this.db.exec(INDEXING_SQL.SELECT_HEADINGS_FOR_SYNC, [path]);
+        if (syncResult.length > 0 && syncResult[0].values) {
+          for (const row of syncResult[0].values) {
+            const lineNumber = row[0] as number;
+            const dbLevel = row[1] as number;
+            const dbHeadingText = row[2] as string;
+            const fileHeading = fileHeadingsForSync.get(lineNumber);
+            if (fileHeading && (fileHeading.level !== dbLevel || fileHeading.heading_text !== dbHeadingText)) {
+              this.triggerFunctions!.queueUpdateHeading(path, lineNumber, dbLevel, dbHeadingText);
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
+      }
+    }
+  }
+
+  private replaceListItems(path: string, listItems: IndexNoteData['listItems'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
+    // We compare against file data, not DB data, to detect trigger modifications
+    const fileListItems = new Map<number, { content: string }>();
+    if (listItems && this.shouldPerformAutoSync(skipAutoSync, listItems.length)) {
+      for (const item of listItems) {
+        fileListItems.set(item.line_number, {
+          content: item.content
+        });
+      }
+    }
+
+    replaceListItemsCore(this.createIndexingAdapter(), path, listItems, skipDeletes);
+
+    // Auto-sync: Check if a trigger modified list items (compare DB state vs file state)
+    if (this.shouldPerformAutoSync(skipAutoSync, fileListItems.size)) {
+      try {
+        const syncResult = this.db.exec(INDEXING_SQL.SELECT_LIST_ITEMS_FOR_SYNC, [path]);
+        if (syncResult.length > 0 && syncResult[0].values) {
+          for (const row of syncResult[0].values) {
+            const lineNumber = row[0] as number;
+            const dbContent = row[1] as string;
+            const fileItem = fileListItems.get(lineNumber);
+            // If DB differs from file, a trigger modified it - queue sync
+            if (fileItem && fileItem.content !== dbContent) {
+              this.triggerFunctions!.queueUpdateListItem(path, lineNumber, dbContent);
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
+      }
+    }
+  }
+
+  private replaceUserFunctions(path: string, userFunctions?: IndexNoteData['userFunctions'], skipDeletes: boolean = false): void {
+    replaceUserFunctionsCore(this.createIndexingAdapter(), path, userFunctions, skipDeletes, (name, source) => this.registerCustomFunction(name, source), logger);
+  }
+
+  /**
+   * Store and activate user triggers during indexing.
+   * Triggers are both stored in _user_triggers table AND activated in SQLite.
+   *
+   * IMPORTANT: If userTriggers is undefined (not extracted during this indexing pass),
+   * we preserve existing triggers. Only when userTriggers is explicitly provided
+   * (even if empty) do we delete/replace.
+   */
+  private replaceUserTriggers(path: string, userTriggers?: IndexNoteData['userTriggers'], skipDeletes: boolean = false): void {
+    replaceUserTriggersCore(this.createIndexingAdapter(), path, userTriggers, skipDeletes, (name, sql, triggerPath) => this.activateTrigger(name, sql, triggerPath), logger);
+  }
+
+  public getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
     try {
-      const results = this.db.exec('SELECT view_name FROM _user_views WHERE path = ?', [path]);
-      if (results.length === 0 || !results[0].values) return [];
-      return results[0].values.map(row => row[0] as string);
+      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS);
+      return results[0]?.values?.map(row => ({
+        trigger_name: row[0] as string,
+        path: row[1] as string,
+        trigger_sql: row[2] as string,
+        enabled: row[3] as number
+      })) ?? [];
     }
     catch (e) {
-      console.warn('[VaultQuery] DatabaseService.getViewsForPath: Query failed', path, e);
+      logger.warn('DatabaseService.getAllUserTriggers: Query failed', e);
       return [];
     }
   }
 
-  private replaceUserFunctions(path: string, userFunctions?: Array<{function_name: string; source: string}>, skipDeletes: boolean = false): void {
-    if (!skipDeletes) {
-      this.runWithPreparedStatement('DELETE FROM _user_functions WHERE path = ?', [path]);
+  /**
+   * Register all user triggers from _user_triggers table with SQLite.
+   * Called once after vault indexing completes to activate all triggers.
+   */
+  public registerUserTriggers(): void {
+    const triggers = this.getAllUserTriggers();
+
+    for (const trigger of triggers) {
+      try {
+        this.activateTrigger(trigger.trigger_name, trigger.trigger_sql, trigger.path);
+      }
+      catch (error) {
+        logger.error(`Failed to register trigger "${trigger.trigger_name}"`, error);
+      }
+    }
+  }
+
+  /**
+   * Register all user functions from _user_functions table with SQLite.
+   * Called once after vault indexing completes (or after database transfer from worker).
+   * Functions are stored in the database but need to be re-registered with create_function
+   * since that's an in-memory operation that doesn't persist in the SQLite binary.
+   */
+  public registerUserFunctions(): void {
+    const functions = this.getAllUserFunctions();
+
+    for (const func of functions) {
+      try {
+        this.registerCustomFunction(func.function_name, func.source);
+      }
+      catch (error) {
+        logger.error(`Failed to register function "${func.function_name}"`, error);
+      }
+    }
+  }
+
+  /**
+   * Register a single trigger at render time.
+   * Called by TriggerCodeBlockProcessor when a trigger block is rendered.
+   * Stores the trigger in _user_triggers table and activates it immediately.
+   */
+  public registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
+    // Validate trigger SQL - reject patterns that won't sync to files
+    const disallowedPatterns = [
+      { pattern: /UPDATE\s+notes\s+SET\s+content\s*=/i, message: 'UPDATE notes SET content is not auto-synced. Use vq_replace_content() or vq_set_content() instead.' },
+    ];
+    for (const { pattern, message } of disallowedPatterns) {
+      if (pattern.test(triggerSql)) {
+        throw new Error(message);
+      }
     }
 
-    if (userFunctions?.length) {
-      const insertSQL = 'INSERT OR REPLACE INTO _user_functions (function_name, path, source) VALUES (?, ?, ?)';
-      for (const func of userFunctions) {
-        this.runWithPreparedStatement(insertSQL, [func.function_name, path, func.source]);
-      }
+    if (!this.triggerNeedsRecreation(triggerName, triggerSql)) {
+      return;
+    }
 
-      for (const { function_name, source } of userFunctions) {
-        try {
-          this.registerCustomFunction(function_name, source);
-        }
-        catch (error) {
-          console.error(`[VaultQuery] Failed to register function "${function_name}":`, error);
-        }
-      }
+    const newHash = hashString(triggerSql);
+
+    if (sourcePath) {
+      this.runWithPreparedStatement(INDEXING_SQL.INSERT_USER_TRIGGER, [triggerName, sourcePath, triggerSql, newHash]);
+    }
+
+    this.activateTrigger(triggerName, triggerSql, sourcePath);
+  }
+
+  /**
+   * Internal helper to activate a SQLite trigger.
+   * Handles name prefixing and {this.path} placeholder replacement.
+   */
+  private activateTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
+    const prefixedName = `_vq_user_${triggerName}`;
+
+    this.db.run(`DROP TRIGGER IF EXISTS "${prefixedName}"`);
+
+    // Replace {this.path} placeholder with the actual source path (escaped for SQL string literals)
+    const sqlWithPath = sourcePath
+      ? triggerSql.replace(/\{this\.path\}/g, sourcePath.replace(/'/g, "''"))
+      : triggerSql;
+
+    // Rewrite triggers on table_rows VIEW to use _table_row_events shadow table
+    // (SQLite views only support INSTEAD OF triggers, not AFTER triggers)
+    const sqlWithTableRowsRewrite = sqlWithPath.replace(
+      /\bON\s+table_rows\b/gi,
+      'ON _table_row_events'
+    );
+
+    const prefixedSql = rewriteTriggerWithPrefix(sqlWithTableRowsRewrite, '_vq_user_');
+
+    logger.debug(`Activating trigger ${prefixedName}`, prefixedSql);
+    this.db.run(prefixedSql);
+
+    const verify = this.db.exec(`SELECT name FROM sqlite_master WHERE type='trigger' AND name=?`, [prefixedName]);
+    if (verify.length > 0 && verify[0].values?.length > 0) {
+      logger.debug(`Trigger ${prefixedName} verified in sqlite_master`);
+    } else {
+      logger.error(`Trigger ${prefixedName} NOT FOUND in sqlite_master after creation`);
     }
   }
 
   public getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
     try {
-      const results = this.db.exec('SELECT view_name, path, sql FROM _user_views');
-      if (results.length === 0 || !results[0].values) return [];
-      return results[0].values.map(row => ({
+      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_VIEWS);
+      return results[0]?.values?.map(row => ({
         view_name: row[0] as string,
         path: row[1] as string,
         sql: row[2] as string
-      }));
+      })) ?? [];
     }
     catch (e) {
-      console.warn('[VaultQuery] DatabaseService.getAllUserViews: Query failed', e);
+      logger.warn('DatabaseService.getAllUserViews: Query failed', e);
       return [];
     }
   }
 
   public getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
     try {
-      const results = this.db.exec('SELECT function_name, path, source FROM _user_functions');
-      if (results.length === 0 || !results[0].values) return [];
-      return results[0].values.map(row => ({
+      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS);
+      return results[0]?.values?.map(row => ({
         function_name: row[0] as string,
         path: row[1] as string,
         source: row[2] as string
-      }));
+      })) ?? [];
     }
     catch (e) {
-      console.warn('[VaultQuery] DatabaseService.getAllUserFunctions: Query failed', e);
+      logger.warn('DatabaseService.getAllUserFunctions: Query failed', e);
       return [];
     }
   }
 
-  public getAllPropertyKeys(): string[] {
-    return this.schemaManager.getAllPropertyKeys();
+  /**
+   * Register trigger functions (vq_set_property, vq_remove_property, etc.) with the database.
+   * These functions are called from user-defined SQLite triggers.
+   */
+  public registerTriggerFunctions(triggerFunctions: TriggerFunctions): void {
+    this.triggerFunctions = triggerFunctions;
+    triggerFunctions.register(this.db);
   }
 
-  public getViewNames(): string[] {
-    return this.schemaManager.getViewNames();
-  }
-
-  public getViewColumns(viewName: string): string[] {
-    return this.schemaManager.getViewColumns(viewName);
-  }
-
-  public rebuildPropertiesView(): void {
-    this.schemaManager.rebuildPropertiesView();
-  }
-
-  public discoverTableStructures(): import('./DatabaseSchema').TableStructure[] {
-    return this.schemaManager.discoverTableStructures();
-  }
-
-  public rebuildTableViews(enableDynamicTableViews: boolean): void {
-    this.schemaManager.rebuildTableViews(enableDynamicTableViews);
+  /**
+   * Helper to check if auto-sync should be performed.
+   * Consolidates the repeated conditional check across replace* methods.
+   */
+  private shouldPerformAutoSync(skipAutoSync: boolean, dataLength: number | undefined): boolean {
+    return !skipAutoSync &&
+           !!dataLength &&
+           !!this.triggerFunctions &&
+           !this.triggerFunctions.getIsProcessingTriggers();
   }
 }

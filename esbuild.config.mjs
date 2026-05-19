@@ -1,14 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
-import { copyFileSync } from "fs";
-
-try {
-	copyFileSync("node_modules/sql.js/dist/sql-wasm.wasm", "sql-wasm.wasm");
-	console.log("Copied sql-wasm.wasm to plugin directory");
-} catch (e) {
-	console.warn("Could not copy sql-wasm.wasm:", e.message);
-}
+import { builtinModules } from "node:module";
+import inlineWorkerPlugin from "esbuild-plugin-inline-worker";
 
 const banner =
 `/*
@@ -23,7 +16,10 @@ const context = await esbuild.context({
 	banner: {
 		js: banner,
 	},
-	entryPoints: ["src/main.ts"],
+	entryPoints: {
+		main: "src/main.ts",
+		api: "src/api.ts",
+	},
 	bundle: true,
 	external: [
 		"obsidian",
@@ -39,17 +35,33 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins],
+		...builtinModules],
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
-	loader: { 
+	outdir: ".",
+	entryNames: "[name]",
+	loader: {
 	   ".png": "base64",
 	   ".svg": "base64",
 	},
+	plugins: [
+		inlineWorkerPlugin({
+			// Extra esbuild options for worker bundles
+			format: "iife",
+			target: "es2018",
+			treeShaking: true,
+			minify: prod,
+			// Externalize Node.js builtins - sql.js conditionally requires them but won't use them in browser
+			external: [...builtinModules],
+			// Define stubs for Node.js globals that sql.js checks
+			define: {
+				'global': 'self',
+			},
+		}),
+	],
 });
 
 if (prod) {

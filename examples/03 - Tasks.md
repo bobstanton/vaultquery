@@ -4,7 +4,7 @@ category: tasks
 ---
 
 > [!important] Enable task indexing
-> Task queries are disabled by default. To enable go to Settings → VaultQuery → Indexing → Index tasks
+> Task queries are disabled by default. Enable at Settings → VaultQuery → Index tasks.
 
 VaultQuery parses tasks using the Obsidian Tasks emoji format:
 
@@ -132,7 +132,7 @@ Tasks can have block IDs for precise referencing. Add `^block-id` at the end of 
 Update a specific task by block ID:
 
 > [!important] Enable write operations
-> Write operations are disabled by default. To enable go to Settings → VaultQuery → Write operations → Enable write operations
+> Write operations are disabled by default. Enable at Settings → VaultQuery → Enable write operations.
 
 ```vaultquery-write
 UPDATE tasks
@@ -192,7 +192,7 @@ WHERE path = '{this.path}'
 
 - [ ] Shred confidential documents ^task-shred
 - [ ] Update client contact info ^task-contact
-- [ ] Send thank you cards to clients ^task-cards
+- [ ] Send appreciation cards to clients ^task-cards
 
 ```vaultquery-write
 UPDATE tasks
@@ -267,4 +267,3 @@ DELETE FROM tasks
 WHERE path = '{this.path}'
   AND status = 'DONE'
 ```
-

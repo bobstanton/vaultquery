@@ -3,24 +3,30 @@ import { VaultQuerySettings } from '../Settings/Settings';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { checkIndexingAndWait, createLoadingIndicator } from '../utils/IndexingUtils';
 import { parseQueryBlock } from '../utils/QueryParsingUtils';
-import VaultQueryPlugin from '../main';
+import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { PreviewGridRenderer } from '../Renderers/PreviewGridRenderer';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
+import { createVaultQueryCodeBlockContainer } from './ProcessorUtils';
 import type { PendingBlock } from '../utils/IndexingUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import type { PreviewRenderContext } from '../Renderers/PreviewGridRenderer';
 import type { PreviewResult } from '../Services/PreviewService';
+import { logger as rootLogger } from '../utils/logger';
+
+const logger = rootLogger.scope('WriteBlocks');
 
 export class WriteCodeBlockProcessor {
   private pendingBlocks = new Set<PendingBlock>();
   private activeRequests = new WeakMap<HTMLElement, number>();
 
-  public constructor(private app: App, private plugin: VaultQueryPlugin, private settings: VaultQuerySettings) {}
+  public constructor(private app: App, private plugin: VaultQueryPluginContext, private settings: VaultQuerySettings) {}
 
   async process(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void> {
-    el.empty();
-    const container = el.createDiv({ cls: 'vaultquery-container' });
+    const container = createVaultQueryCodeBlockContainer(el);
+    if (!container) {
+      return;
+    }
 
     try {
       const parsed = parseQueryBlock(source);
@@ -63,6 +69,7 @@ export class WriteCodeBlockProcessor {
       }
     }
     catch (error: unknown) {
+      container.empty();
       BaseRenderer.renderQueryError(this.app, container, error, source);
     }
   }
@@ -109,8 +116,8 @@ export class WriteCodeBlockProcessor {
             void this.app.workspace.getLeaf().openFile(file);
           }
         },
-        onApply: async () => {
-          await this.applyPreview(currentPreviewResult!, previewContainer!, parsed, sourcePath);
+        onApply: () => {
+          void this.applyPreview(currentPreviewResult!, previewContainer!, parsed, sourcePath);
         },
         onCancel: () => {
           if (previewContainer) {
@@ -138,13 +145,17 @@ export class WriteCodeBlockProcessor {
                             errorMsg.includes('no such table');
 
       if (isSyntaxError) {
-        const syntaxErrorDiv = writeContainer.createDiv({ cls: 'vaultquery-error' });
-        syntaxErrorDiv.textContent = errorMsg;
+        BaseRenderer.renderError(writeContainer, {
+          title: 'Query Error',
+          message: errorMsg
+        });
         return;
       }
 
-      const errorContainer = writeContainer.createDiv({ cls: 'vaultquery-error' });
-      errorContainer.textContent = errorMsg;
+      BaseRenderer.renderError(writeContainer, {
+        title: 'Preview Error',
+        message: errorMsg
+      });
 
       const buttonContainer = container.createDiv('vaultquery-floating-buttons');
       BaseRenderer.addRefreshButton(buttonContainer, async () => {
@@ -179,9 +190,7 @@ export class WriteCodeBlockProcessor {
       }
       affectedPaths = await api.applyPreview(freshPreviewResult);
 
-      if (previewContainer.id) {
-        SlickGridRenderer.unregisterRefreshCallback(previewContainer.id);
-      }
+      SlickGridRenderer.cleanupContainer(previewContainer);
 
       previewContainer.empty();
       const successDiv = previewContainer.createDiv({ cls: 'vaultquery-success' });
@@ -219,15 +228,13 @@ export class WriteCodeBlockProcessor {
     }
 
     catch (error: unknown) {
-      console.error('[VaultQuery] Apply preview failed:', error);
+      logger.error('Apply preview failed', error);
 
       previewContainer.empty();
-      const errorDiv = previewContainer.createDiv({ cls: 'vaultquery-error' });
-      const header = errorDiv.createDiv({ cls: 'vaultquery-message-header' });
-      const icon = header.createSpan({ cls: 'vaultquery-message-icon' });
-      setIcon(icon, 'x-circle');
-      header.createEl('strong', {text: 'Apply failed'});
-      errorDiv.createEl('p', {text: `Failed to apply changes: ${getErrorMessage(error)}`});
+      BaseRenderer.renderError(previewContainer, {
+        title: 'Apply failed',
+        message: `Failed to apply changes: ${getErrorMessage(error)}`
+      });
     }
     finally {
       if (affectedPaths.length > 0) {
@@ -252,8 +259,10 @@ export class WriteCodeBlockProcessor {
       const parentContainer = writeContainer.parentElement;
 
       writeContainer.empty();
-      const errorContainer = writeContainer.createDiv({ cls: 'vaultquery-error' });
-      errorContainer.textContent = getErrorMessage(error);
+      BaseRenderer.renderError(writeContainer, {
+        title: 'Refresh Error',
+        message: getErrorMessage(error)
+      });
 
       if (parentContainer && parentContainer.hasClass('vaultquery-container')) {
         const buttonContainer = parentContainer.createDiv('vaultquery-floating-buttons');

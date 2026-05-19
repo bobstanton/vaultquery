@@ -9,7 +9,7 @@ title: VaultQuery Function Reference
 
 # User-defined functions
 
-Use `vaultquery-function` blocks to create custom [scalar SQL functions](https://sql.js.org/documentation/Database.html#%5B%22create_function%22%5D) in JavaScript. Scalar functions process one row at a time and return a single value. 
+Enable JavaScript SQL functions in settings, then use `vaultquery-function` blocks to create custom [scalar SQL functions](https://sql.js.org/documentation/Database.html#%5B%22create_function%22%5D) in JavaScript. Scalar functions process one row at a time and return a single value.
 
 ## Creating a function
 
@@ -111,7 +111,7 @@ ORDER BY visit_date DESC
 
 ## format_date(date, format)
 
-Formats an ISO date (YYYY-MM-DD) using format specifiers. Returns null if date is invalid.
+Formats an ISO date (YYYY-MM-DD) or compact date (YYYYMMDD) using format specifiers. Returns null if date is invalid.
 
 | Specifier | Output                 | Example     |
 |-----------|------------------------|-------------|
@@ -137,7 +137,7 @@ WHERE parse_date(heading_text) IS NOT NULL
 
 ## Link functions
 
-Build [Obsidian internal links](https://help.obsidian.md/links) (wikilinks). Use in `vaultquery-markdown` blocks for clickable links.
+Build [Obsidian internal links](https://help.obsidian.md/links) (wikilinks). Use in markdown output blocks, such as `vaultquery-markdown`.
 
 | Function                                 | Output                       | Example                            |
 |------------------------------------------|------------------------------|------------------------------------|

@@ -1,12 +1,33 @@
-import { App, TFile } from 'obsidian';
+import { App, MarkdownPostProcessorContext, TFile, normalizePath } from 'obsidian';
 import { VaultDatabase } from './Database/DatabaseService';
+import { WorkerDatabase } from './Database/WorkerDatabaseService';
 import { VaultQuerySettings, EnabledFeatures } from './Settings/Settings';
 import { IndexingService } from './Services/IndexingService';
 import { WriteSyncService } from './Services/WriteSyncService';
+import { TriggerFunctions, TriggerService } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
 import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
+import { parseSQLObjectName } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
 import type { PreviewResult } from './Services/PreviewService';
+import { TableProviderService } from './Providers/TableProviderService';
+import { QueryRefreshRegistry } from './Renderers/QueryRefreshRegistry';
+import { getIndexedFilesFromDatabase } from './Database/IndexedFiles';
+import { CustomSQLFunctions } from './Database/CustomSQLFunctions';
+import { EventBus, type EventRef } from './utils/EventBus';
+import { logger as rootLogger } from './utils/logger';
+import type {
+  TableProviderRegistration,
+  TableProviderStatus,
+  ProviderDefinitionCompletionConfig,
+  VaultQueryTableProvider,
+} from './Providers/TableProviderTypes';
+
+const logger = rootLogger.scope('API');
+declare const activeWindow: Window;
+
+const PROVIDER_TABLE_RETRY_TIMEOUT_MS = 2_000;
+const PROVIDER_TABLE_RETRY_INTERVAL_MS = 100;
 
 export interface FileIndexedEvent {
   path: string;
@@ -21,6 +42,21 @@ export interface VaultIndexedEvent {
   filesIndexed: number;
   filesRemoved: number;
   isForced: boolean;
+}
+
+export interface DatabaseLostEvent {
+  error: string;
+  timestamp: number;
+}
+
+export interface DatabaseRestoredEvent {
+  timestamp: number;
+}
+
+export interface DatabaseHealth {
+  healthy: boolean;
+  error?: string;
+  diagnostics: Record<string, unknown>;
 }
 
 const TABLE_FEATURE_CONFIG: Record<string, {
@@ -44,184 +80,123 @@ const TABLE_FEATURE_CONFIG: Record<string, {
 };
 
 
-interface QueryResult {
+export interface QueryResult {
   [key: string]: string | number | boolean | null;
+}
+
+interface AutocompleteSchemaRelation {
+  name: string;
+  type: 'table' | 'view';
+}
+
+interface AutocompleteSchemaColumn {
+  relation: string;
+  name: string;
+  type: string;
+}
+
+interface AutocompleteSchemaInfo {
+  relations: AutocompleteSchemaRelation[];
+  columns: AutocompleteSchemaColumn[];
+  functions: string[];
 }
 
 export interface IVaultQueryAPI {
   /**
-   * Execute a SQL query and return results.
-   * Supports SELECT queries against all indexed tables (notes, properties, tasks, etc.).
-   * Uses prepared statements with caching for performance.
-   *
-   * @param sql - The SQL query to execute
-   * @param noteSource - Optional TFile or path for `{this.*}` template variable substitution
-   * @returns Array of result rows as key-value objects
-   *
-   * @example
-   * const results = await api.query('SELECT * FROM notes WHERE title LIKE ?', ['%Daily%']);
-   * const withTemplate = await api.query('SELECT * FROM tasks WHERE path = {this.path}', currentFile);
+   * Run a read query against the indexed vault data.
+   * Pass a note when the query uses `{this.*}` placeholders.
    */
   query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]>;
 
   /**
-   * Incrementally reindex the vault.
-   * Compares file modification times (mtime) against indexed values to determine
-   * which files need reindexing. Only processes files that have changed since
-   * last indexed, and removes files that no longer exist.
-   *
-   * This is the standard reindex method - use forceReindexVault() to rebuild from scratch.
+   * Reindex files that have changed since the last run.
    */
   reindexVault(): Promise<void>;
 
   /**
-   * Force a complete vault reindex from scratch.
-   * Clears all indexed data and reindexes every markdown file in the vault.
-   * Use this when the index may be corrupted or out of sync.
-   *
-   * Note: This is slower than reindexVault() as it doesn't use incremental updates.
+   * Clear the index and rebuild it from every markdown file.
    */
   forceReindexVault(): Promise<void>;
 
   /**
-   * Reindex a single note by its path.
-   * Reads the file content and updates all indexed data for that note.
-   *
-   * @param notePath - The vault-relative path to the note (e.g., "folder/note.md")
-   * @throws Error if the file doesn't exist or isn't a markdown file
+   * Reindex one note by vault-relative path.
    */
   reindexNote(notePath: string): Promise<void>;
 
   /**
-   * Get the current indexing status.
-   * Returns whether indexing is in progress and the current progress if so.
-   *
-   * @returns Object with `isIndexing` boolean and optional `progress` with current/total/currentFile
+   * Current indexing state and progress, if indexing is running.
    */
   getIndexingStatus(): IndexingStatus;
 
   /**
-   * Wait for indexing to complete.
-   * Returns immediately if indexing is not in progress.
-   * Otherwise returns a promise that resolves when indexing finishes.
-   *
-   * Third-party plugins should call this before querying if they need
-   * complete data rather than partial results during initial indexing.
-   *
-   * @param timeoutMs - Optional timeout in milliseconds. If provided, resolves after timeout even if indexing is still in progress.
-   * @example
-   * // Ensure indexing is complete before querying
-   * await api.waitForIndexing();
-   * const results = await api.query('SELECT * FROM notes');
+   * Wait until indexing is idle. Useful before a plugin runs queries that need
+   * the full vault, not a partially built startup index.
    */
   waitForIndexing(timeoutMs?: number): Promise<void>;
 
   /**
-   * Remove a note from the index without deleting the file.
-   * Deletes all indexed data (properties, tasks, headings, etc.) for this note
-   * from the database. The file remains on disk.
-   *
-   * @param notePath - Path to the note to remove from index
+   * Check whether the database is currently usable.
    */
-  removeNote(notePath: string): void;
+  checkDatabaseHealthAsync(): Promise<DatabaseHealth>;
 
   /**
-   * Get all indexed files with their modification timestamps.
-   * Queries the notes table for path and modified columns.
-   * The modified value is the file's mtime in milliseconds when it was last indexed.
-   *
-   * Useful for comparing against current file mtimes to detect stale indexes.
-   *
-   * @returns Array of objects with path and modified timestamp (ms since epoch)
+   * Remove one note from the index. The file is left alone.
+   */
+  removeNote(notePath: string): Promise<void>;
+
+  /**
+   * Indexed files and the modification time recorded for each one.
    */
   getIndexedFiles(): Promise<Array<{ path: string; modified: number }>>;
 
   /**
-   * Check if a file needs (re)indexing.
-   * Compares the file's current modification time (file.stat.mtime) against
-   * the stored modified timestamp in the database. Returns true if:
-   * - The file is not in the index at all
-   * - The file's mtime differs from the indexed mtime
-   *
-   * @param file - The TFile to check
-   * @returns true if the file needs indexing, false if index is up-to-date
+   * True when the file is missing from the index or its mtime has changed.
    */
   needsIndexing(file: TFile): Promise<boolean>;
 
   /**
-   * Index a single note file.
-   * Extracts and stores all configured data (content, frontmatter, tasks, etc.)
-   * based on enabled features in settings. Uses Obsidian's MetadataCache for
-   * optimal parsing when content is not provided.
-   *
-   * @param file - The TFile to index
-   * @param content - Optional pre-read content (if not provided, reads via cachedRead)
+   * Index one note. Provide content if you already have it.
    */
   indexNote(file: TFile, content?: string): Promise<void>;
 
   /**
-   * Get database schema information formatted as markdown tables.
-   * Returns documentation of all tables, views, columns, and their types.
-   * Used by the vaultquery-schema code block processor.
-   *
-   * @returns Markdown string with table definitions
+   * Markdown schema reference used by the schema code block.
    */
-  getSchemaInfo(): string;
+  getSchemaInfo(): Promise<string>;
 
   /**
-   * Check if a file should be indexed based on plugin settings.
-   * Returns false if:
-   * - File size exceeds maxFileSizeKB setting
-   * - File path matches any excludePatterns regex
-   *
-   * Does not check if the file is already indexed or up-to-date.
-   *
-   * @param file - The TFile to check
-   * @returns true if the file passes all filter criteria
+   * Live schema data for editor autocomplete.
+   */
+  getAutocompleteSchema(): Promise<AutocompleteSchemaInfo>;
+
+  /**
+   * True when a file passes the indexing filters in settings.
    */
   shouldIndexFile(file: TFile): boolean;
 
   /**
-   * Get performance statistics from the last indexing operation.
-   * Includes timing breakdowns for each feature (tasks, headings, etc.),
-   * file counts, and total duration.
-   *
-   * @returns Statistics object or null if no indexing has occurred
+   * Timing details from the last indexing run.
    */
   getPerformanceStats(): IndexingStats | null;
 
   /**
-   * Rebuild dynamic table views based on current table_cells data.
-   * Discovers unique column structures across all indexed markdown tables
-   * and creates SQL views for each structure. View names are derived from
-   * table_name values (block_id > heading > note title).
-   *
-   * Called automatically after reindexing when enableDynamicTableViews is true.
+   * Recreate dynamic markdown-table views from `table_cells`.
    */
   rebuildTableViews(): void;
 
   /**
-   * Execute a SQL statement that doesn't return results.
-   * Supports DDL statements (CREATE VIEW, CREATE INDEX, DROP VIEW, etc.)
-   * and DML statements (INSERT, UPDATE, DELETE) when write operations are enabled.
-   *
-   * Note: Standard DML should use previewQuery/applyPreview for bidirectional sync.
-   *
-   * @param sql - The SQL statement to execute
-   * @returns Number of rows affected (0 for DDL statements)
+   * Run a non-query statement. For writes that should sync to files, prefer
+   * `previewQuery()` followed by `applyPreview()`.
    */
-  execute(sql: string): number;
+  execute(sql: string): Promise<number>;
 
   /**
-   * Get current plugin capabilities based on user settings.
-   * Useful for third-party plugins to check what features are available
-   * before attempting operations that require them.
-   *
-   * @returns Object describing enabled features and permissions
+   * Enabled features and write permissions for the current settings.
    */
   getCapabilities(): {
     writeEnabled: boolean;
     fileDeleteEnabled: boolean;
+    thirdPartyProviderTablesEnabled: boolean;
     indexing: {
       content: boolean;
       frontmatter: boolean;
@@ -235,151 +210,290 @@ export interface IVaultQueryAPI {
   };
 
   /**
-   * Register a custom SQL function from JavaScript source code.
-   * The function becomes available in all SQL queries after registration.
-   * Overwrites any existing function with the same name.
-   *
-   * @param name - The function name to use in SQL (case-insensitive)
-   * @param source - JavaScript function source code as a string
-   *
-   * @example
-   * api.registerCustomFunction('double', '(x) => x * 2');
-   * // Then use in SQL: SELECT double(size) FROM notes
+   * Register or replace a JavaScript-backed SQL function.
    */
   registerCustomFunction(name: string, source: string): void;
 
+  registerTableProvider(provider: VaultQueryTableProvider): Promise<TableProviderRegistration>;
+  unregisterTableProvider(providerId: string): Promise<void>;
+  getTableProviderStatus(providerId?: string): Promise<TableProviderStatus[]>;
+  getProviderDefinitionCompletions(language: string): ProviderDefinitionCompletionConfig | null;
+
   /**
-   * Preview DML operations before applying them.
-   * Executes the query in a transaction, captures before/after states,
-   * then rolls back. Returns a preview showing what would change.
-   *
-   * Use applyPreview() to actually apply the changes after user confirmation.
-   *
-   * @param sql - The DML query to preview (INSERT, UPDATE, DELETE)
-   * @param params - Optional parameters for the query
-   * @param noteSource - Optional TFile or path for `{this.*}` template variable substitution
-   * @returns Preview result with before/after states and affected rows
+   * Preview an INSERT, UPDATE, or DELETE without committing it.
    */
   previewQuery(sql: string, params?: unknown[], noteSource?: NoteSource): Promise<PreviewResult>;
 
   /**
-   * Apply a previewed DML operation to the database and sync to vault files.
-   * Uses the EditPlanner to generate file edits, then WriteSyncService
-   * to apply them atomically. Triggers reindexing of affected files.
-   *
-   * @param previewResult - The preview result from previewQuery
-   * @returns Array of file paths that were modified
+   * Commit a preview and sync the resulting edits to vault files.
    */
   applyPreview(previewResult: PreviewResult): Promise<string[]>;
 
   /**
-   * Subscribe to file indexed events.
-   * Fired after a file has been indexed and the database is up-to-date for that file.
-   *
-   * @param callback - Called with event data when a file is indexed
-   * @returns EventRef to use with off() for unsubscribing
-   *
-   * @example
-   * const ref = api.on('file-indexed', (event) => {
-   *   console.log(`File indexed: ${event.path}`);
-   *   // Safe to query this file's data now
-   * });
-   * // Later: api.off(ref);
+   * Fired after one file has been indexed.
    */
   on(event: 'file-indexed', callback: (event: FileIndexedEvent) => void): EventRef;
 
   /**
-   * Subscribe to file removed events.
-   * Fired after a file has been removed from the index.
+   * Fired after one file has been removed from the index.
    */
   on(event: 'file-removed', callback: (event: FileRemovedEvent) => void): EventRef;
 
   /**
-   * Subscribe to vault indexed events.
    * Fired after a full or incremental vault reindex completes.
    */
   on(event: 'vault-indexed', callback: (event: VaultIndexedEvent) => void): EventRef;
 
   /**
-   * Unsubscribe from an event
-   * @param ref - The EventRef returned from on()
+   * Fired when VaultQuery detects a lost database connection.
+   */
+  on(event: 'database-lost', callback: (event: DatabaseLostEvent) => void): EventRef;
+
+  /**
+   * Fired after VaultQuery recreates the database and reindexes.
+   */
+  on(event: 'database-restored', callback: (event: DatabaseRestoredEvent) => void): EventRef;
+
+  /**
+   * Remove a listener returned from `on()`.
    */
   off(ref: EventRef): void;
 
 }
 
 /**
- * Reference to an event subscription, used to unsubscribe
+ * Internal event map for typed subscriptions.
  */
-export interface EventRef {
-  /** @internal */
-  _id: number;
-  /** @internal */
-  _event: string;
+interface VaultQueryEvents {
+  'file-indexed': FileIndexedEvent;
+  'file-removed': FileRemovedEvent;
+  'vault-indexed': VaultIndexedEvent;
+  'database-lost': DatabaseLostEvent;
+  'database-restored': DatabaseRestoredEvent;
 }
 
+export type { EventRef };
+
 export class VaultQueryAPI implements IVaultQueryAPI {
+  private static readonly LINE_COMMENT_REGEX = /--.*$/gm;
+  private static readonly BLOCK_COMMENT_REGEX = /\/\*[\s\S]*?\*\//g;
+
   private app: App;
-  private database: VaultDatabase;
+  private database: VaultDatabase | WorkerDatabase;
   private indexingService: IndexingService;
   private writeSyncService: WriteSyncService;
+  private triggerFunctions: TriggerFunctions;
+  private triggerService: TriggerService | null = null;
+  private indexingWorker: WorkerDatabase | null = null;
+  private tableProviderService: TableProviderService;
+  private registeredCustomViews = new Map<string, string>();
 
-  // Event emitter state
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private eventListeners: Map<string, Map<number, (event: any) => void>> = new Map();
-  private nextEventId = 1;
+  private eventBus = new EventBus<VaultQueryEvents>([
+    'file-indexed',
+    'file-removed',
+    'vault-indexed',
+    'database-lost',
+    'database-restored',
+  ]);
 
-  private constructor(app: App, private settings: VaultQuerySettings, database: VaultDatabase, indexingService: IndexingService, writeSyncService: WriteSyncService) {
+  private triggerActionProcessing: Promise<void> | null = null;
+
+  private constructor(app: App, private settings: VaultQuerySettings, database: VaultDatabase | WorkerDatabase, indexingService: IndexingService, writeSyncService: WriteSyncService, triggerFunctions: TriggerFunctions) {
     this.app = app;
     this.database = database;
     this.indexingService = indexingService;
     this.writeSyncService = writeSyncService;
+    this.triggerFunctions = triggerFunctions;
+    this.tableProviderService = new TableProviderService(database, this.settings.enableThirdPartyProviderTables);
+    this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll());
+    this.indexingService.setProviderDefinitionBlockHandler(this.tableProviderService);
 
-    // Initialize event listener maps
-    this.eventListeners.set('file-indexed', new Map());
-    this.eventListeners.set('file-removed', new Map());
-    this.eventListeners.set('vault-indexed', new Map());
-
-    // Connect IndexingService events to our emitter
     this.indexingService.setEventEmitter({
       emitFileIndexed: (path: string, isUpdate: boolean) => {
         this.emit('file-indexed', { path, isUpdate });
+        this.processTriggerActions();
       },
       emitFileRemoved: (path: string) => {
         this.emit('file-removed', { path });
       },
       emitVaultIndexed: (filesIndexed: number, filesRemoved: number, isForced: boolean) => {
         this.emit('vault-indexed', { filesIndexed, filesRemoved, isForced });
+        if (this.settings.enableThirdPartyProviderTables) {
+          void this.tableProviderService.refreshStaleDefinitions().catch(error => {
+            logger.error('Provider TTL refresh failed after indexing', error);
+          });
+        }
+      },
+      // Transfer database from worker to main thread BEFORE vault-indexed event fires
+      // so third-party plugins registering views/functions get the main thread database
+      onBeforeVaultIndexed: async () => {
+        await this.transferToMainThread();
+        // Register user-defined functions after database transfer (create_function doesn't persist in binary)
+        if (this.settings.enableJavaScriptFunctions) {
+          this.registerUserFunctions();
+        }
+        // Recreate third-party views registered through execute(); worker-to-main transfer can replace the database.
+        await this.registerCustomViews();
+        // Register user-defined SQLite triggers after indexing completes (if enabled)
+        if (this.settings.enableTriggers) {
+          this.registerUserTriggers();
+        }
       }
     });
   }
 
+  private processTriggerActions(): void {
+    if (this.triggerActionProcessing) return;
+    this.triggerActionProcessing = this.runTriggerProcessingLoop().finally(() => {
+      this.triggerActionProcessing = null;
+    });
+  }
+
+  private async runTriggerProcessingLoop(): Promise<void> {
+    if (!this.triggerService) return;
+    try {
+      while (this.triggerFunctions.hasPendingActions()) {
+        await this.triggerService.processPendingActions();
+      }
+    } catch (error) {
+      logger.error('Error processing trigger actions', error);
+    }
+  }
+
+  /**
+   * Register all user-defined SQLite triggers.
+   * Called after indexing completes to activate triggers for future file changes.
+   */
+  private registerUserTriggers(): void {
+    if (this.database instanceof VaultDatabase) {
+      this.database.registerUserTriggers();
+    }
+  }
+
+  /**
+   * Register all user-defined functions from the database.
+   * Called after database transfer from worker to main thread.
+   * Functions need re-registration because create_function is in-memory only.
+   */
+  private registerUserFunctions(): void {
+    if (this.settings.enableJavaScriptFunctions && this.database instanceof VaultDatabase) {
+      this.database.registerUserFunctions();
+    }
+  }
+
+  /**
+   * Register all third-party custom views remembered from API execute() calls.
+   * CREATE VIEW statements may have been applied to the worker database during
+   * background indexing, so replay them after the main-thread database replaces it.
+   */
+  private async registerCustomViews(): Promise<void> {
+    for (const [viewName, sql] of this.registeredCustomViews) {
+      try {
+        await this.database.run(`DROP VIEW IF EXISTS "${viewName.replace(/"/g, '""')}"`);
+        await this.database.run(sql);
+      }
+      catch (error) {
+        logger.error(`Failed to register custom view "${viewName}"`, error);
+      }
+    }
+  }
+
+  private static createFileAdapter(app: App) {
+    return {
+      readBinary: (path: string) => app.vault.adapter.readBinary(path),
+      writeBinary: (path: string, data: ArrayBuffer) => app.vault.adapter.writeBinary(path, data),
+      exists: (path: string) => app.vault.adapter.exists(path),
+      mkdir: (path: string) => app.vault.adapter.mkdir(path)
+    };
+  }
+
+  private static getPluginDir(app: App) {
+    return `${app.vault.configDir}/plugins/vaultquery`;
+  }
+
   public static async create(app: App, settings: VaultQuerySettings): Promise<VaultQueryAPI> {
     const useMemoryStorage = settings.databaseStorage === 'memory';
+    const fileAdapter = useMemoryStorage ? null : VaultQueryAPI.createFileAdapter(app);
+    const wasmAdapter = VaultQueryAPI.createFileAdapter(app);
+    const pluginDir = VaultQueryAPI.getPluginDir(app);
 
-    // File adapter for database persistence (null if memory-only)
-    const fileAdapter = useMemoryStorage ? null : {
-      readBinary: (path: string) => app.vault.adapter.readBinary(path),
-      writeBinary: (path: string, data: ArrayBuffer) => app.vault.adapter.writeBinary(path, data),
-      exists: (path: string) => app.vault.adapter.exists(path),
-      mkdir: (path: string) => app.vault.adapter.mkdir(path)
-    };
+    const backgroundIndexing = settings.backgroundIndexing ?? false;
 
-    // Adapter for loading WASM (always needed, even for memory mode)
-    const wasmAdapter = {
-      readBinary: (path: string) => app.vault.adapter.readBinary(path),
-      writeBinary: (path: string, data: ArrayBuffer) => app.vault.adapter.writeBinary(path, data),
-      exists: (path: string) => app.vault.adapter.exists(path),
-      mkdir: (path: string) => app.vault.adapter.mkdir(path)
-    };
+    const triggerFunctions = new TriggerFunctions();
 
-    const pluginDir = `${app.vault.configDir}/plugins/vaultquery`;
-    const database = await VaultDatabase.create(app, app.vault.configDir, fileAdapter, useMemoryStorage, undefined, pluginDir, wasmAdapter, settings.wasm);
+    let database: VaultDatabase | WorkerDatabase;
+    let indexingWorker: WorkerDatabase | null = null;
+
+    if (backgroundIndexing) {
+      indexingWorker = await WorkerDatabase.create(
+        app.vault.configDir,
+        fileAdapter,
+        useMemoryStorage,
+        undefined,
+        pluginDir,
+        wasmAdapter,
+        settings.wasm
+      );
+      database = indexingWorker;
+    } else {
+      database = await VaultDatabase.create(app, app.vault.configDir, {
+        fileAdapter,
+        useMemoryStorage,
+        pluginDir,
+        wasmAdapter,
+        wasmSettings: settings.wasm
+      });
+      database.registerTriggerFunctions(triggerFunctions);
+    }
 
     const indexingService = new IndexingService(app, database, settings);
     const writeSyncService = new WriteSyncService(app, database, settings);
 
-    return new VaultQueryAPI(app, settings, database, indexingService, writeSyncService);
+    const api = new VaultQueryAPI(app, settings, database, indexingService, writeSyncService, triggerFunctions);
+    api.indexingWorker = indexingWorker;
+
+    api.triggerService = new TriggerService({
+      app,
+      triggerFunctions,
+      reindexFile: (path: string) => api.reindexNote(path)
+    });
+
+    return api;
+  }
+
+  /**
+   * Transfer database from worker to main thread after indexing completes.
+   * Only used when backgroundIndexing is enabled.
+   */
+  public async transferToMainThread(): Promise<void> {
+    if (!this.indexingWorker) {
+      return;
+    }
+
+    const data = await this.indexingWorker.exportDatabase();
+
+    const useMemoryStorage = this.settings.databaseStorage === 'memory';
+    const fileAdapter = useMemoryStorage ? null : VaultQueryAPI.createFileAdapter(this.app);
+    const wasmAdapter = VaultQueryAPI.createFileAdapter(this.app);
+    const pluginDir = VaultQueryAPI.getPluginDir(this.app);
+
+    const mainThreadDb = await VaultDatabase.createFromBinary(this.app, this.app.vault.configDir, data, {
+      fileAdapter,
+      useMemoryStorage,
+      pluginDir,
+      wasmAdapter,
+      wasmSettings: this.settings.wasm
+    });
+
+    await this.indexingWorker.close();
+    this.indexingWorker = null;
+
+    this.database = mainThreadDb;
+    await this.tableProviderService.setDatabase(mainThreadDb);
+    this.indexingService.setDatabase(mainThreadDb);
+    this.writeSyncService.setDatabase(mainThreadDb);
+
+    mainThreadDb.registerTriggerFunctions(this.triggerFunctions);
   }
 
   public async reindexVault(): Promise<void> {
@@ -410,12 +524,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.indexingService.setIndexingStatus(isIndexing, promise);
   }
 
-  public removeNote(notePath: string): void {
-    this.indexingService.removeNote(notePath);
+  public async removeNote(notePath: string): Promise<void> {
+    await this.indexingService.removeNote(notePath);
   }
 
-  public clearAllNotes(): void {
-    this.indexingService.clearAllNotes();
+  public async clearAllNotes(): Promise<void> {
+    await this.indexingService.clearAllNotes();
   }
 
   public async saveToDisk(): Promise<void> {
@@ -431,20 +545,105 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   public rebuildTableViews(): void {
-    this.database.rebuildTableViews(this.settings.enableDynamicTableViews);
+    void this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
   }
 
-  public execute(sql: string): number {
+  public async execute(sql: string): Promise<number> {
     // Allow DDL operations (CREATE INDEX, CREATE VIEW, etc.) through execute()
     if (this.containsBlockedSQL(sql, true)) {
       throw new Error(ERROR_MESSAGES.QUERY_UNSAFE_OPERATIONS);
     }
-    return this.database.run(sql);
+
+    const customViewRegistration = this.getCustomViewRegistration(sql);
+    const droppedCustomViewName = this.getDroppedCustomViewName(sql);
+    const previousViewSql = customViewRegistration
+      ? this.registeredCustomViews.get(customViewRegistration.viewName)
+      : undefined;
+
+    if (customViewRegistration) {
+      this.registeredCustomViews.set(customViewRegistration.viewName, customViewRegistration.sql);
+    }
+
+    try {
+      const rowsModified = await this.database.run(sql);
+
+      if (droppedCustomViewName) {
+        this.registeredCustomViews.delete(droppedCustomViewName);
+      }
+
+      return rowsModified;
+    }
+    catch (error) {
+      if (customViewRegistration) {
+        if (previousViewSql !== undefined) {
+          this.registeredCustomViews.set(customViewRegistration.viewName, previousViewSql);
+        }
+        else {
+          this.registeredCustomViews.delete(customViewRegistration.viewName);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  private getCustomViewRegistration(sql: string): { viewName: string; sql: string } | null {
+    const statement = this.stripSQLComments(sql);
+    if (!/^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?VIEW\b/i.test(statement)) {
+      return null;
+    }
+
+    const normalizedStatement = statement.replace(/^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?VIEW\b/i, 'CREATE VIEW');
+    const viewName = parseSQLObjectName(normalizedStatement, 'VIEW');
+    if (!viewName) {
+      return null;
+    }
+
+    return { viewName, sql: statement };
+  }
+
+  private getDroppedCustomViewName(sql: string): string | null {
+    const statement = this.stripSQLComments(sql);
+    const match = statement.match(/^\s*DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:"([^"]+)"|'([^']+)'|`([^`]+)`|\[([^\]]+)\]|(\w+))/i);
+    return match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4] ?? match?.[5] ?? null;
+  }
+
+  public setProviderBlockLanguageRegistrar(registerBlockLanguage: (language: string) => void): void {
+    this.tableProviderService.setBlockLanguageRegistrar(registerBlockLanguage);
+  }
+
+  public setThirdPartyProviderTablesEnabled(enabled: boolean): void {
+    this.tableProviderService.setEnabled(enabled);
+  }
+
+  public async registerTableProvider(provider: VaultQueryTableProvider): Promise<TableProviderRegistration> {
+    return await this.tableProviderService.registerProvider(provider);
+  }
+
+  public getRegisteredTableProviders(): VaultQueryTableProvider[] {
+    return this.tableProviderService.getRegisteredProviders();
+  }
+
+  public async unregisterTableProvider(providerId: string): Promise<void> {
+    await this.tableProviderService.unregisterProvider(providerId);
+  }
+
+  public getTableProviderStatus(providerId?: string): Promise<TableProviderStatus[]> {
+    return Promise.resolve(this.tableProviderService.getStatus(providerId));
+  }
+
+  public getProviderDefinitionCompletions(language: string): ProviderDefinitionCompletionConfig | null {
+    return this.tableProviderService.getProviderDefinitionCompletions(language);
+  }
+
+  public async renderTableProviderDefinitionBlock(language: string, source: string, container: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void> {
+    await this.tableProviderService.renderDefinitionBlock(language, source, container, ctx);
   }
 
   public getCapabilities(): {
     writeEnabled: boolean;
     fileDeleteEnabled: boolean;
+    thirdPartyProviderTablesEnabled: boolean;
     indexing: {
       content: boolean;
       frontmatter: boolean;
@@ -459,6 +658,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return {
       writeEnabled: this.settings.allowWriteOperations,
       fileDeleteEnabled: this.settings.allowDeleteNotes,
+      thirdPartyProviderTablesEnabled: this.settings.enableThirdPartyProviderTables,
       indexing: {
         content: this.settings.enabledFeatures.indexContent,
         frontmatter: this.settings.enabledFeatures.indexFrontmatter,
@@ -473,23 +673,64 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   public registerCustomFunction(name: string, source: string): void {
-    this.database.registerCustomFunction(name, source);
+    if (!this.settings.enableJavaScriptFunctions) {
+      throw new Error('JavaScript SQL functions are disabled in VaultQuery settings.');
+    }
+
+    void this.database.registerCustomFunction(name, source);
+  }
+
+  /**
+   * Check if a view needs to be recreated (SQL has changed).
+   */
+  public viewNeedsRecreation(viewName: string, newSql: string): boolean {
+    return this.database.viewNeedsRecreation(viewName, newSql);
+  }
+
+  /**
+   * Check if a function needs to be recreated (source has changed).
+   */
+  public functionNeedsRecreation(functionName: string, newSource: string): boolean {
+    return this.database.functionNeedsRecreation(functionName, newSource);
+  }
+
+  /**
+   * Check if a trigger needs to be recreated (SQL has changed).
+   */
+  public triggerNeedsRecreation(triggerName: string, newSql: string): boolean {
+    return this.database.triggerNeedsRecreation(triggerName, newSql);
   }
 
   /**
    * Get all user-defined views from the database.
    * These are discovered from vaultquery-view code blocks during indexing.
    */
-  public getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
-    return this.database.getAllUserViews();
+  public async getAllUserViews(): Promise<Array<{view_name: string; path: string; sql: string}>> {
+    return await this.database.getAllUserViews();
   }
 
   /**
    * Get all user-defined functions from the database.
    * These are discovered from vaultquery-function code blocks during indexing.
    */
-  public getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
-    return this.database.getAllUserFunctions();
+  public async getAllUserFunctions(): Promise<Array<{function_name: string; path: string; source: string}>> {
+    return await this.database.getAllUserFunctions();
+  }
+
+  /**
+   * Get all user-defined triggers from the database.
+   * These are discovered from vaultquery-trigger code blocks during indexing.
+   */
+  public async getAllUserTriggers(): Promise<Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}>> {
+    return await this.database.getAllUserTriggers();
+  }
+
+  /**
+   * Register a trigger at render time.
+   * Called by TriggerCodeBlockProcessor when a trigger block is rendered.
+   */
+  public async registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): Promise<void> {
+    await this.database.registerTrigger(triggerName, triggerSql, sourcePath);
   }
 
   public async query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]> {
@@ -509,22 +750,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     // Don't wait for indexing - queries can run with partial data
     // Users see results immediately and can refresh after indexing completes
 
-    return this.executeQuerySafely(() => this.database.all(sql), sql) as Promise<QueryResult[]>;
+    return await this.executeQuerySafely(() => this.database.all(sql), sql) as QueryResult[];
   }
 
 
   public async getIndexedFiles(): Promise<Array<{ path: string; modified: number }>> {
-    try {
-      const results = await this.database.all('SELECT path, modified FROM notes');
-      return results.map(row => ({
-        path: row.path as string,
-        modified: row.modified as number
-      }));
-    }
-    catch (error) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.INDEXED_FILES_ERROR}:`, error);
-      return [];
-    }
+    return getIndexedFilesFromDatabase(this.database);
   }
 
   public async needsIndexing(file: TFile): Promise<boolean> {
@@ -539,20 +770,56 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
     }
     catch (error) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.NEEDS_INDEXING_CHECK_ERROR}:`, error);
+      logger.error(CONSOLE_ERRORS.NEEDS_INDEXING_CHECK_ERROR, error);
       return true;
     }
   }
 
   public async close(): Promise<void> {
-    await this.database.close();
+    try {
+      if (this.triggerService) {
+        this.triggerService.destroy();
+      }
+      await this.database.close();
+    }
+    finally {
+      CustomSQLFunctions.clearSyncHandlers();
+    }
   }
 
-  public getSchemaInfo(): string {
+  /**
+   * Check if the database is still healthy.
+   * Returns health status and diagnostic info.
+   */
+  public checkDatabaseHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
+    if (this.database instanceof VaultDatabase) {
+      return this.database.checkHealth();
+    }
+
+    return {
+      healthy: true,
+      diagnostics: {
+        timestamp: new Date().toISOString(),
+        mode: 'worker',
+        note: 'Use checkDatabaseHealthAsync() for worker database health'
+      }
+    };
+  }
+
+  public async checkDatabaseHealthAsync(): Promise<DatabaseHealth> {
+    if (this.database instanceof VaultDatabase) {
+      return this.database.checkHealth();
+    }
+
+    return await this.database.checkHealth();
+  }
+
+  public async getSchemaInfo(): Promise<string> {
     const sections: string[] = [];
 
-    // Helper to create a markdown table with optional Default column
-    const makeTable = (tableName: string, columns: Array<{ name: string; type: string; description: string; defaultVal?: string }>, isView = false): string => {
+    type SchemaColumn = { name: string; type: string; description: string; defaultVal?: string };
+
+    const makeTable = (tableName: string, columns: SchemaColumn[], isView = false): string => {
       const header = `### ${tableName}${isView ? ' (VIEW)' : ''}\n\n`;
       const hasDefaults = columns.some(c => c.defaultVal);
       const tableHeader = hasDefaults
@@ -565,7 +832,31 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       return header + tableHeader + rows + '\n';
     };
 
-    // notes table (always available)
+    const taskColumns = (overrides: Record<string, Partial<SchemaColumn>> = {}): SchemaColumn[] => [
+      { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
+      { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
+      { name: 'task_text', type: 'TEXT', description: 'Task content' },
+      { name: 'status', type: 'TEXT', description: 'TODO, DONE, IN_PROGRESS, CANCELLED' },
+      { name: 'priority', type: 'TEXT', description: 'highest, high, medium, low, lowest' },
+      { name: 'due_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'scheduled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'start_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'created_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'done_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'cancelled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
+      { name: 'recurrence', type: 'TEXT', description: 'Recurrence rule' },
+      { name: 'on_completion', type: 'TEXT', description: 'Action on completion' },
+      { name: 'task_id', type: 'TEXT', description: 'Unique task identifier' },
+      { name: 'depends_on', type: 'TEXT', description: 'Task dependencies' },
+      { name: 'tags', type: 'TEXT', description: 'Space-separated tags' },
+      { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
+      { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
+      { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
+      { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
+      { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
+      { name: 'section_heading', type: 'TEXT', description: 'Parent heading text' },
+    ].map(column => ({ ...column, ...overrides[column.name] }));
+
     sections.push(makeTable('notes', [
       { name: 'path', type: 'TEXT', description: 'File path (primary key)' },
       { name: 'title', type: 'TEXT', description: 'Note name (filename without extension)' },
@@ -584,10 +875,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         { name: 'array_index', type: 'INTEGER', description: 'Array index (NULL for scalar values)' },
       ]));
 
-      // notes_with_properties view with actual columns
-      const viewColumns = this.database.getViewColumns('notes_with_properties');
+      const viewColumns = await this.database.schema.getViewColumns('notes_with_properties');
       if (viewColumns.length > 0) {
-        const viewCols = viewColumns.map(col => ({
+        const viewCols = viewColumns.map((col: string) => ({
           name: col,
           type: ['path', 'title', 'content'].includes(col) ? 'TEXT' :
                 ['created', 'modified', 'size'].includes(col) ? 'INTEGER' : 'TEXT',
@@ -598,10 +888,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
           '\n> Supports INSERT, UPDATE, DELETE (syncs to frontmatter)\n');
       }
 
-      // note_properties view (properties only, no notes columns)
-      const notePropsColumns = this.database.getViewColumns('note_properties');
+      const notePropsColumns = await this.database.schema.getViewColumns('note_properties');
       if (notePropsColumns.length > 0) {
-        const notePropsViewCols = notePropsColumns.map(col => ({
+        const notePropsViewCols = notePropsColumns.map((col: string) => ({
           name: col,
           type: 'TEXT',
           description: col === 'path' ? 'File path' : '(property column)',
@@ -612,51 +901,15 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
 
     if (this.settings.enabledFeatures.indexTasks) {
-      sections.push(makeTable('tasks', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'task_text', type: 'TEXT', description: 'Task content' },
-        { name: 'status', type: 'TEXT', description: 'TODO, DONE, IN_PROGRESS, CANCELLED' },
-        { name: 'priority', type: 'TEXT', description: 'highest, high, medium, low, lowest' },
-        { name: 'due_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'scheduled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'start_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'created_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'done_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'cancelled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'recurrence', type: 'TEXT', description: 'Recurrence rule' },
-        { name: 'on_completion', type: 'TEXT', description: 'Action on completion' },
-        { name: 'task_id', type: 'TEXT', description: 'Unique task identifier' },
-        { name: 'depends_on', type: 'TEXT', description: 'Task dependencies' },
-        { name: 'tags', type: 'TEXT', description: 'Space-separated tags' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-        { name: 'section_heading', type: 'TEXT', description: 'Parent heading text' },
-      ]));
+      sections.push(makeTable('tasks', taskColumns()));
 
       sections.push(makeTable('tasks_view', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path' },
-        { name: 'task_text', type: 'TEXT', description: 'Task content' },
-        { name: 'status', type: 'TEXT', defaultVal: 'TODO', description: 'TODO, DONE, IN_PROGRESS, CANCELLED' },
-        { name: 'priority', type: 'TEXT', description: 'highest, high, medium, low, lowest' },
-        { name: 'due_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'scheduled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'start_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'created_date', type: 'TEXT', defaultVal: 'today', description: 'YYYY-MM-DD format' },
-        { name: 'done_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'cancelled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-        { name: 'recurrence', type: 'TEXT', description: 'Recurrence rule' },
-        { name: 'on_completion', type: 'TEXT', description: 'Action on completion' },
-        { name: 'task_id', type: 'TEXT', description: 'Unique task identifier' },
-        { name: 'depends_on', type: 'TEXT', description: 'Task dependencies' },
-        { name: 'tags', type: 'TEXT', description: 'Space-separated tags' },
-        { name: 'line_number', type: 'INTEGER', defaultVal: 'auto', description: 'After last task line, or line 1 if no tasks' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'section_heading', type: 'TEXT', description: 'Parent heading text' },
+        ...taskColumns({
+          path: { description: 'File path' },
+          status: { defaultVal: 'TODO' },
+          created_date: { defaultVal: 'today' },
+          line_number: { defaultVal: 'auto', description: 'After last task line, or line 1 if no tasks' },
+        }).filter(column => !['start_offset', 'end_offset', 'anchor_hash'].includes(column.name)),
         { name: 'status_order', type: 'INTEGER', description: 'Sort order for status (computed)' },
         { name: 'priority_order', type: 'INTEGER', description: 'Sort order for priority (computed)' },
         { name: 'is_complete', type: 'INTEGER', description: '1 if DONE/CANCELLED (computed)' },
@@ -767,17 +1020,16 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       ], true) + '\n> Supports INSERT, UPDATE, DELETE\n');
     }
 
-    // Dynamic views section - show each view with its columns
-    const views = this.database.getViewNames();
+    const views = await this.database.schema.getViewNames();
     const builtInViews = ['notes_with_properties', 'headings_view', 'list_items_view', 'tasks_view', 'table_rows', 'table_columns', 'note_properties'];
-    const dynamicViews = views.filter(v => !builtInViews.includes(v));
+    const dynamicViews = views.filter((v: string) => !builtInViews.includes(v));
     if (dynamicViews.length > 0) {
       sections.push('## Dynamic Table Views\n');
       sections.push('> These views are auto-generated from markdown tables in the vault. Enable "Dynamic table views" in settings.\n');
       for (const viewName of dynamicViews) {
-        const viewColumns = this.database.getViewColumns(viewName);
+        const viewColumns = await this.database.schema.getViewColumns(viewName);
         if (viewColumns.length > 0) {
-          const viewCols = viewColumns.map(col => ({
+          const viewCols = viewColumns.map((col: string) => ({
             name: col,
             type: ['path', 'table_name'].includes(col) ? 'TEXT' :
                   ['table_index', 'row_index'].includes(col) ? 'INTEGER' : 'TEXT',
@@ -789,7 +1041,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
     }
 
-    // Disabled features
     const disabledFeatures: string[] = [];
     if (!this.settings.enabledFeatures.indexFrontmatter) disabledFeatures.push('properties');
     if (!this.settings.enabledFeatures.indexTables) disabledFeatures.push('table_cells');
@@ -802,13 +1053,71 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       sections.push(`\n> [!note] Disabled Tables\n> ${disabledFeatures.join(', ')} - enable in Settings → VaultQuery\n`);
     }
 
+    const providerSchema = this.tableProviderService.getSchemaMarkdown();
+    if (providerSchema) {
+      sections.push(providerSchema);
+    }
+
     return sections.join('\n');
+  }
+
+  public async getAutocompleteSchema(): Promise<AutocompleteSchemaInfo> {
+    const relationRows = await this.database.all(
+      "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
+    ) as Array<{ name?: unknown; type?: unknown }>;
+
+    const relations = relationRows
+      .map((row) => ({
+        name: typeof row.name === 'string' ? row.name : '',
+        type: row.type === 'view' ? 'view' as const : 'table' as const,
+      }))
+      .filter((row) => row.name.length > 0);
+
+    const columns: AutocompleteSchemaColumn[] = [];
+    for (const relation of relations) {
+      try {
+        const pragmaRows = await this.database.all(
+          `PRAGMA table_info("${relation.name.replace(/"/g, '""')}")`
+        ) as Array<{ name?: unknown; type?: unknown }>;
+
+        for (const row of pragmaRows) {
+          if (typeof row.name !== 'string' || !row.name) {
+            continue;
+          }
+
+          columns.push({
+            relation: relation.name,
+            name: row.name,
+            type: typeof row.type === 'string' ? row.type : '',
+          });
+        }
+      }
+      catch {
+        continue;
+      }
+    }
+
+    let functions: string[] = [];
+    try {
+      const functionRows = await this.database.all(
+        'SELECT function_name FROM _user_functions ORDER BY function_name'
+      ) as Array<{ function_name?: unknown }>;
+
+      functions = functionRows
+        .map((row) => typeof row.function_name === 'string' ? row.function_name : '')
+        .filter((name) => name.length > 0);
+    }
+    catch {
+      functions = [];
+    }
+
+    return { relations, columns, functions };
   }
 
   private stripSQLComments(sql: string): string {
     return sql
-      .replace(/--.*$/gm, '') 
-      .replace(/\/\*[\s\S]*?\*\//g, '') 
+      .replace(VaultQueryAPI.LINE_COMMENT_REGEX, '')
+      .replace(VaultQueryAPI.BLOCK_COMMENT_REGEX, '')
       .trim();
   }
 
@@ -817,21 +1126,73 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       return await operation();
     }
     catch (error: unknown) {
-      const friendlyError = this.getFriendlyErrorMessage(getErrorMessage(error), query);
+      const errorMessage = getErrorMessage(error);
+      const missingTable = this.getMissingTableName(errorMessage);
+      if (missingTable && await this.waitForProviderTableIfRegistering(missingTable)) {
+        try {
+          logger.debug(`Retrying query after provider table became available: ${missingTable}`);
+          return await operation();
+        }
+        catch (retryError: unknown) {
+          const friendlyRetryError = this.getFriendlyErrorMessage(getErrorMessage(retryError), query);
+          throw new Error(friendlyRetryError);
+        }
+      }
+
+      const friendlyError = this.getFriendlyErrorMessage(errorMessage, query);
       throw new Error(friendlyError);
     }
   }
 
-  private getFriendlyErrorMessage(errorMessage: string, _query: string): string {
+  private getMissingTableName(errorMessage: string): string | null {
     if (errorMessage.includes('no such table')) {
       const tableMatch = errorMessage.match(/no such table: (\w+)/);
-      if (tableMatch) {
-        const tableName = tableMatch[1].toLowerCase();
-        const config = TABLE_FEATURE_CONFIG[tableName];
+      return tableMatch?.[1]?.toLowerCase() ?? null;
+    }
 
-        if (config && !this.settings.enabledFeatures[config.setting]) {
-          return `${errorMessage}\n\nNote: ${config.featureName} is disabled. Enable it in Settings → VaultQuery → ${config.settingLabel}`;
-        }
+    return null;
+  }
+
+  private async waitForProviderTableIfRegistering(tableName: string): Promise<boolean> {
+    if (!this.settings.enableThirdPartyProviderTables || TABLE_FEATURE_CONFIG[tableName]) {
+      return false;
+    }
+
+    const deadline = Date.now() + PROVIDER_TABLE_RETRY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await this.tableExists(tableName)) {
+        return true;
+      }
+
+      await new Promise<void>(resolve => activeWindow.setTimeout(resolve, PROVIDER_TABLE_RETRY_INTERVAL_MS));
+    }
+
+    return false;
+  }
+
+  private async tableExists(tableName: string): Promise<boolean> {
+    try {
+      const rows = await this.database.all(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND lower(name) = ? LIMIT 1",
+        [tableName.toLowerCase()]
+      );
+      return rows.length > 0;
+    }
+    catch {
+      return false;
+    }
+  }
+
+  private getFriendlyErrorMessage(errorMessage: string, _query: string): string {
+    const tableName = this.getMissingTableName(errorMessage);
+    if (tableName) {
+      const config = TABLE_FEATURE_CONFIG[tableName];
+      if (config && !this.settings.enabledFeatures[config.setting]) {
+        return `${errorMessage}\n\nNote: ${config.featureName} is disabled. Enable it in Settings → VaultQuery → ${config.settingLabel}`;
+      }
+
+      if (this.settings.enableThirdPartyProviderTables) {
+        return `${errorMessage}\n\nNote: If "${tableName}" is provided by another plugin, its table provider may still be registering. Refresh the block after provider registration completes.`;
       }
     }
 
@@ -876,8 +1237,18 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     // Don't wait for indexing - previews are read-only (they rollback)
     // and can work with partial data
 
+    // previewDML is only available on VaultDatabase (main thread mode)
+    if (!(this.database instanceof VaultDatabase)) {
+      throw new Error('Preview is not supported in web worker mode');
+    }
+
     try {
-      return await this.database.previewDML(sql, params);
+      const result = await this.database.previewDML(sql, params);
+
+      // Validate against vault state - check for file conflicts
+      this.validatePreviewResult(result);
+
+      return result;
     }
     catch (error: unknown) {
       // Don't log syntax errors to console - they're expected during editing
@@ -885,9 +1256,46 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
   }
 
+  /**
+   * Validate preview result against actual vault state.
+   * Throws if there are conflicts that would cause apply to fail.
+   */
+  private validatePreviewResult(result: PreviewResult): void {
+    const errors: string[] = [];
+
+    const validateSingleResult = (r: PreviewResult) => {
+      if (r.table === 'notes' || r.table === 'notes_with_properties') {
+        for (const row of r.after) {
+          if (row.path) {
+            const pathStr = String(row.path);
+            const file = this.app.vault.getAbstractFileByPath(normalizePath(pathStr));
+            if (file && r.op === 'insert') {
+              errors.push(`File already exists: ${pathStr}`);
+            }
+          }
+        }
+      }
+    };
+
+    if (result.op === 'multi' && result.multiResults) {
+      result.multiResults.forEach(validateSingleResult);
+    } else {
+      validateSingleResult(result);
+    }
+
+    if (errors.length > 0) {
+      throw new Error(errors.join('\n'));
+    }
+  }
+
   public async applyPreview(previewResult: PreviewResult): Promise<string[]> {
     if (!this.settings.allowWriteOperations) {
       throw new Error(ERROR_MESSAGES.WRITE_OPERATIONS_DISABLED_APPLY);
+    }
+
+    // applyDML is only available on VaultDatabase (main thread mode)
+    if (!(this.database instanceof VaultDatabase)) {
+      throw new Error('Apply preview is not supported in web worker mode');
     }
 
     // Don't wait for indexing - user clicked Apply on an already-generated preview
@@ -899,7 +1307,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       await this.database.applyDML(previewResult);
     }
     catch (error: unknown) {
-      console.error(`[VaultQuery] ${CONSOLE_ERRORS.APPLY_PREVIEW_FAILED}:`, error);
+      logger.error(CONSOLE_ERRORS.APPLY_PREVIEW_FAILED, error);
       throw new Error(ERROR_MESSAGES.APPLY_FAILED(getErrorMessage(error)));
     }
 
@@ -939,43 +1347,47 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return false;
   }
 
-  // Event emitter methods
 
   public on(event: 'file-indexed', callback: (event: FileIndexedEvent) => void): EventRef;
   public on(event: 'file-removed', callback: (event: FileRemovedEvent) => void): EventRef;
   public on(event: 'vault-indexed', callback: (event: VaultIndexedEvent) => void): EventRef;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public on(event: string, callback: (event: any) => void): EventRef {
-    const listeners = this.eventListeners.get(event);
-    if (!listeners) {
-      throw new Error(`Unknown event: ${event}`);
-    }
-
-    const id = this.nextEventId++;
-    listeners.set(id, callback);
-
-    return { _id: id, _event: event };
+  public on(event: 'database-lost', callback: (event: DatabaseLostEvent) => void): EventRef;
+  public on(event: 'database-restored', callback: (event: DatabaseRestoredEvent) => void): EventRef;
+  public on<EventName extends keyof VaultQueryEvents & string>(
+    event: EventName,
+    callback: (event: VaultQueryEvents[EventName]) => void
+  ): EventRef {
+    return this.eventBus.on(event, callback);
   }
 
   public off(ref: EventRef): void {
-    const listeners = this.eventListeners.get(ref._event);
-    if (listeners) {
-      listeners.delete(ref._id);
-    }
+    this.eventBus.off(ref);
   }
 
-  private emit(event: string, data: unknown): void {
-    const listeners = this.eventListeners.get(event);
-    if (listeners) {
-      for (const callback of listeners.values()) {
-        try {
-          callback(data);
-        }
-        catch (error) {
-          console.error(`[VaultQuery] Error in event listener for '${event}':`, error);
-        }
-      }
-    }
+  /**
+   * Emit database lost event (called by plugin when database loss is detected).
+   * Third-party plugins should reset any cached state that depends on the database.
+   */
+  public emitDatabaseLost(error: string): void {
+    this.emit('database-lost', { error, timestamp: Date.now() });
+  }
+
+  /**
+   * Emit database restored event (called by plugin after successful recovery).
+   * Third-party plugins can resume normal operations.
+   */
+  public emitDatabaseRestored(): void {
+    this.emit('database-restored', { timestamp: Date.now() });
+  }
+
+  private emit<EventName extends keyof VaultQueryEvents & string>(
+    event: EventName,
+    data: VaultQueryEvents[EventName]
+  ): void {
+    const eventName: string = event;
+    this.eventBus.emit(event, data, error => {
+      logger.error(`Error in event listener for '${eventName}'`, error);
+    });
   }
 
 }
