@@ -2,7 +2,6 @@ import tsparser from "@typescript-eslint/parser";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import obsidianmd from "eslint-plugin-obsidianmd";
 import sdl from "@microsoft/eslint-plugin-sdl";
-import importPlugin from "eslint-plugin-import";
 
 export default [
   {
@@ -19,7 +18,6 @@ export default [
       obsidianmd,
       "@typescript-eslint": tseslint,
       "@microsoft/sdl": sdl,
-      import: importPlugin,
     },
     rules: {
       // TypeScript strict rules (Obsidian submission requirements)
@@ -56,17 +54,29 @@ export default [
       "no-new-func": "error",
 
       // Import restrictions (mobile compatibility & best practices)
-      "import/no-nodejs-modules": "error",  // Disable for desktop-only plugins
-      "import/no-extraneous-dependencies": "error",
-      "no-restricted-imports": ["error",
-        { "name": "axios", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "superagent", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "got", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "ofetch", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "ky", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "node-fetch", "message": "Use Obsidian's requestUrl() instead." },
-        { "name": "moment", "message": "Import moment from 'obsidian' - it's bundled." },
-      ],
+      "no-restricted-imports": ["error", {
+        paths: [
+          { "name": "axios", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "superagent", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "got", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "ofetch", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "ky", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "node-fetch", "message": "Use Obsidian's requestUrl() instead." },
+          { "name": "moment", "message": "Import moment from 'obsidian' - it's bundled." },
+          { "name": "fs", "message": "Node modules are not available on mobile." },
+          { "name": "path", "message": "Node modules are not available on mobile." },
+          { "name": "os", "message": "Node modules are not available on mobile." },
+          { "name": "crypto", "message": "Node modules are not available on mobile." },
+          { "name": "child_process", "message": "Node modules are not available on mobile." },
+          { "name": "stream", "message": "Node modules are not available on mobile." },
+          { "name": "util", "message": "Node modules are not available on mobile." },
+          { "name": "buffer", "message": "Node modules are not available on mobile." },
+          { "name": "url", "message": "Node modules are not available on mobile." },
+        ],
+        patterns: [
+          { group: ["node:*"], message: "Node modules are not available on mobile." },
+        ],
+      }],
 
       // Core ESLint rules (Obsidian submission requirements)
       "no-var": "error",

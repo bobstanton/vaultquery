@@ -510,7 +510,6 @@
 }
 
 .vaultquery-calendar-root.fc .fc-button {
-	all: unset;
 	align-items: center;
 	appearance: none;
 	background: var(--interactive-normal);
@@ -527,8 +526,11 @@
 	line-height: 1;
 	margin: 0;
 	min-height: var(--input-height);
+	outline: none;
 	padding: 0 var(--size-4-2);
+	text-align: center;
 	text-transform: none;
+	user-select: none;
 	vertical-align: middle;
 	white-space: nowrap;
 }

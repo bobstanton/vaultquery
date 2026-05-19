@@ -1,6 +1,6 @@
 {
 	"name": "vaultquery",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "Query notes and frontmatter through a local SQLite index with output to table, chart or calendar.",
 	"main": "main.js",
 	"types": "index.d.ts",
@@ -50,7 +50,6 @@
 		"esbuild": "^0.28.0",
 		"esbuild-plugin-inline-worker": "^0.1.1",
 		"eslint": "^9.39.4",
-		"eslint-plugin-import": "^2.32.0",
 		"eslint-plugin-obsidianmd": "^0.2.4",
 		"obsidian": "latest",
 		"tslib": "2.8.1",

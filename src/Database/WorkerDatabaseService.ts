@@ -20,26 +20,26 @@ interface DatabaseHealth {
 }
 
 class WorkerSchemaProxy implements ISchemaManager {
-  constructor(private request: <T = unknown>(message: Record<string, unknown>) => Promise<T>) {}
+  constructor(private callWorker: <T = unknown>(message: Record<string, unknown>) => Promise<T>) {}
 
   getAllPropertyKeys(): Promise<string[]> {
-    return this.request<string[]>({ type: 'getAllPropertyKeys' });
+    return this.callWorker<string[]>({ type: 'getAllPropertyKeys' });
   }
 
   getViewNames(): Promise<string[]> {
-    return this.request<string[]>({ type: 'getViewNames' });
+    return this.callWorker<string[]>({ type: 'getViewNames' });
   }
 
   getViewColumns(viewName: string): Promise<string[]> {
-    return this.request<string[]>({ type: 'getViewColumns', viewName });
+    return this.callWorker<string[]>({ type: 'getViewColumns', viewName });
   }
 
   async rebuildPropertiesView(): Promise<void> {
-    await this.request({ type: 'rebuildPropertiesView' });
+    await this.callWorker({ type: 'rebuildPropertiesView' });
   }
 
   async rebuildTableViews(enableDynamicTableViews: boolean): Promise<void> {
-    await this.request({ type: 'rebuildTableViews', enableDynamicTableViews });
+    await this.callWorker({ type: 'rebuildTableViews', enableDynamicTableViews });
   }
 
   discoverTableStructures(): TableStructure[] {
@@ -51,7 +51,7 @@ class WorkerSchemaProxy implements ISchemaManager {
 
 export class WorkerDatabase {
   private worker: Worker;
-  private pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private pendingWorkerCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextId = 1;
   private ready: Promise<void>;
   private readyResolve!: () => void;
@@ -73,7 +73,7 @@ export class WorkerDatabase {
 
     this.worker = new DatabaseWorker();
 
-    this.schema = new WorkerSchemaProxy(this.request.bind(this));
+    this.schema = new WorkerSchemaProxy(this.callWorker.bind(this));
 
     this.ready = new Promise(resolve => {
       this.readyResolve = resolve;
@@ -87,13 +87,13 @@ export class WorkerDatabase {
         return;
       }
 
-      const pending = this.pendingRequests.get(response.id);
+      const pending = this.pendingWorkerCalls.get(response.id);
       if (!pending) {
-        logger.warn('Received response for unknown request', response.id);
+        logger.warn('Received response for unknown worker call', response.id);
         return;
       }
 
-      this.pendingRequests.delete(response.id);
+      this.pendingWorkerCalls.delete(response.id);
 
       if (response.type === 'error') {
         pending.reject(new Error(response.error));
@@ -107,40 +107,40 @@ export class WorkerDatabase {
     };
   }
 
-  private async request<T = unknown>(message: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  private async callWorker<T = unknown>(message: Record<string, unknown>, timeoutMs?: number): Promise<T> {
     await this.ready;
 
     const id = this.nextId++;
-    const request = { ...message, id };
+    const workerMessage = { ...message, id };
 
     return new Promise<T>((resolve, reject) => {
       let timeout: number | null = null;
-      const clearRequestTimeout = (): void => {
+      const clearWorkerCallTimeout = (): void => {
         if (timeout !== null) {
           activeWindow.clearTimeout(timeout);
           timeout = null;
         }
       };
 
-      this.pendingRequests.set(id, {
+      this.pendingWorkerCalls.set(id, {
         resolve: (value: unknown) => {
-          clearRequestTimeout();
+          clearWorkerCallTimeout();
           resolve(value as T);
         },
         reject: (error: Error) => {
-          clearRequestTimeout();
+          clearWorkerCallTimeout();
           reject(error);
         }
       });
 
       if (timeoutMs !== undefined) {
         timeout = activeWindow.setTimeout(() => {
-          this.pendingRequests.delete(id);
-          reject(new Error(`Worker request "${String(message.type)}" timed out after ${timeoutMs}ms`));
+          this.pendingWorkerCalls.delete(id);
+          reject(new Error(`Worker call "${String(message.type)}" timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
 
-      this.worker.postMessage(request);
+      this.worker.postMessage(workerMessage);
     });
   }
 
@@ -161,7 +161,7 @@ export class WorkerDatabase {
 
     await instance.ready;
 
-    await instance.request({
+    await instance.callWorker({
       type: 'init',
       wasmBinary: wasmBinary
     });
@@ -170,7 +170,7 @@ export class WorkerDatabase {
       try {
         if (await fileAdapter.exists(actualDatabasePath)) {
           const data = await fileAdapter.readBinary(actualDatabasePath);
-          await instance.request({ type: 'import', data });
+          await instance.callWorker({ type: 'import', data });
         }
       } catch (error) {
         logger.warn('Failed to load existing database', error);
@@ -183,14 +183,14 @@ export class WorkerDatabase {
   // The public methods mirror VaultDatabase over worker messages. Keep the
   // pass-through shape: the boilerplate is the worker boundary.
   public async exportDatabase(): Promise<ArrayBuffer> {
-    return this.request<ArrayBuffer>({ type: 'export' });
+    return this.callWorker<ArrayBuffer>({ type: 'export' });
   }
 
   public async saveToDisk(): Promise<void> {
     if (this.useMemoryStorage || !this.fileAdapter) return;
 
     try {
-      const data = await this.request<ArrayBuffer>({ type: 'export' });
+      const data = await this.callWorker<ArrayBuffer>({ type: 'export' });
       const databaseDir = this.configDir + '/vaultquery';
 
       if (!(await this.fileAdapter.exists(databaseDir))) {
@@ -204,7 +204,7 @@ export class WorkerDatabase {
   }
 
   public async all(sql: string, params: (string | number | null)[] = []): Promise<Record<string, unknown>[]> {
-    return this.request<Record<string, unknown>[]>({
+    return this.callWorker<Record<string, unknown>[]>({
       type: 'query',
       sql,
       params
@@ -212,7 +212,7 @@ export class WorkerDatabase {
   }
 
   public async run(sql: string, params: (string | number | null)[] = []): Promise<number> {
-    return this.request<number>({
+    return this.callWorker<number>({
       type: 'run',
       sql,
       params
@@ -220,14 +220,14 @@ export class WorkerDatabase {
   }
 
   public async indexNote(data: IndexNoteData): Promise<void> {
-    await this.request({
+    await this.callWorker({
       type: 'indexNote',
       data
     });
   }
 
   public async indexNotesBatch(notesData: IndexNoteData[], isInitialIndexing: boolean = false, skipDiskSave: boolean = false): Promise<void> {
-    await this.request({
+    await this.callWorker({
       type: 'indexNotesBatch',
       notesData,
       isInitialIndexing
@@ -239,14 +239,14 @@ export class WorkerDatabase {
   }
 
   public async createIndexes(features?: EnabledFeatures): Promise<void> {
-    await this.request({
+    await this.callWorker({
       type: 'createIndexes',
       features
     });
   }
 
   public async registerCustomFunction(name: string, source: string): Promise<void> {
-    await this.request({
+    await this.callWorker({
       type: 'registerFunction',
       name,
       source
@@ -254,22 +254,22 @@ export class WorkerDatabase {
   }
 
   public async deleteNote(path: string): Promise<void> {
-    await this.request({
+    await this.callWorker({
       type: 'deleteNote',
       path
     });
   }
 
   public async getAllUserViews(): Promise<Array<{view_name: string; path: string; sql: string}>> {
-    return this.request({ type: 'getAllUserViews' });
+    return this.callWorker({ type: 'getAllUserViews' });
   }
 
   public async getAllUserFunctions(): Promise<Array<{function_name: string; path: string; source: string}>> {
-    return this.request({ type: 'getAllUserFunctions' });
+    return this.callWorker({ type: 'getAllUserFunctions' });
   }
 
   public async getAllUserTriggers(): Promise<Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}>> {
-    return this.request({ type: 'getAllUserTriggers' });
+    return this.callWorker({ type: 'getAllUserTriggers' });
   }
 
   public viewNeedsRecreation(_viewName: string, _newSql: string): boolean {
@@ -285,16 +285,16 @@ export class WorkerDatabase {
   }
 
   public async registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): Promise<void> {
-    await this.request({ type: 'registerTrigger', triggerName, triggerSql, sourcePath });
+    await this.callWorker({ type: 'registerTrigger', triggerName, triggerSql, sourcePath });
   }
 
   public async registerUserTriggers(): Promise<void> {
-    await this.request({ type: 'registerUserTriggers' });
+    await this.callWorker({ type: 'registerUserTriggers' });
   }
 
   public async checkHealth(timeoutMs: number = 2000): Promise<DatabaseHealth> {
     try {
-      return await this.request<DatabaseHealth>({ type: 'health' }, timeoutMs);
+      return await this.callWorker<DatabaseHealth>({ type: 'health' }, timeoutMs);
     }
     catch (error) {
       return {
@@ -303,8 +303,8 @@ export class WorkerDatabase {
         diagnostics: {
           timestamp: new Date().toISOString(),
           mode: 'worker',
-          requestTimedOut: error instanceof Error && error.message.includes('timed out'),
-          pendingRequestCount: this.pendingRequests.size,
+          workerCallTimedOut: error instanceof Error && error.message.includes('timed out'),
+          pendingWorkerCallCount: this.pendingWorkerCalls.size,
         },
       };
     }
@@ -316,7 +316,7 @@ export class WorkerDatabase {
   public async close(): Promise<boolean> {
     try {
       await this.saveToDisk();
-      await this.request({ type: 'close' });
+      await this.callWorker({ type: 'close' });
       this.worker.terminate();
       return true;
     } catch (error) {
