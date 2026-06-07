@@ -33,12 +33,6 @@ jobs:
                   npm run lint
                   npm run typecheck
                   npm run build --if-present
-            - name: Create release archive
-              run: |
-                  mkdir -p release/vaultquery
-                  cp main.js manifest.json styles.css release/vaultquery/
-                  cd release
-                  zip -r ../vaultquery.zip vaultquery
             - name: Attest Release Assets
               uses: actions/attest@v4
               with:
@@ -46,7 +40,6 @@ jobs:
                       main.js
                       manifest.json
                       styles.css
-                      vaultquery.zip
             - name: Generate Release Notes
               run: |
                   git log -1 --pretty=%B > release-notes.md
@@ -55,7 +48,6 @@ jobs:
               with:
                   body_path: release-notes.md
                   files: |
-                      vaultquery.zip
                       main.js
                       manifest.json
                       styles.css
