@@ -1,7 +1,7 @@
 {
 	"id": "vaultquery",
 	"name": "VaultQuery",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"minAppVersion": "1.12.2",
 	"description": "Execute SELECT, INSERT, UPDATE, and DELETE statements across notes, properties, tasks, tables, headings, and links.",
 	"author": "Bob Stanton",

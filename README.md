@@ -2,6 +2,9 @@
 
 Execute SELECT, INSERT, UPDATE, and DELETE statements across notes, properties, tasks, tables, headings, and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/), [FullCalendar](https://github.com/fullcalendar/fullcalendar) or JavaScript rendering.
 
+Documentation site: https://vaultquery.stanton.dev/
+Web sandbox: https://sandbox.obsidian.stanton.dev/
+
 ## Features
 
 - **Indexing**: Notes, frontmatter, tables, tasks, headings, links, and tags stored in SQLite
