@@ -23,6 +23,7 @@ import type {
   CreateNoteParams
 } from './TriggerFunctions';
 import { logger as rootLogger } from '../utils/logger';
+import { MarkdownTableUtils, type MarkdownTableLineInfo } from '../utils/MarkdownTableUtils';
 
 const logger = rootLogger.scope('Triggers');
 
@@ -32,19 +33,10 @@ interface TriggerServiceDependencies {
   reindexFile: (path: string) => Promise<void>;
 }
 
-interface MarkdownTableInfo {
-  startLine: number;
-  endLine: number;
-  headerLine: number;
-  separatorLine: number;
-  columns: string[];
-  dataStartLine: number;
-}
-
 interface MarkdownTableContext {
   file: TFile;
   lines: string[];
-  table: MarkdownTableInfo;
+  table: MarkdownTableLineInfo;
 }
 
 const PATTERNS = {
@@ -54,7 +46,6 @@ const PATTERNS = {
   HEADING_VALIDATION: /^#{1,6}\s+/,
   LIST_ITEM: /^(\s*[-*+]\s*)/,
   LIST_ITEM_VALIDATION: /^\s*[-*+]\s+/,
-  TABLE_SEPARATOR: /^\|?[\s\-:|]+\|?$/,
 } as const;
 
 const MAX_CASCADE_DEPTH = 10;
@@ -528,69 +519,13 @@ export class TriggerService {
     await this.writeFromTrigger(file, lines.join('\n'));
   }
 
-  /**
-   * Parse markdown tables from file content.
-   * Returns array of tables, each with start/end line indices and column names.
-   */
-  private parseMarkdownTables(lines: string[]): Array<{
-    startLine: number;
-    endLine: number;
-    headerLine: number;
-    separatorLine: number;
-    columns: string[];
-    dataStartLine: number;
-  }> {
-    const tables: MarkdownTableInfo[] = [];
-
-    let i = 0;
-    while (i < lines.length) {
-      if (lines[i].includes('|')) {
-        const headerLine = i;
-        const headerMatch = lines[i].match(/^\|?(.+?)\|?$/);
-        if (headerMatch) {
-          if (i + 1 < lines.length && PATTERNS.TABLE_SEPARATOR.test(lines[i + 1])) {
-            const separatorLine = i + 1;
-            const columns = lines[headerLine]
-              .split('|')
-              .map(c => c.trim())
-              .filter(c => c.length > 0);
-
-            let endLine = separatorLine;
-            for (let j = separatorLine + 1; j < lines.length; j++) {
-              if (lines[j].includes('|')) {
-                endLine = j;
-              } else {
-                break;
-              }
-            }
-
-            tables.push({
-              startLine: headerLine,
-              endLine,
-              headerLine,
-              separatorLine,
-              columns,
-              dataStartLine: separatorLine + 1
-            });
-
-            i = endLine + 1;
-            continue;
-          }
-        }
-      }
-      i++;
-    }
-
-    return tables;
-  }
-
   private async getMarkdownTableContext(path: string, tableIndex: number, action: string, warningAction: string = action): Promise<MarkdownTableContext | null> {
     const file = this.getFile(path, action);
     if (!file) return null;
 
     const fileContent = await this.readCurrentFile(file);
     const lines = fileContent.split('\n');
-    const tables = this.parseMarkdownTables(lines);
+    const tables = MarkdownTableUtils.parseTableLines(lines);
 
     if (tableIndex < 0 || tableIndex >= tables.length) {
       logger.warn(`Trigger: invalid table index for ${warningAction}`, tableIndex);
@@ -642,19 +577,14 @@ export class TriggerService {
       return;
     }
 
-    const row = lines[lineIndex];
-    const cells = row.split('|').map(c => c.trim());
-
-    const startOffset = row.trimStart().startsWith('|') ? 1 : 0;
-    const cellIndex = columnIndex + startOffset;
-
-    if (cellIndex >= cells.length) {
+    const cells = MarkdownTableUtils.splitTableRow(lines[lineIndex]);
+    if (columnIndex >= cells.length) {
       logger.warn('Trigger: cell index out of bounds for updateTableCell');
       return;
     }
 
-    cells[cellIndex] = ` ${value} `;
-    lines[lineIndex] = cells.join('|');
+    cells[columnIndex] = String(value).replace(/\|/g, '\\|');
+    lines[lineIndex] = `| ${cells.join(' | ')} |`;
 
     await this.writeFromTrigger(file, lines.join('\n'));
   }

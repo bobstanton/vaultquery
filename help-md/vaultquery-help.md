@@ -47,10 +47,6 @@ These placeholders will be evaluated and replaced before a query is executed by 
 | `{this.headings}`      | list   | Headings in the note                   | `'Intro', 'Summary'`            |
 | `{this.<key>}`         | varies | Any frontmatter property               | `{this.status}`                 |
 
-# Editor autocomplete
-
-VaultQuery provides editor autocomplete inside supported fenced code blocks.
-
 ## SQL blocks
 
 In `vaultquery`, `vaultquery-write`, `vaultquery-view`, `vaultquery-trigger`, `vaultquery-chart`, `vaultquery-markdown`, and `vaultquery-calendar`, autocomplete can suggest:
@@ -81,8 +77,9 @@ Autocomplete appears immediately after separators such as spaces, commas, and op
 
 ## Config sections
 
-`vaultquery-chart`, `vaultquery-markdown`, and `vaultquery-calendar` also provide autocomplete in `config:` sections for:
+`vaultquery`, `vaultquery-chart`, `vaultquery-markdown`, and `vaultquery-calendar` also provide autocomplete in `config:` sections for:
 
+- Table grid options
 - Markdown options
 - Chart options
 - Calendar options
@@ -212,7 +209,7 @@ ORDER BY status_order, priority_order;
 > [!tip] Tables vs Views
 > Prefer using views (when present) over the underlying tables - the views provide defaults when inserting new records:
 > - `tasks_view` - status=TODO, created_date=today, computed columns (is_overdue, days_until_due)
-> - `headings_view` - level=1, line_number=auto
+> - `headings_view` - level=1, appends to the end when line_number is omitted
 > - `list_items_view` - list_type=bullet, indent_level=0, computed parent_content
 
 
@@ -434,6 +431,8 @@ Inline buttons use the syntax ``vq[Label]{SQL}`` to execute SQL with a single cl
 | ``vq.danger[Label]{SQL}``            | Button with custom CSS class "danger"|
 | ``vq.mod-warning.large[Label]{SQL}`` | Multiple CSS classes                 |
 
+The related ``vq{SELECT ...}`` syntax is not a button. It is an inline query value; see the next section.
+
 **Query behavior:**
 - **SELECT/WITH queries:** Results are copied to clipboard as a markdown table
 - **INSERT/UPDATE/DELETE:** Changes are applied immediately (no preview)
@@ -459,9 +458,55 @@ Inline buttons use the syntax ``vq[Label]{SQL}`` to execute SQL with a single cl
 > [!tip] Tip
 > If button clicks lose edits, increase "Inline button debounce" in settings.
 
+# Inline query values
+
+Inline query values use the syntax ``vq{SELECT ...}`` inside inline code and render the first column of the first row directly in the surrounding text. Inline query values are read-only and only allow `SELECT` or `WITH` statements.
+
+```
+The hike was `vq{SELECT value FROM properties WHERE key = 'distance' AND path = '{this.path}' LIMIT 1}` miles.
+```
+
+# Obsidian CLI
+
+When enabled in VaultQuery settings, `vaultquery:query` runs SQL from the Obsidian CLI and waits for indexing to finish before executing.
+
+```
+obsidian vaultquery:query sql="SELECT title, path FROM notes LIMIT 5" format=json
+```
+
+Available formats are `json`, `csv`, `tsv`, `md`, and `scalar`. Use `path` to provide note context for `{this.*}` placeholders.
+
+```
+obsidian vaultquery:query path="Hikes/Trip.md" sql="SELECT value FROM properties WHERE path = '{this.path}' AND key = 'distance' LIMIT 1" format=scalar
+```
+
+`INSERT`, `UPDATE`, and `DELETE` require both write operations and CLI write operations to be enabled in settings.
+
 # Output types
 
 Use the output-specific fence name to choose a renderer. That makes help discoverable by appending `-help` to the fence name, such as `vaultquery-chart-help` or `vaultquery-calendar-help`.
+
+# Table grid output
+
+`vaultquery` renders results as an interactive table grid by default.
+
+## Table grid options
+
+| Option      | Description                                      |
+|-------------|--------------------------------------------------|
+| `height`    | Fixed grid height. Use a number of pixels or CSS size like `70vh` |
+| `minHeight` | Minimum grid height                              |
+| `maxHeight` | Maximum grid height                              |
+
+~~~vaultquery
+SELECT title, path, modified
+FROM notes
+ORDER BY modified DESC
+LIMIT 20;
+
+config:
+height: 320px
+~~~
 
 # Markdown output
 

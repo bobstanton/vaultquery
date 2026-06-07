@@ -535,7 +535,7 @@
 	white-space: nowrap;
 }
 
-.vaultquery-calendar-root.fc :is(.fc-prev-button, .fc-next-button) {
+.vaultquery-calendar-root.fc :is(.fc-prev-button, .fc-next-button, .fc-vaultqueryPrev-button, .fc-vaultqueryNext-button) {
 	padding: 0;
 	width: var(--input-height);
 }
@@ -1609,6 +1609,10 @@
     margin: 0;
 }
 
+.vaultquery-sql-code-container .copy-code-button {
+    display: none;
+}
+
 .vaultquery-sql-statement-label {
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
@@ -1665,6 +1669,19 @@
     border-top-color: var(--text-on-accent);
     border-radius: 50%;
     animation: vaultquery-inline-spin 0.6s linear infinite;
+}
+
+.vaultquery-inline-query {
+    display: inline;
+}
+
+.vaultquery-inline-query-loading {
+    color: var(--text-muted);
+}
+
+.vaultquery-inline-query-error {
+    color: var(--text-error);
+    cursor: help;
 }
 
 @keyframes vaultquery-inline-spin {

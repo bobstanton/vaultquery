@@ -30,9 +30,9 @@ export const INDEXING_SQL = {
   DELETE_TABLE_CELLS: 'DELETE FROM table_cells WHERE path = ?',
   TABLE_CELLS_COLUMNS: 8,
 
-  INSERT_TABLES_BASE: 'INSERT INTO tables (path, table_index, table_name, block_id, start_offset, end_offset) VALUES ',
+  INSERT_TABLES_BASE: 'INSERT INTO tables (path, table_index, table_name, block_id, start_offset, end_offset, line_number) VALUES ',
   DELETE_TABLES: 'DELETE FROM tables WHERE path = ?',
-  TABLES_COLUMNS: 6,
+  TABLES_COLUMNS: 7,
 
   INSERT_LINKS_BASE: 'INSERT INTO links (path, link_text, link_target, link_target_path, link_type, line_number) VALUES ',
   DELETE_LINKS: 'DELETE FROM links WHERE path = ?',

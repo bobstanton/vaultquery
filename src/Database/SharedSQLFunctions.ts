@@ -38,36 +38,27 @@ export class SharedSQLFunctions {
       if (path == null) return null;
       return display != null ? `[[${path}${anchor}|${display}]]` : `[[${path}${anchor}]]`;
     };
+    const headingAnchor = (heading: string | null): string => heading != null ? `#${heading}` : '';
+    const blockAnchor = (blockId: string | null): string => {
+      if (blockId == null) return '';
+      const cleanBlockId = blockId.startsWith('^') ? blockId.substring(1) : blockId;
+      return `#^${cleanBlockId}`;
+    };
 
     db.create_function('link', (path: string) => makeLink(path, '', null));
 
     db.create_function('link', (path: string, display: string) => makeLink(path, '', display));
 
-    db.create_function('link_heading', (path: string, heading: string) => {
-      if (path == null) return null;
-      if (heading == null) return `[[${path}]]`;
-      return `[[${path}#${heading}]]`;
-    });
+    db.create_function('link_heading', (path: string, heading: string) => makeLink(path, headingAnchor(heading), null));
 
     db.create_function('link_heading', (path: string, heading: string, display: string) => {
-      const anchor = heading != null ? `#${heading}` : '';
-      return makeLink(path, anchor, display);
+      return makeLink(path, headingAnchor(heading), display);
     });
 
-    db.create_function('link_block', (path: string, blockId: string) => {
-      if (path == null) return null;
-      if (blockId == null) return `[[${path}]]`;
-      const cleanBlockId = blockId.startsWith('^') ? blockId.substring(1) : blockId;
-      return `[[${path}#^${cleanBlockId}]]`;
-    });
+    db.create_function('link_block', (path: string, blockId: string) => makeLink(path, blockAnchor(blockId), null));
 
     db.create_function('link_block', (path: string, blockId: string, display: string) => {
-      let anchor = '';
-      if (blockId != null) {
-        const cleanBlockId = blockId.startsWith('^') ? blockId.substring(1) : blockId;
-        anchor = `#^${cleanBlockId}`;
-      }
-      return makeLink(path, anchor, display);
+      return makeLink(path, blockAnchor(blockId), display);
     });
   }
 

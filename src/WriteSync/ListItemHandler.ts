@@ -11,12 +11,16 @@ export class ListItemHandler extends BaseEntityHandler {
     super(['list_items', 'list_items_view']);
   }
 
-  convertPreviewResult(previewResult: PreviewResult, _context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
+  async convertPreviewResult(previewResult: PreviewResult, context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
     if (previewResult.op === 'delete') {
-      return Promise.resolve(createEntityResult(previewResult, {
+      const rowsToDelete = previewResult.table === 'list_items_view'
+        ? await this.expandListItemsViewDeletes(previewResult.before, context)
+        : previewResult.before;
+
+      return createEntityResult(previewResult, {
         listItemsAfter: [],
-        listItemsToDelete: previewResult.before.map(row => this.convertToListItemRow(row))
-      }));
+        listItemsToDelete: rowsToDelete.map(row => this.convertToListItemRow(row))
+      });
     }
 
     if (previewResult.op === 'update') {
@@ -40,14 +44,14 @@ export class ListItemHandler extends BaseEntityHandler {
         return item;
       });
 
-      return Promise.resolve(createEntityResult(previewResult, {
+      return createEntityResult(previewResult, {
         listItemsAfter: listItems
-      }));
+      });
     }
 
-    return Promise.resolve(createEntityResult(previewResult, {
+    return createEntityResult(previewResult, {
       listItemsAfter: previewResult.after.map(row => this.convertToListItemRow(row))
-    }));
+    });
   }
 
   handleInsertOperation(previewResult: PreviewResult, _context: EntityHandlerContext): Promise<EditPlannerPreviewResult> {
@@ -87,5 +91,46 @@ export class ListItemHandler extends BaseEntityHandler {
       indent_level: asNum(row.indent_level, 0),
       ...readLocationFields(row)
     };
+  }
+
+  private async expandListItemsViewDeletes(rows: Record<string, unknown>[], context: EntityHandlerContext): Promise<Record<string, unknown>[]> {
+    const expandedRows: Record<string, unknown>[] = [];
+    const seen = new Set<string>();
+
+    for (const row of rows) {
+      const path = asStr(row.path);
+      const listIndex = asNum(row.list_index, 0);
+      const itemIndex = asNum(row.item_index, 0);
+
+      const descendants = await context.queryDatabase<Record<string, unknown>>(
+        `WITH RECURSIVE descendants(item_index) AS (
+          SELECT ?
+          UNION ALL
+          SELECT child.item_index
+          FROM list_items child
+          JOIN descendants parent
+            ON child.parent_index = parent.item_index
+          WHERE child.path = ?
+            AND child.list_index = ?
+        )
+        SELECT item.*
+        FROM list_items item
+        JOIN descendants d ON item.item_index = d.item_index
+        WHERE item.path = ?
+          AND item.list_index = ?
+        ORDER BY item.item_index`,
+        [itemIndex, path, listIndex, path, listIndex]
+      );
+
+      for (const descendant of descendants) {
+        const key = `${asStr(descendant.path)}:${asNum(descendant.list_index, 0)}:${asNum(descendant.item_index, 0)}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          expandedRows.push(descendant);
+        }
+      }
+    }
+
+    return expandedRows;
   }
 }

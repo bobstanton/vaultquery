@@ -1,6 +1,6 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
-import type { TaskRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext } from './types';
-import { getBlockIdSuffix, validateLineNumberBatch, pushInsertionEdit } from './types';
+import type { TaskRow, EntityPlanResult, EntityPlannerContext } from './types';
+import { getBlockIdSuffix, planLineEntityEdits } from './types';
 
 interface TaskStyle { bullet: "-" | "*" | "+"; indent: string; }
 
@@ -8,64 +8,17 @@ export class TaskEditPlanner {
   public constructor(private readonly contentLocationService: ContentLocationService) {}
 
   public planTaskEdits(ctx: EntityPlannerContext, tasks: TaskRow[], tasksToDelete: TaskRow[]): EntityPlanResult {
-    const edits: ReplaceRangeEdit[] = [];
-    const warnings: string[] = [];
-    const newTasks: TaskRow[] = [];
-    const tasksWithLineNumber: TaskRow[] = [];
-
-    for (const row of tasks) {
-      if (row.line_number === -1) {
-        newTasks.push(row);
-        continue;
-      }
-
-      if (row.line_number != null && row.line_number > 0 && row.start_offset == null && row.end_offset == null && !row.block_id) {
-        tasksWithLineNumber.push(row);
-        continue;
-      }
-
-      const loc = this.contentLocationService.locateTask(ctx.content, row);
-      if (loc.kind === "miss") {
-        warnings.push(`${ctx.path}: task ${row.id} - ${loc.reason}`);
-        continue;
-      }
-      const existing = ctx.content.slice(loc.range.start, loc.range.end);
-      const next = this.emitTaskLine(row, !!row.completed, existing);
-      if (next !== existing) {
-        edits.push({ type: "replaceRange", path: ctx.path, range: loc.range, text: next, reason: "update task" });
-      }
-    }
-
-    if (tasksWithLineNumber.length > 0) {
-      const minLineNumber = validateLineNumberBatch(tasksWithLineNumber, 'tasks', warnings);
-      const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
-      const combinedText = tasksWithLineNumber.map(t => this.emitTaskLine(t, !!t.completed)).join('\n');
-      pushInsertionEdit(edits, ctx, insertionPoint, combinedText, 'insert tasks at specified line');
-    }
-
-    if (newTasks.length > 0) {
-      const insertionPoint = this.contentLocationService.findTaskInsertionPoint(ctx.content);
-      const newTaskText = newTasks.map(t => this.emitTaskLine(t, !!t.completed)).join('\n');
-      pushInsertionEdit(edits, ctx, insertionPoint, newTaskText, 'insert new tasks');
-    }
-
-    for (const row of tasksToDelete) {
-      const loc = this.contentLocationService.locateTask(ctx.content, row);
-      if (loc.kind === "miss") {
-        warnings.push(`${ctx.path}: task ${row.id} to delete - ${loc.reason}`);
-        continue;
-      }
-      const deleteRange = ContentLocationService.expandRangeToIncludeNewline(ctx.content, loc.range);
-      edits.push({
-        type: "replaceRange",
-        path: ctx.path,
-        range: deleteRange,
-        text: "",
-        reason: "delete task"
-      });
-    }
-
-    return { edits, warnings };
+    return planLineEntityEdits(ctx, tasks, tasksToDelete, {
+      entityName: 'tasks',
+      insertAtLineReason: 'insert tasks at specified line',
+      insertNewReason: 'insert new tasks',
+      updateReason: 'update task',
+      deleteReason: 'delete task',
+      locate: row => this.contentLocationService.locateTask(ctx.content, row),
+      missingMessage: (row, action, reason) => `${ctx.path}: task ${row.id}${action} - ${reason}`,
+      emit: (row, existing) => this.emitTaskLine(row, !!row.completed, existing),
+      findNewInsertionPoint: () => this.contentLocationService.findTaskInsertionPoint(ctx.content),
+    });
   }
 
   private parseTaskStyle(existing: string): TaskStyle {

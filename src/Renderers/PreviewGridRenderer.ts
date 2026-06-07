@@ -16,10 +16,13 @@ export interface PreviewRenderContext extends RenderContext {
 }
 
 export class PreviewGridRenderer {
+  private static readonly SHOW_CHANGES_BELOW_LABEL = 'Show changes below';
+  private static readonly HIDE_CHANGES_BELOW_LABEL = 'Hide changes below';
+
   static renderPreview(previewResult: PreviewResult, context: PreviewRenderContext): void {
     const { container } = context;
 
-    container.empty();
+    SlickGridRenderer.cleanupContainer(container);
 
     let containerId = container.id;
     if (!containerId) {
@@ -59,7 +62,10 @@ export class PreviewGridRenderer {
         break;
       case 'update':
         const changedFieldCount = this.countChangedFields(before, after);
-        if (changedFieldCount === 0) {
+        if (rowCount === 0) {
+          summaryText = `ℹ️ No changes to apply. No rows matched the UPDATE statement.`;
+        }
+        else if (changedFieldCount === 0) {
           summaryText = `ℹ️ No changes to apply. The ${rowCount} matching row${rowCount !== 1 ? 's' : ''} already ${rowCount !== 1 ? 'have' : 'has'} the specified values.`;
         }
         else {
@@ -68,7 +74,9 @@ export class PreviewGridRenderer {
         summaryClass = 'vaultquery-summary-update';
         break;
       case 'delete':
-        summaryText = `⚠️ ${rowCount} row${rowCount !== 1 ? 's' : ''} will be deleted from table "${table}".`;
+        summaryText = rowCount === 0
+          ? `ℹ️ No rows matched the DELETE statement.`
+          : `⚠️ ${rowCount} row${rowCount !== 1 ? 's' : ''} will be deleted from table "${table}".`;
         summaryClass = 'vaultquery-summary-delete';
         break;
       case 'multi':
@@ -158,7 +166,7 @@ export class PreviewGridRenderer {
       const target = e.target as HTMLElement;
       const cell = target.closest('.slick-cell') as HTMLElement;
 
-      if (!cell || !cell.textContent?.includes('Click to expand')) {
+      if (!cell || !self.isChangeDetailsCell(cell)) {
         return;
       }
 
@@ -199,7 +207,7 @@ export class PreviewGridRenderer {
     win.setTimeout(() => {
       const cells = gridContainer.querySelectorAll('.slick-cell');
       cells.forEach(cell => {
-        if (cell.textContent?.includes('Click to expand')) {
+        if (self.isChangeDetailsCell(cell)) {
           (cell as HTMLElement).addClass('vaultquery-clickable-cell');
         }
       });
@@ -212,12 +220,19 @@ export class PreviewGridRenderer {
 
     const existingDetails = gridContainer.querySelector(`[data-details-for="${rowIndex}"]`);
     if (existingDetails) {
-      existingDetails.remove();
+      this.removeOperationDetails(existingDetails);
+      this.updateOperationDetailsLabel(gridContainer, rowIndex, false);
       return;
     }
 
     const allDetails = gridContainer.querySelectorAll('[data-details-for]');
-    allDetails.forEach(el => el.remove());
+    allDetails.forEach(el => {
+      const detailsFor = Number(el.getAttribute('data-details-for'));
+      this.removeOperationDetails(el);
+      if (!Number.isNaN(detailsFor)) {
+        this.updateOperationDetailsLabel(gridContainer, detailsFor, false);
+      }
+    });
 
     const rowElement = gridContainer.querySelector(`.slick-row[row="${rowIndex}"]`);
 
@@ -260,6 +275,39 @@ export class PreviewGridRenderer {
     else {
       gridContainer.appendChild(detailsContainer);
     }
+
+    this.updateOperationDetailsLabel(gridContainer, rowIndex, true);
+  }
+
+  private static removeOperationDetails(element: Element): void {
+    if (element instanceof HTMLElement) {
+      SlickGridRenderer.cleanupContainer(element);
+    }
+    element.remove();
+  }
+
+  private static isChangeDetailsCell(cell: Element): boolean {
+    const text = cell.textContent?.trim();
+    return text === this.SHOW_CHANGES_BELOW_LABEL || text === this.HIDE_CHANGES_BELOW_LABEL;
+  }
+
+  private static updateOperationDetailsLabel(gridContainer: HTMLElement, rowIndex: number, expanded: boolean): void {
+    const row = gridContainer.querySelector(`.slick-row[row="${rowIndex}"], .slick-row[data-row="${rowIndex}"]`);
+    if (!row) {
+      return;
+    }
+
+    const label = expanded ? this.HIDE_CHANGES_BELOW_LABEL : this.SHOW_CHANGES_BELOW_LABEL;
+    row.querySelectorAll('.slick-cell').forEach(cell => {
+      if (!this.isChangeDetailsCell(cell)) {
+        return;
+      }
+
+      cell.textContent = label;
+      if (cell instanceof HTMLElement) {
+        cell.addClass('vaultquery-clickable-cell');
+      }
+    });
   }
 
   private static prepareOperationDetailData(operation: PreviewResult, _context: PreviewRenderContext): Record<string, unknown>[] {
@@ -424,7 +472,7 @@ export class PreviewGridRenderer {
       '📋 Action': `${this.getOperationIcon(result.op)} ${result.op.toUpperCase()}`,
       '🗂️ Table': result.table,
       '📊 Rows': Math.max(result.before.length, result.after.length),
-      '🔍 Details': 'Click to expand',
+      '🔍 Details': this.SHOW_CHANGES_BELOW_LABEL,
       '_operationIndex': index,
       '_operationData': result
     }));

@@ -213,4 +213,33 @@ export class TableCellHandler implements EntityHandler {
       after: transformRows(previewResult.after)
     };
   }
+
+  transformDynamicViewToTableRows(previewResult: PreviewResult): PreviewResult {
+    const metaColumns = new Set(['path', 'table_index', 'row_index', 'table_name', 'rowid']);
+
+    const transformRows = (rows: Record<string, unknown>[]): Record<string, unknown>[] => {
+      return rows.map(row => {
+        const rowJson: Record<string, unknown> = {};
+        for (const [colName, value] of Object.entries(row)) {
+          if (!metaColumns.has(colName)) {
+            rowJson[colName] = value == null ? '' : String(value);
+          }
+        }
+
+        return {
+          path: row.path,
+          table_index: row.table_index,
+          row_index: row.row_index,
+          row_json: JSON.stringify(rowJson)
+        };
+      });
+    };
+
+    return {
+      ...previewResult,
+      table: 'table_rows',
+      before: transformRows(previewResult.before),
+      after: transformRows(previewResult.after)
+    };
+  }
 }

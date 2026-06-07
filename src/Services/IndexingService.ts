@@ -915,6 +915,8 @@ export class IndexingService {
 
     const startTime = performance.now();
     const listItems: ListItemData[] = [];
+    const cacheListItemsByLine = this.buildListItemCacheByLine(cacheListItems);
+    const indentLevelByLine = new Map<number, number>();
 
     let currentListIndex = 0;
     let lastRootLineNumber = -1;
@@ -929,6 +931,14 @@ export class IndexingService {
     nonTaskItems.forEach(({ item, cacheIndex: _cacheIndex }, _arrayIndex) => {
       const lineIndex = item.position.start.line;
       const line = lines[lineIndex] || '';
+      if (this.isLineInSectionType(cache, lineIndex, new Set(['code', 'table', 'yaml']))) {
+        return;
+      }
+
+      const parsedListLine = this.parseMarkdownListLine(line);
+      if (!parsedListLine) {
+        return;
+      }
 
       const isRootItem = item.parent < 0;
 
@@ -939,33 +949,9 @@ export class IndexingService {
         lastRootLineNumber = lineIndex;
       }
 
-      const bulletMatch = line.match(/^(\s*)[-*+]\s/);
-      const numberMatch = line.match(/^(\s*)\d+[.)]\s/);
-      const listType: 'bullet' | 'number' = numberMatch ? 'number' : 'bullet';
-
-      const leadingWhitespace = bulletMatch?.[1] || numberMatch?.[1] || '';
-      let indentLevel = 0;
-      for (const char of leadingWhitespace) {
-        if (char === '\t') {
-          indentLevel += 1;
-        }
-        else if (char === ' ') {
-        }
-      }
-      const spaceCount = (leadingWhitespace.match(/ /g) || []).length;
-      indentLevel += Math.floor(spaceCount / 2);
-
-      let itemContent = '';
-      if (bulletMatch) {
-        itemContent = line.substring(line.indexOf(bulletMatch[0]) + bulletMatch[0].length);
-      }
-      else if (numberMatch) {
-        itemContent = line.substring(line.indexOf(numberMatch[0]) + numberMatch[0].length);
-      }
-      else {
-        const genericMatch = line.match(/^\s*(?:[-*+]|\d+[.)])\s*(.*)/);
-        itemContent = genericMatch?.[1] || line.trim();
-      }
+      const listType = parsedListLine.listType;
+      const indentLevel = this.computeListIndentLevelFromCache(item, cacheListItemsByLine, indentLevelByLine);
+      let itemContent = parsedListLine.content;
 
       const blockMatch = line.match(/\^([\w-]+)\s*$/);
       let blockId: string | undefined;
@@ -1014,6 +1000,63 @@ export class IndexingService {
 
     const time = performance.now() - startTime;
     return { listItems: listItems.length > 0 ? listItems : undefined, time };
+  }
+
+  private parseMarkdownListLine(line: string): {
+    listType: 'bullet' | 'number';
+    content: string;
+  } | null {
+    const withoutBlockquote = line.replace(/^(?:\s*>\s?)*/, '');
+    const match = withoutBlockquote.match(/^(\s*)(?:(([-*+])|(\d+[.)]))\s+)(.*)$/);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      listType: match[4] ? 'number' : 'bullet',
+      content: match[5] ?? ''
+    };
+  }
+
+  private buildListItemCacheByLine(cacheListItems: ListItemCache[]): Map<number, ListItemCache> {
+    const byLine = new Map<number, ListItemCache>();
+    for (const item of cacheListItems) {
+      byLine.set(item.position.start.line, item);
+    }
+    return byLine;
+  }
+
+  private computeListIndentLevelFromCache(item: ListItemCache, itemsByLine: Map<number, ListItemCache>, depthByLine: Map<number, number>, seen = new Set<number>()): number {
+    const line = item.position.start.line;
+    const cachedDepth = depthByLine.get(line);
+    if (cachedDepth !== undefined) {
+      return cachedDepth;
+    }
+
+    if (item.parent < 0 || seen.has(line)) {
+      depthByLine.set(line, 0);
+      return 0;
+    }
+
+    const parent = itemsByLine.get(item.parent);
+    if (!parent) {
+      depthByLine.set(line, 0);
+      return 0;
+    }
+
+    seen.add(line);
+    const depth = this.computeListIndentLevelFromCache(parent, itemsByLine, depthByLine, seen) + 1;
+    seen.delete(line);
+    depthByLine.set(line, depth);
+    return depth;
+  }
+
+  private isLineInSectionType(cache: CachedMetadata | null, lineIndex: number, sectionTypes: Set<string>): boolean {
+    return cache?.sections?.some(section =>
+      sectionTypes.has(section.type) &&
+      section.position.start.line <= lineIndex &&
+      section.position.end.line >= lineIndex
+    ) ?? false;
   }
 
   private getNextContextOccurrence(contextOccurrences: Map<string, number>, lineIndex: number, lines: string[]): number {
@@ -1069,7 +1112,7 @@ export class IndexingService {
     return results;
   }
 
-  private parseAndIndexTables(content: string, lines: string[], lineOffset: number, contentOffset: number, detectedTables: Array<{ table_index: number; table_name?: string; block_id?: string; start_offset: number; end_offset: number }>): TableCellData[] {
+  private parseAndIndexTables(content: string, lines: string[], lineOffset: number, contentOffset: number, detectedTables: NonNullable<IndexNoteData['tables']>): TableCellData[] {
     if (detectedTables.length === 0) {
       return [];
     }
@@ -1089,13 +1132,13 @@ export class IndexingService {
 
       if (lineIndex < 0 || lineIndex >= lines.length) continue;
 
-      const tableData = this.parseTableAt(lines, lineIndex);
+      const tableData = MarkdownTableUtils.parseMarkdownTableAt(lines, lineIndex);
 
       if (tableData.headers.length > 0 && tableData.rows.length > 0) {
         const tableName = detectedTable.table_name ?? null;
 
         tableData.rows.forEach((row, rowIndex) => {
-          const dataRowLineNumber = lineIndex + 2 + rowIndex + lineOffset + 1;
+          const dataRowLineNumber = lineIndex + tableData.dataStartLine + rowIndex + lineOffset + 1;
 
           tableData.headers.forEach((columnName, columnIndex) => {
             const cellValue = row[columnIndex] || '';
@@ -1161,79 +1204,6 @@ export class IndexingService {
   }
 
 
-  private parseTableAt(lines: string[], startIndex: number): { headers: string[], rows: string[][], totalLines: number } {
-    const tableLines: string[] = [];
-    let currentIndex = startIndex;
-    
-    while (currentIndex < lines.length) {
-      const line = lines[currentIndex];
-      if (/^\s*\|.*\|\s*$/.test(line) && MarkdownTableUtils.splitTableRow(line).length > 1) {
-        tableLines.push(line);
-        currentIndex++;
-      }
-      else {
-        break;
-      }
-    }
-    
-    if (tableLines.length < 2) {
-      return { headers: [], rows: [], totalLines: 0 };
-    }
-    
-    let headerLineIndex = -1;
-    let separatorLineIndex = -1;
-    
-    for (let i = 0; i < Math.min(3, tableLines.length); i++) {
-      const line = tableLines[i];
-      const cells = MarkdownTableUtils.splitTableRow(line);
-      
-      const isSeparator = cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
-      
-      if (isSeparator) {
-        separatorLineIndex = i;
-      }
-      else if (headerLineIndex === -1 && cells.length > 0) {
-        headerLineIndex = i;
-      }
-    }
-    
-    if (headerLineIndex === -1) {
-      return { headers: [], rows: [], totalLines: 0 };
-    }
-    
-    const headers = MarkdownTableUtils.splitTableRow(tableLines[headerLineIndex]);
-    
-    const rows: string[][] = [];
-    for (let i = 0; i < tableLines.length; i++) {
-      if (i === headerLineIndex || i === separatorLineIndex) {
-        continue;
-      }
-      
-      const cells = MarkdownTableUtils.splitTableRow(tableLines[i]);
-      
-      const isSeparator = cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
-      if (isSeparator) {
-        continue;
-      }
-      
-      if (cells.length > 0) {
-        while (cells.length < headers.length) {
-          cells.push('');
-        }
-        if (cells.length > headers.length) {
-          cells.splice(headers.length);
-        }
-        rows.push(cells);
-      }
-    }
-    
-    return {
-      headers,
-      rows,
-      totalLines: tableLines.length
-    };
-  }
-
   private parseTasksFromCache(fullContent: string, fullLines: string[], lineStartOffsets: number[], taskItems: ListItemCache[], cache: CachedMetadata | null): TaskData[] {
     const tasks: TaskData[] = [];
     const contextOccurrences = new Map<string, number>();
@@ -1270,11 +1240,12 @@ export class IndexingService {
 
       const blockId = ContentLocationService.extractBlockId(fullLines, lineIndex, line);
 
-      const metadata = this.extractTaskMetadata(taskText);
+      const normalizedTaskText = taskText.replace(/\s*\^[\w-]+\s*$/, '').trim();
+      const metadata = this.extractTaskMetadata(normalizedTaskText);
 
       const taskData: TaskData = {
         line_number: lineIndex + 1, 
-        task_text: taskText.trim(),
+        task_text: normalizedTaskText,
         completed,
         status,
         priority: metadata.priority,

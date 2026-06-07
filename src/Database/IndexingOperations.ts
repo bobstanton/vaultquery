@@ -102,29 +102,19 @@ export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: 
 
   handlers.insertNote(note);
 
-  if (frontmatterData !== undefined) {
-    handlers.replaceProperties(note.path, frontmatterData, skipDeletes);
-  }
-  if (tables !== undefined) {
-    replaceTablesCore(adapter, note.path, tables, skipDeletes);
-  }
-  if (tableCells !== undefined) {
-    replaceTableCellsCore(adapter, note.path, tableCells, skipDeletes);
-  }
-  if (tasks !== undefined) {
-    handlers.replaceTasks(note.path, tasks, skipDeletes);
-  }
-  if (headings !== undefined) {
-    handlers.replaceHeadings(note.path, headings, skipDeletes);
-  }
-  if (links !== undefined) {
-    replaceLinksCore(adapter, note.path, links, skipDeletes);
-  }
-  if (tags !== undefined) {
-    replaceTagsCore(adapter, note.path, tags, skipDeletes);
-  }
-  if (listItems !== undefined) {
-    handlers.replaceListItems(note.path, listItems, skipDeletes);
+  const replacements: Array<[unknown[] | undefined, () => void]> = [
+    [frontmatterData, () => handlers.replaceProperties(note.path, frontmatterData, skipDeletes)],
+    [tables, () => replaceTablesCore(adapter, note.path, tables, skipDeletes)],
+    [tableCells, () => replaceTableCellsCore(adapter, note.path, tableCells, skipDeletes)],
+    [tasks, () => handlers.replaceTasks(note.path, tasks, skipDeletes)],
+    [headings, () => handlers.replaceHeadings(note.path, headings, skipDeletes)],
+    [links, () => replaceLinksCore(adapter, note.path, links, skipDeletes)],
+    [tags, () => replaceTagsCore(adapter, note.path, tags, skipDeletes)],
+    [listItems, () => handlers.replaceListItems(note.path, listItems, skipDeletes)],
+  ];
+
+  for (const [value, replace] of replacements) {
+    if (value !== undefined) replace();
   }
 
   replaceUserViewsCore(adapter, note.path, userViews, skipDeletes, logger);
@@ -340,7 +330,8 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
                         existingRow.table_name !== (fileTable.table_name || null) ||
                         existingRow.block_id !== (fileTable.block_id || null) ||
                         existingRow.start_offset !== newStart ||
-                        existingRow.end_offset !== newEnd;
+                        existingRow.end_offset !== newEnd ||
+                        existingRow.line_number !== fileTable.line_number;
 
       if (hasChanged) {
         updates.push({ tableIndex: existingRow.table_index, table: fileTable });
@@ -361,13 +352,14 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
 
   for (const { tableIndex, table } of updates) {
     adapter.run(
-      'UPDATE tables SET table_index = ?, table_name = ?, block_id = ?, start_offset = ?, end_offset = ? WHERE path = ? AND table_index = ?',
+      'UPDATE tables SET table_index = ?, table_name = ?, block_id = ?, start_offset = ?, end_offset = ?, line_number = ? WHERE path = ? AND table_index = ?',
       [
         table.table_index,
         table.table_name || null,
         table.block_id || null,
         table.start_offset ?? null,
         table.end_offset ?? null,
+        table.line_number,
         path,
         tableIndex
       ]
@@ -381,7 +373,8 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
       table.table_name || null,
       table.block_id || null,
       table.start_offset ?? null,
-      table.end_offset ?? null
+      table.end_offset ?? null,
+      table.line_number
     ]);
     adapter.runMultiRowInsert(INDEXING_SQL.INSERT_TABLES_BASE, INDEXING_SQL.TABLES_COLUMNS, rows);
   }
@@ -653,29 +646,23 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
   return { existing, changes };
 }
 
-/**
- * Get list of user view names for a path.
- */
-function getViewsForPathCore(adapter: IndexingDbAdapter, path: string): string[] {
+function getViewsForPathCore(adapter: IndexingDbAdapter, path: string, logger: IndexingLogger): string[] {
   try {
     const results = adapter.exec(INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH, [path]);
     return results[0]?.values?.map(row => row[0] as string) ?? [];
-  } catch {
-    return [];
+  } catch (error) {
+    logger.error(`Failed to load views for "${path}"`, error);
+    throw error;
   }
 }
 
-/** Undefined userViews means extraction did not run, so existing views are preserved. */
 function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userViews: UserViewData[] | undefined, skipDeletes: boolean, logger: IndexingLogger): void {
-  // If userViews is undefined, view extraction didn't happen for this indexing pass
-  // (post-initial indexing, views are registered by ViewCodeBlockProcessor instead).
-  // Preserve existing views — same pattern as replaceUserTriggersCore.
   if (userViews === undefined) {
     return;
   }
 
   if (!skipDeletes) {
-    const existingViews = getViewsForPathCore(adapter, path);
+    const existingViews = getViewsForPathCore(adapter, path, logger);
     adapter.runPrepared(INDEXING_SQL.DELETE_USER_VIEWS, [path]);
 
     for (const viewName of existingViews) {
@@ -704,7 +691,6 @@ function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userView
   }
 }
 
-/** Hook for registering a custom function with the database */
 type RegisterFunctionHook = (name: string, source: string) => void;
 
 export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: string, userFunctions: UserFunctionData[] | undefined, skipDeletes: boolean, registerFunction: RegisterFunctionHook, logger: IndexingLogger): void {
@@ -728,31 +714,25 @@ export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: strin
   }
 }
 
-/**
- * Get list of user trigger names for a path.
- */
-function getTriggersForPathCore(adapter: IndexingDbAdapter, path: string): string[] {
+function getTriggersForPathCore(adapter: IndexingDbAdapter, path: string, logger: IndexingLogger): string[] {
   try {
     const results = adapter.exec(INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH, [path]);
     return results[0]?.values?.map(row => row[0] as string) ?? [];
-  } catch {
-    return [];
+  } catch (error) {
+    logger.error(`Failed to load triggers for "${path}"`, error);
+    throw error;
   }
 }
 
-/** Hook for activating a trigger in SQLite */
 type ActivateTriggerHook = (triggerName: string, triggerSql: string, path: string) => void;
 
-/** Undefined userTriggers means extraction did not run, so existing triggers are preserved. */
 export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string, userTriggers: UserTriggerData[] | undefined, skipDeletes: boolean, activateTrigger: ActivateTriggerHook | null, logger: IndexingLogger): void {
-  // If userTriggers is undefined, trigger extraction didn't happen for this indexing pass.
-  // Preserve existing triggers to avoid dropping triggers registered via registerUserTriggers().
   if (userTriggers === undefined) {
     return;
   }
 
   if (!skipDeletes) {
-    const existingTriggers = getTriggersForPathCore(adapter, path);
+    const existingTriggers = getTriggersForPathCore(adapter, path, logger);
     adapter.runPrepared(INDEXING_SQL.DELETE_USER_TRIGGERS, [path]);
 
     for (const triggerName of existingTriggers) {

@@ -29,6 +29,8 @@ export interface VaultQuerySettings {
   enableTriggers: boolean;
   enableThirdPartyProviderTables: boolean;
   enableInlineButtons: boolean;
+  enableCli: boolean;
+  enableCliWriteOperations: boolean;
   inlineButtonDebounceMs: number;
   contentRenderingMode: ContentRenderingMode;
   enableDynamicTableViews: boolean;
@@ -60,6 +62,11 @@ export function normalizeSettings(settings: VaultQuerySettings): void {
     settings.allowDeleteNotes = false;
     settings.enableTriggers = false;
     settings.enableInlineButtons = false;
+    settings.enableCliWriteOperations = false;
+  }
+
+  if (!settings.enableCli) {
+    settings.enableCliWriteOperations = false;
   }
 }
 
@@ -87,6 +94,8 @@ export const DEFAULT_SETTINGS: VaultQuerySettings = {
   enableTriggers: false,
   enableThirdPartyProviderTables: false,
   enableInlineButtons: false,
+  enableCli: false,
+  enableCliWriteOperations: false,
   inlineButtonDebounceMs: 500,
   contentRenderingMode: 'plain-text',
   enableDynamicTableViews: false,

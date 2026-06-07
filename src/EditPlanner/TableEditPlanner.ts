@@ -49,7 +49,7 @@ export class TableEditPlanner {
       }
 
       const existingTableMd = ctx.content.slice(blockRange.start, blockRange.end);
-      const existingTable = this.parseMarkdownTable(existingTableMd);
+      const existingTable = MarkdownTableUtils.parseMarkdownTable(existingTableMd);
       const mergedTable = this.mergeTableContent(existingTable, t);
       const rebuilt = this.buildMarkdownTable(mergedTable.header, mergedTable.rows);
 
@@ -110,21 +110,7 @@ export class TableEditPlanner {
     return markdownTable(tableData);
   }
 
-  private parseMarkdownTable(tableMd: string): { header: string[]; rows: string[][] } | null {
-    const lines = tableMd.split('\n').filter(l => /^\s*\|.*\|\s*$/.test(l));
-    if (lines.length < 2) return null;
-
-    const parseLine = (l: string) =>
-      l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
-
-    const header = parseLine(lines[0]);
-    const rows = lines.slice(2).map(parseLine);
-
-    return { header, rows };
-  }
-
   private mergeTableContent(existingTable: { header: string[]; rows: string[][] } | null, newTable: TableRowGroup): { header: string[]; rows: Array<Record<string, string>> } {
-    // Prefer existing table's header order to preserve column positions
     let header: string[];
     if (existingTable?.header && existingTable.header.length > 0) {
       header = [...existingTable.header];

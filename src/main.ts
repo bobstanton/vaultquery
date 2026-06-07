@@ -4,17 +4,17 @@ import { VaultQueryAPI, type EventRef } from './VaultQueryAPI';
 import { VaultQuerySettings, DEFAULT_SETTINGS, normalizeSettings } from './Settings/Settings';
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
+import { CalendarRenderer } from './Renderers/CalendarRenderer';
 import { DatabaseRecoveryManager } from './Managers/DatabaseRecoveryManager';
 import { IndexingStateManager } from './Managers/IndexingStateManager';
 import { QueryCodeBlockProcessor } from './CodeBlockProcessors/QueryCodeBlockProcessor';
 import { WriteCodeBlockProcessor } from './CodeBlockProcessors/WriteCodeBlockProcessor';
 import { ChartCodeBlockProcessor } from './CodeBlockProcessors/ChartCodeBlockProcessor';
-import { ChartHelpCodeBlockProcessor } from './CodeBlockProcessors/ChartHelpCodeBlockProcessor';
+import { BaseHelpCodeBlockProcessor } from './CodeBlockProcessors/BaseHelpCodeBlockProcessor';
 import { HelpCodeBlockProcessor } from './CodeBlockProcessors/HelpCodeBlockProcessor';
 import { SchemaCodeBlockProcessor } from './CodeBlockProcessors/SchemaCodeBlockProcessor';
 import { MarkdownCodeBlockProcessor } from './CodeBlockProcessors/MarkdownCodeBlockProcessor';
 import { CalendarCodeBlockProcessor } from './CodeBlockProcessors/CalendarCodeBlockProcessor';
-import { CalendarHelpCodeBlockProcessor } from './CodeBlockProcessors/CalendarHelpCodeBlockProcessor';
 import { ViewCodeBlockProcessor } from './CodeBlockProcessors/ViewCodeBlockProcessor';
 import { FunctionCodeBlockProcessor } from './CodeBlockProcessors/FunctionCodeBlockProcessor';
 import { FunctionHelpCodeBlockProcessor } from './CodeBlockProcessors/FunctionHelpCodeBlockProcessor';
@@ -25,13 +25,17 @@ import { TriggerHelpCodeBlockProcessor } from './CodeBlockProcessors/TriggerHelp
 import { sqlHighlightPlugin, disableAutoPairInVaultquery, vaultQueryEditorAttributesExtension } from './Editor/SqlHighlightExtension';
 import { registerProviderDefinitionLanguage } from './Constants/EditorConstants';
 import { createInlineButtonExtension, processReadingViewInlineButtons } from './Editor/InlineButtonExtension';
+import { createInlineQueryExtension, processReadingViewInlineQueries } from './Editor/InlineQueryExtension';
 import { createVaultQueryCompletionExtension } from './Editor/VaultQueryCompletionExtension';
+import { registerVaultQueryCliHandlers } from './Services/CliQueryService';
 import { renderIndexingProgress } from './utils/IndexingUtils';
 import { LifecycleManager } from './utils/LifecycleManager';
 import { logger as rootLogger } from './utils/logger';
 import { SQL_HIGHLIGHTED_LANGUAGES, JS_HIGHLIGHTED_LANGUAGES } from './Constants/EditorConstants';
 import type { IndexingStatus } from './types';
 import type { BlockProcessor } from './utils/IndexingUtils';
+import * as chartHelp from './generated-help/vaultquery-chart-help.generated';
+import * as calendarHelp from './generated-help/vaultquery-calendar-help.generated';
 
 import './styles.css';
 import './slickgrid-obsidian-theme.css';
@@ -169,12 +173,12 @@ export default class VaultQueryPlugin extends Plugin {
     const queryProcessor = new QueryCodeBlockProcessor(this.app, this);
     const writeProcessor = new WriteCodeBlockProcessor(this.app, this, this.settings);
     const chartProcessor = new ChartCodeBlockProcessor(this.app, this);
-    const chartHelpProcessor = new ChartHelpCodeBlockProcessor(this.app, this);
+    const chartHelpProcessor = new BaseHelpCodeBlockProcessor(this.app, this, 'vaultquery-chart-help', chartHelp);
     const helpProcessor = new HelpCodeBlockProcessor(this.app, this);
     const schemaProcessor = new SchemaCodeBlockProcessor(this.app, this);
     const markdownProcessor = new MarkdownCodeBlockProcessor(this.app, this);
     const calendarProcessor = new CalendarCodeBlockProcessor(this.app, this);
-    const calendarHelpProcessor = new CalendarHelpCodeBlockProcessor(this.app, this);
+    const calendarHelpProcessor = new BaseHelpCodeBlockProcessor(this.app, this, 'vaultquery-calendar-help', calendarHelp);
     const viewProcessor = new ViewCodeBlockProcessor(this.app, this);
     const functionProcessor = new FunctionCodeBlockProcessor(this.app, this);
     const functionHelpProcessor = new FunctionHelpCodeBlockProcessor(this.app, this);
@@ -304,6 +308,8 @@ export default class VaultQueryPlugin extends Plugin {
       this.registerEditorExtension(vaultQueryEditorAttributesExtension);
       this.registerEditorExtension(disableAutoPairInVaultquery);
       this.registerEditorExtension(createInlineButtonExtension(this));
+      this.registerEditorExtension(createInlineQueryExtension(this));
+      registerVaultQueryCliHandlers(this);
       const completion = createVaultQueryCompletionExtension(this);
       this.invalidateCompletionSchemaCache = completion.invalidateSchemaCache;
       this.registerEditorExtension(completion.extension);
@@ -332,6 +338,7 @@ export default class VaultQueryPlugin extends Plugin {
       this.registerCodeBlockProcessors();
 
       this.registerMarkdownPostProcessor((element, context) => {
+        processReadingViewInlineQueries(this, element, context.sourcePath);
         processReadingViewInlineButtons(this, element, context.sourcePath);
       });
 
@@ -367,7 +374,6 @@ export default class VaultQueryPlugin extends Plugin {
         resolve();
       });
 
-      // Fallback timeout in case resolved event never fires
       activeWindow.setTimeout(() => {
         this.app.metadataCache.offref(eventRef);
         resolve();
@@ -449,7 +455,8 @@ export default class VaultQueryPlugin extends Plugin {
 
     for (const block of blocks) {
       try {
-        block.el.empty();
+        SlickGridRenderer.cleanupContainer(block.el);
+        CalendarRenderer.cleanupContainer(block.el);
         await processor.process(block.source, block.el, block.ctx);
       }
       catch (error) {

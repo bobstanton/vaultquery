@@ -2,6 +2,7 @@ import type { Statement } from 'sql.js';
 
 type StatementRow = Record<string, unknown>;
 type StatementParam = string | number | null | Uint8Array;
+type MultiRowInsertRunner = (sql: string, params: StatementParam[]) => void;
 
 export function collectStatementRows(stmt: Statement): StatementRow[] {
   const results: StatementRow[] = [];
@@ -40,6 +41,24 @@ export function getCachedMultiRowInsertSql(cache: Map<string, string>, baseSQL: 
   const sql = baseSQL + Array(rowCount).fill(placeholder).join(', ');
   cache.set(cacheKey, sql);
   return sql;
+}
+
+export function runMultiRowInsertBatches(
+  cache: Map<string, string>,
+  baseSQL: string,
+  columnsCount: number,
+  rows: StatementParam[][],
+  maxRowsPerBatch: number,
+  run: MultiRowInsertRunner
+): void {
+  if (rows.length === 0) return;
+
+  for (let i = 0; i < rows.length; i += maxRowsPerBatch) {
+    const batch = rows.slice(i, i + maxRowsPerBatch);
+    const sql = getCachedMultiRowInsertSql(cache, baseSQL, columnsCount, batch.length);
+    const params = batch.flat();
+    run(sql, params);
+  }
 }
 
 function resetStatement(stmt: Statement, onResetError?: (error: unknown) => void): void {

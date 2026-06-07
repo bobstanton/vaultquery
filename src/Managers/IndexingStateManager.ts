@@ -2,6 +2,7 @@ import { App, TFile, normalizePath, type TAbstractFile } from 'obsidian';
 import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { logger as rootLogger } from '../utils/logger';
+import { waitForVaultQueryIndexing } from '../utils/IndexingUtils';
 
 declare const activeWindow: Window;
 
@@ -53,7 +54,7 @@ export class IndexingStateManager {
     const filesToIndex = Array.from(this.indexingQueue);
     this.indexingQueue.clear();
 
-    const indexedPaths: string[] = [];
+    let indexedFileCount = 0;
 
     for (const filePath of filesToIndex) {
       if (this.currentlyIndexingFiles.has(filePath)) {
@@ -65,7 +66,7 @@ export class IndexingStateManager {
         try {
           this.currentlyIndexingFiles.add(filePath);
           await this.indexFile(file);
-          indexedPaths.push(filePath);
+          indexedFileCount++;
         }
         catch (error) {
           logger.error('Error indexing', filePath, error);
@@ -75,16 +76,14 @@ export class IndexingStateManager {
       }
     }
 
-    if (indexedPaths.length > 0 && this.plugin.api) {
+    if (indexedFileCount > 0 && this.plugin.api) {
       await this.plugin.api.saveToDisk();
 
       if (this.plugin.settings.enableDynamicTableViews) {
         this.plugin.api.rebuildTableViews();
       }
 
-      if (this.plugin.settings.autoRefreshOnIndexChange) {
-        void QueryRefreshRegistry.refreshAll(indexedPaths);
-      }
+      void QueryRefreshRegistry.refreshAll();
     }
   }
 
@@ -140,21 +139,12 @@ export class IndexingStateManager {
   }
 
   public async waitForIndexingComplete(maxWaitMs: number = 5000): Promise<void> {
-    const startTime = Date.now();
-    const checkInterval = 50;
-
-    while (this.hasPendingFileModifications()) {
-      if (Date.now() - startTime > maxWaitMs) {
-        logger.warn('Timed out waiting for pending modifications');
-        return;
-      }
-      await new Promise(resolve => activeWindow.setTimeout(resolve, checkInterval));
-    }
-
-    const remainingTime = maxWaitMs - (Date.now() - startTime);
-    if (remainingTime > 0 && this.plugin.api) {
-      await this.plugin.api.waitForIndexing(remainingTime);
-    }
+    await waitForVaultQueryIndexing({
+      getApi: () => this.plugin.api ?? null,
+      hasPendingFileModifications: () => this.hasPendingFileModifications(),
+      timeoutMs: maxWaitMs,
+      onPendingTimeout: () => logger.warn('Timed out waiting for pending modifications'),
+    });
   }
 
   public setupFileWatchers(): void {

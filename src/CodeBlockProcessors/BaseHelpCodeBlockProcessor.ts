@@ -6,7 +6,7 @@ interface HelpPageModule {
   render(container: HTMLElement, ctx: RenderContext): void;
 }
 
-export abstract class BaseHelpCodeBlockProcessor {
+export class BaseHelpCodeBlockProcessor {
   protected component: Component;
 
   public constructor(protected app: App, protected plugin: VaultQueryPluginContext, private readonly containerClassName: string, private readonly helpPage: HelpPageModule, private readonly schemaLoadingMessage?: string) {

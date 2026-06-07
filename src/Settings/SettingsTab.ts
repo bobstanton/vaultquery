@@ -53,6 +53,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             this.plugin.settings.allowDeleteNotes = false;
             this.plugin.settings.enableTriggers = false;
             this.plugin.settings.enableInlineButtons = false;
+            this.plugin.settings.enableCliWriteOperations = false;
           }
 
           void this.plugin.saveSettings();
@@ -274,6 +275,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             this.plugin.settings.enableInlineButtons = false;
             this.plugin.settings.allowDeleteNotes = false;
             this.plugin.settings.enableTriggers = false;
+            this.plugin.settings.enableCliWriteOperations = false;
           }
           void this.plugin.saveSettings();
           this.refreshDisplay();
@@ -357,6 +359,38 @@ export class VaultQuerySettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Obsidian CLI')
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName('Enable CLI')
+      .setDesc('Allow Obsidian CLI commands for VaultQuery. Enables `vaultquery:query` for read-only SQL queries.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableCli)
+        .onChange((value) => {
+          this.plugin.settings.enableCli = value;
+          if (!value) {
+            this.plugin.settings.enableCliWriteOperations = false;
+          }
+          void this.plugin.saveSettings();
+          this.refreshDisplay();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Enable CLI write operations')
+      .setDesc('Allow `vaultquery:query` to run INSERT, UPDATE, and DELETE statements from the Obsidian CLI. Requires CLI and write operations to be enabled.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableCliWriteOperations)
+        .setDisabled(!this.plugin.settings.enableCli || !isRealtimeIndexing || !writeEnabled)
+        .onChange((value) => {
+          this.plugin.settings.enableCliWriteOperations = value;
+          void this.plugin.saveSettings();
+          this.refreshDisplay();
+        })
+      );
+
+    new Setting(containerEl)
       .setName('Third-party provider tables')
       .setDesc('Allow third-party plugins to register third-party provider tables, discover provider definition code blocks, and refresh provider rows for SQL queries.')
       .addToggle(toggle => toggle
@@ -386,8 +420,8 @@ export class VaultQuerySettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Auto-refresh on index change')
-      .setDesc('Automatically refresh query results when files are indexed. Keeps results up-to-date but may impact performance on large vaults with frequent changes.')
+      .setName('Auto-refresh grids')
+      .setDesc('Automatically refresh SlickGrid query tables when indexed files change. Defaults to off; individual query blocks can override this with `config: autoRefresh: true` or `config: autoRefresh: false`.')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.autoRefreshOnIndexChange)
         .onChange((value) => {

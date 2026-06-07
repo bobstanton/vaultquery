@@ -1,6 +1,6 @@
 # VaultQuery Plugin
 
-Execute SELECT, INSERT, UPDATE, and DELETE statements on notes, properties, tasks, tables, headings and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/) or JavaScript rendering.
+Execute SELECT, INSERT, UPDATE, and DELETE statements across notes, properties, tasks, tables, headings, and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/), [FullCalendar](https://github.com/fullcalendar/fullcalendar) or JavaScript rendering.
 
 ## Features
 
@@ -299,9 +299,35 @@ JavaScript rendering code receives these variables:
 - `count` - Number of results
 - `h` - Helper functions object
 
+### Inline Query Values
+
+Use inline code in the form `vq{SQL}` to render the first column of the first row directly in surrounding text:
+
+```markdown
+The hike was `vq{SELECT value FROM properties WHERE key = 'distance' AND path = '{this.path}' LIMIT 1}` miles.
+```
+
+Inline query values are read-only and only allow `SELECT` or `WITH` statements.
+
+### Obsidian CLI
+
+When enabled in VaultQuery settings, `vaultquery:query` runs SQL from the Obsidian CLI and waits for indexing to finish before executing:
+
+```shell
+obsidian vaultquery:query sql="SELECT title, path FROM notes LIMIT 5" format=json
+```
+
+Available formats are `json`, `csv`, `tsv`, `md`, and `scalar`. Use `path` to provide note context for `{this.*}` placeholders:
+
+```shell
+obsidian vaultquery:query path="Hikes/Trip.md" sql="SELECT value FROM properties WHERE path = '{this.path}' AND key = 'distance' LIMIT 1" format=scalar
+```
+
+`INSERT`, `UPDATE`, and `DELETE` require both write operations and CLI write operations to be enabled in settings.
+
 ### Helper Functions
 
-The `h` object provides 50+ utility functions from [placeholder-resolver](../placeholder-resolver).
+The `h` object provides 50+ utility functions from [placeholder-resolver](https://github.com/bobstanton/placeholder-resolver).
 
 #### Obsidian Helpers
 
@@ -719,6 +745,8 @@ The database is stored in Obsidian's [Configuration Folder](https://help.obsidia
 - **Block references for updates**: Task and heading updates work best when content has explicit block references (e.g., `^task-1`). Without them, the plugin uses content hashing which is not as accurate.
 
 - **Column width persistence**: Column widths are remembered during a session and are intentionally not remembered when Obsidian restarts.
+
+- **Autocomplete**: Autocomplete is experimental. 
 
 ## Network Requests
 

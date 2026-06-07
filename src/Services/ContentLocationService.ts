@@ -440,6 +440,10 @@ export class ContentLocationService {
   }
 
   public static findTableInsertionPoint(content: string): InsertionPoint {
+    return ContentLocationService.findEndInsertionPoint(content);
+  }
+
+  public static findEndInsertionPoint(content: string): InsertionPoint {
     const endsWithNewline = content.endsWith('\n');
     return {
       offset: content.length,

@@ -252,8 +252,14 @@ export class WriteSyncService {
 
     const isDynamicTableView = effectiveTable.endsWith('_table') && !syncTables.includes(effectiveTable);
     if (isDynamicTableView) {
-      effectiveTable = 'table_cells';
-      previewResult = this.handlerRegistry.getTableCellHandler().transformDynamicViewToTableCells(previewResult);
+      if (previewResult.op === 'insert') {
+        effectiveTable = 'table_rows';
+        previewResult = this.handlerRegistry.getTableCellHandler().transformDynamicViewToTableRows(previewResult);
+      }
+      else {
+        effectiveTable = 'table_cells';
+        previewResult = this.handlerRegistry.getTableCellHandler().transformDynamicViewToTableCells(previewResult);
+      }
     }
 
     if (!syncTables.includes(effectiveTable) && !syncTables.includes(previewResult.table)) {

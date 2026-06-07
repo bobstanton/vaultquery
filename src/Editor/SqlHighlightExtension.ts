@@ -9,6 +9,7 @@ import {
   ViewUpdate,
 } from '@codemirror/view';
 import { PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
+import { consumeSqlSingleQuotedString } from '../utils/SQLParsingUtils';
 
 const SQL_KEYWORDS = new Set([
   'select', 'from', 'where', 'and', 'or', 'not', 'in', 'is', 'null',
@@ -124,23 +125,6 @@ function consumeEscapedString(text: string, pos: number, quote: string): number 
       pos += 2;
     }
     else if (text[pos] === quote) {
-      pos++;
-      break;
-    }
-    else {
-      pos++;
-    }
-  }
-  return pos;
-}
-
-function consumeSqlSingleQuotedString(text: string, pos: number): number {
-  pos++;
-  while (pos < text.length) {
-    if (text[pos] === "'" && text[pos + 1] === "'") {
-      pos += 2;
-    }
-    else if (text[pos] === "'") {
       pos++;
       break;
     }

@@ -1,6 +1,7 @@
 import { Chart, ChartConfiguration, ChartDataset, registerables, Colors } from 'chart.js';
 import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
 import { BaseRenderer } from './BaseRenderer';
+import { getErrorMessage } from '../utils/ErrorMessages';
 
 type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null;
 type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
@@ -86,7 +87,7 @@ export class ChartRenderer {
     catch (error) {
       BaseRenderer.renderError(container, {
         title: 'Chart Error',
-        message: `Chart rendering failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Chart rendering failed: ${getErrorMessage(error)}`
       });
     }
   }

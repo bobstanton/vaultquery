@@ -12,6 +12,7 @@ type ReadQueryOutputKind = NonNullable<ParseQueryBlockOptions['forceOutputKind']
 
 export abstract class BaseReadQueryCodeBlockProcessor {
   protected pendingBlocks = new Set<PendingBlock>();
+  private activeRequests = new WeakMap<HTMLElement, number>();
 
   protected constructor(protected app: App, protected plugin: VaultQueryPluginContext) {}
 
@@ -70,8 +71,15 @@ export abstract class BaseReadQueryCodeBlockProcessor {
     const api = this.plugin.api;
     if (!api) return;
 
+    const requestId = Date.now() + Math.random();
+    this.activeRequests.set(container, requestId);
+
     try {
       const results = await api.query(parsed.query, ctx.sourcePath);
+
+      if (this.activeRequests.get(container) !== requestId || !container.isConnected) {
+        return;
+      }
 
       if (!results || !Array.isArray(results)) {
         BaseRenderer.renderError(container, {
@@ -99,6 +107,9 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       await QueryRenderer.render(renderContext);
     }
     catch (error: unknown) {
+      if (this.activeRequests.get(container) !== requestId || !container.isConnected) {
+        return;
+      }
       QueryRenderer.resetContainer(container);
       BaseRenderer.renderQueryError(this.app, container, error, parsed.query);
     }

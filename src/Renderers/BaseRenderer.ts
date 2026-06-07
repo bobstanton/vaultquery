@@ -2,6 +2,7 @@ import { App, Component, MarkdownRenderer, setIcon } from 'obsidian';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { splitQuerySections } from '../utils/QueryParsingUtils';
+import { formatIsoDateString, formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 
@@ -131,63 +132,14 @@ export abstract class BaseRenderer {
   }
 
   static generateMarkdownTable(results: Record<string, unknown>[], columns?: string[]): string {
-    if (results.length === 0) return '';
-
-    const visibleColumns = (columns && columns.length > 0
-      ? columns
-      : Object.keys(results[0]).filter(col => !col.startsWith('_')));
-
-    const headerRow = '| ' + visibleColumns.join(' | ') + ' |';
-    const separatorRow = '| ' + visibleColumns.map(() => '---').join(' | ') + ' |';
-
-    const dataRows = results.map(row => {
-      const cells = visibleColumns.map(col => {
-        const value = row[col];
-        if (value == null) return '';
-
-        const cellValue = this.formatValueForMarkdown(col, value);
-
-        return cellValue
-          .replace(/\|/g, '\\|')
-          .replace(/\n/g, '<br>')
-          .replace(/\r/g, '');
-      });
-      return '| ' + cells.join(' | ') + ' |';
+    return formatResultsAsMarkdown(results, {
+      columns,
+      formatValues: true
     });
-
-    const parts = [headerRow, separatorRow, ...dataRows];
-    return parts.join('\n');
-  }
-
-  private static formatValueForMarkdown(_columnName: string, value: unknown): string {
-    const strValue = String(value);
-
-    if (/^\d{13}$/.test(strValue)) {
-      const timestamp = Number(strValue);
-      const date = new Date(timestamp);
-      if (!isNaN(date.getTime())) {
-        return date.toLocaleString();
-      }
-    }
-
-    const formattedDate = this.formatIsoDateString(strValue);
-    if (formattedDate !== strValue) {
-      return formattedDate;
-    }
-
-    return strValue;
   }
 
   protected static formatIsoDateString(dateStr: string): string {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const date = new Date(year, month - 1, day);
-      if (!isNaN(date.getTime())) {
-        return date.toLocaleDateString();
-      }
-    }
-
-    return dateStr;
+    return formatIsoDateString(dateStr);
   }
 
   static addRefreshButton(buttonContainer: HTMLElement, onRefresh: () => Promise<void>): void {
@@ -203,8 +155,6 @@ export abstract class BaseRenderer {
     container.empty();
     const errorContainer = container.createDiv({ cls: 'vaultquery-error-container' });
 
-    // Try to split query sections, but don't fail if parsing throws
-    // (e.g., when the error IS the parsing error like missing semicolon)
     let sqlQuery = querySource;
     let templateConfigText: string | null = null;
     let configSectionText: string | null = null;
@@ -214,7 +164,6 @@ export abstract class BaseRenderer {
       templateConfigText = sections.templateConfigText;
       configSectionText = sections.configSection;
     } catch {
-      // If splitting fails, just show the raw source
     }
 
     this.renderError(errorContainer, {

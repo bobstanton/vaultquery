@@ -17,8 +17,9 @@ export class DatabaseSchemaManager {
         return [];
       }
       return result[0].values.map(row => row[columnIndex] as string);
-    } catch {
-      return [];
+    } catch (error) {
+      logger.error('Database schema query failed', { sql, columnIndex }, error);
+      throw error;
     }
   }
 

@@ -12,8 +12,10 @@ import {
 import type { WorkerRequest, WorkerResponse } from './worker-types';
 import type { IndexNoteData } from '../types/types.d.ts';
 import { hashString } from '../utils/StringUtils';
+import { getErrorMessage } from '../utils/ErrorMessages';
 import { type SqlResult } from './ChangeDetection';
-import { collectStatementRows, getCachedMultiRowInsertSql, runPreparedStatement } from './StatementRows';
+import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
+import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
 import {
   replaceTasksCore,
@@ -46,8 +48,7 @@ function respond(response: WorkerResponse): void {
 }
 
 function handleError(id: number, error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  respond({ type: 'error', id, error: message });
+  respond({ type: 'error', id, error: getErrorMessage(error) });
 }
 
 function getPreparedStatement(sql: string): Statement {
@@ -68,7 +69,7 @@ function getPreparedStatement(sql: string): Statement {
     if (firstKey) {
       const oldStmt = preparedStatements.get(firstKey);
       if (oldStmt) {
-        try { oldStmt.free(); } catch { /* statement may already be freed */ }
+        freePreparedStatement(oldStmt);
       }
       preparedStatements.delete(firstKey);
     }
@@ -77,26 +78,34 @@ function getPreparedStatement(sql: string): Statement {
   return stmt;
 }
 
-function runWithPreparedStatement(sql: string, params: (string | number | null)[] = []): void {
-  const stmt = getPreparedStatement(sql);
-  runPreparedStatement(stmt, params, resetError => {
-    void resetError;
-  });
-}
-
-function runMultiRowInsert(baseSQL: string, columnsCount: number, rows: (string | number | null)[][], maxRowsPerBatch: number = MAX_ROWS_PER_INSERT_BATCH): void {
-  if (!db || rows.length === 0) return;
-
-  for (let i = 0; i < rows.length; i += maxRowsPerBatch) {
-    const batch = rows.slice(i, i + maxRowsPerBatch);
-    const sql = getMultiRowInsertSql(baseSQL, columnsCount, batch.length);
-    const params = batch.flat();
-    db.run(sql, params);
+function freePreparedStatement(stmt: Statement): void {
+  try {
+    stmt.free();
+  }
+  catch (error) {
+    logger.warn('Failed to free prepared statement', error);
   }
 }
 
-function getMultiRowInsertSql(baseSQL: string, columnsCount: number, rowCount: number): string {
-  return getCachedMultiRowInsertSql(multiRowInsertSqlCache, baseSQL, columnsCount, rowCount);
+function queryValues(sql: string): unknown[][] {
+  if (!db) throw new Error('Database not initialized');
+
+  try {
+    return db.exec(sql)[0]?.values ?? [];
+  }
+  catch (error) {
+    logger.error('Worker query failed', sql, error);
+    throw error;
+  }
+}
+
+function safeQueryValues(sql: string): unknown[][] {
+  try {
+    return queryValues(sql);
+  }
+  catch {
+    return [];
+  }
 }
 
 function batchDeleteByIds(tableName: string, ids: number[]): void {
@@ -163,55 +172,12 @@ function runPragmaStatements(): void {
 }
 
 function checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
-  const diagnostics: Record<string, unknown> = {
+  return checkSqlJsDatabaseHealth(db, {
     timestamp: new Date().toISOString(),
     mode: 'worker',
-    hasDb: !!db,
     preparedStatementCount: preparedStatements.size,
     indexesCreated,
-  };
-
-  try {
-    if (!db) {
-      return {
-        healthy: false,
-        error: 'Database not initialized',
-        diagnostics,
-      };
-    }
-
-    const tableResult = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'");
-    const notesTableExists = tableResult.length > 0 && tableResult[0].values.length > 0;
-    diagnostics.notesTableExists = notesTableExists;
-
-    if (!notesTableExists) {
-      const allTables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-      diagnostics.existingTables = allTables.length > 0
-        ? allTables[0].values.map(row => row[0])
-        : [];
-
-      return {
-        healthy: false,
-        error: 'notes table does not exist',
-        diagnostics,
-      };
-    }
-
-    const countResult = db.exec('SELECT COUNT(*) FROM notes');
-    diagnostics.noteCount = countResult.length > 0 ? countResult[0].values[0][0] : 0;
-
-    return { healthy: true, diagnostics };
-  }
-  catch (error) {
-    diagnostics.exceptionType = error?.constructor?.name;
-    diagnostics.exceptionMessage = error instanceof Error ? error.message : String(error);
-
-    return {
-      healthy: false,
-      error: `Database query failed: ${error instanceof Error ? error.message : String(error)}`,
-      diagnostics,
-    };
-  }
+  });
 }
 
 function createIndexingAdapter(): IndexingDbAdapter {
@@ -219,9 +185,16 @@ function createIndexingAdapter(): IndexingDbAdapter {
   return {
     exec: (sql, params) => db!.exec(sql, params as (string | number | null | Uint8Array)[] | undefined) as SqlResult,
     run: (sql, params) => db!.run(sql, params as (string | number | null | Uint8Array)[]),
-    runPrepared: (sql, params) => runWithPreparedStatement(sql, params),
+    runPrepared: (sql, params) => {
+      const stmt = getPreparedStatement(sql);
+      runPreparedStatement(stmt, params, resetError => {
+        logger.warn('Failed to reset prepared statement', resetError);
+      });
+    },
     batchDeleteByIds: (table, ids) => batchDeleteByIds(table, ids),
-    runMultiRowInsert: (base, cols, rows) => runMultiRowInsert(base, cols, rows),
+    runMultiRowInsert: (base, cols, rows) => runMultiRowInsertBatches(multiRowInsertSqlCache, base, cols, rows, MAX_ROWS_PER_INSERT_BATCH, (sql, params) => {
+      db!.run(sql, params);
+    }),
   };
 }
 
@@ -232,11 +205,15 @@ function insertNote(note: IndexNoteData['note']): void {
 
   const exists = db.exec(INDEXING_SQL.CHECK_NOTE_EXISTS, [note.path]);
   if (exists.length > 0 && exists[0].values && exists[0].values.length > 0) {
-    // Note exists - run UPDATE (fires AFTER UPDATE triggers)
-    runWithPreparedStatement(INDEXING_SQL.UPDATE_NOTE, noteToUpdateParams(note));
+    const stmt = getPreparedStatement(INDEXING_SQL.UPDATE_NOTE);
+    runPreparedStatement(stmt, noteToUpdateParams(note), resetError => {
+      logger.warn('Failed to reset prepared statement', resetError);
+    });
   } else {
-    // Note doesn't exist - run INSERT (fires AFTER INSERT triggers)
-    runWithPreparedStatement(INDEXING_SQL.INSERT_NOTE, noteToParams(note));
+    const stmt = getPreparedStatement(INDEXING_SQL.INSERT_NOTE);
+    runPreparedStatement(stmt, noteToParams(note), resetError => {
+      logger.warn('Failed to reset prepared statement', resetError);
+    });
   }
 }
 
@@ -305,81 +282,45 @@ function withTx<T>(fn: () => T): T {
 
 function getAllPropertyKeys(): string[] {
   if (!db) return [];
-  try {
-    const results = db.exec(SQL_QUERIES.GET_ALL_PROPERTY_KEYS);
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => row[0] as string);
-  } catch {
-    return [];
-  }
+  return safeQueryValues(SQL_QUERIES.GET_ALL_PROPERTY_KEYS).map(row => row[0] as string);
 }
 
 function getViewNames(): string[] {
   if (!db) return [];
-  try {
-    const results = db.exec(SQL_QUERIES.GET_VIEW_NAMES);
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => row[0] as string);
-  } catch {
-    return [];
-  }
+  return safeQueryValues(SQL_QUERIES.GET_VIEW_NAMES).map(row => row[0] as string);
 }
 
 function getViewColumns(viewName: string): string[] {
   if (!db) return [];
-  try {
-    const results = db.exec(getViewColumnsPragma(viewName));
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => row[1] as string);
-  } catch {
-    return [];
-  }
+  return safeQueryValues(getViewColumnsPragma(viewName)).map(row => row[1] as string);
 }
 
 function getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
   if (!db) return [];
-  try {
-    const results = db.exec(INDEXING_SQL.SELECT_ALL_USER_VIEWS);
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => ({
-      view_name: row[0] as string,
-      path: row[1] as string,
-      sql: row[2] as string
-    }));
-  } catch {
-    return [];
-  }
+  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_VIEWS).map(row => ({
+    view_name: row[0] as string,
+    path: row[1] as string,
+    sql: row[2] as string
+  }));
 }
 
 function getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
   if (!db) return [];
-  try {
-    const results = db.exec(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS);
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => ({
-      function_name: row[0] as string,
-      path: row[1] as string,
-      source: row[2] as string
-    }));
-  } catch {
-    return [];
-  }
+  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS).map(row => ({
+    function_name: row[0] as string,
+    path: row[1] as string,
+    source: row[2] as string
+  }));
 }
 
 function getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
   if (!db) return [];
-  try {
-    const results = db.exec(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS);
-    if (results.length === 0 || !results[0].values) return [];
-    return results[0].values.map(row => ({
-      trigger_name: row[0] as string,
-      path: row[1] as string,
-      trigger_sql: row[2] as string,
-      enabled: row[3] as number
-    }));
-  } catch {
-    return [];
-  }
+  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS).map(row => ({
+    trigger_name: row[0] as string,
+    path: row[1] as string,
+    trigger_sql: row[2] as string,
+    enabled: row[3] as number
+  }));
 }
 
 /**
@@ -392,7 +333,10 @@ function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: s
 
   if (sourcePath) {
     const sqlHash = hashString(triggerSql);
-    runWithPreparedStatement(INDEXING_SQL.INSERT_USER_TRIGGER, [triggerName, sourcePath, triggerSql, sqlHash]);
+    const stmt = getPreparedStatement(INDEXING_SQL.INSERT_USER_TRIGGER);
+    runPreparedStatement(stmt, [triggerName, sourcePath, triggerSql, sqlHash], resetError => {
+      logger.warn('Failed to reset prepared statement', resetError);
+    });
   }
 
   // NOTE: Do NOT activate trigger in worker - vq_* functions are not available here

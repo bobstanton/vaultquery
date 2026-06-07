@@ -7,7 +7,7 @@ import { WriteSyncService } from './Services/WriteSyncService';
 import { TriggerFunctions, TriggerService } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
 import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
-import { parseSQLObjectName } from './utils/SQLParsingUtils';
+import { containsBlockedSql, parseSQLObjectName, stripSqlComments } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
 import type { PreviewResult } from './Services/PreviewService';
 import { TableProviderService } from './Providers/TableProviderService';
@@ -67,8 +67,10 @@ const TABLE_FEATURE_CONFIG: Record<string, {
   'properties': { setting: 'indexFrontmatter', featureName: 'Property indexing', settingLabel: 'Index frontmatter' },
   'notes_with_properties': { setting: 'indexFrontmatter', featureName: 'Property indexing', settingLabel: 'Index frontmatter' },
   'note_properties': { setting: 'indexFrontmatter', featureName: 'Property indexing', settingLabel: 'Index frontmatter' },
+  'tables': { setting: 'indexTables', featureName: 'Table indexing', settingLabel: 'Index tables' },
   'table_cells': { setting: 'indexTables', featureName: 'Table indexing', settingLabel: 'Index tables' },
   'table_rows': { setting: 'indexTables', featureName: 'Table indexing', settingLabel: 'Index tables' },
+  'table_columns': { setting: 'indexTables', featureName: 'Table indexing', settingLabel: 'Index tables' },
   'tasks': { setting: 'indexTasks', featureName: 'Task indexing', settingLabel: 'Index tasks' },
   'tasks_view': { setting: 'indexTasks', featureName: 'Task indexing', settingLabel: 'Index tasks' },
   'headings': { setting: 'indexHeadings', featureName: 'Heading indexing', settingLabel: 'Index headings' },
@@ -122,6 +124,11 @@ export interface IVaultQueryAPI {
    * Reindex one note by vault-relative path.
    */
   reindexNote(notePath: string): Promise<void>;
+
+  /**
+   * Process any pending actions queued by vq_* SQL functions.
+   */
+  processPendingTriggerActions(): Promise<void>;
 
   /**
    * Current indexing state and progress, if indexing is running.
@@ -275,9 +282,6 @@ interface VaultQueryEvents {
 export type { EventRef };
 
 export class VaultQueryAPI implements IVaultQueryAPI {
-  private static readonly LINE_COMMENT_REGEX = /--.*$/gm;
-  private static readonly BLOCK_COMMENT_REGEX = /\/\*[\s\S]*?\*\//g;
-
   private app: App;
   private database: VaultDatabase | WorkerDatabase;
   private indexingService: IndexingService;
@@ -305,7 +309,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.writeSyncService = writeSyncService;
     this.triggerFunctions = triggerFunctions;
     this.tableProviderService = new TableProviderService(database, this.settings.enableThirdPartyProviderTables);
-    this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll());
+    this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll({ force: true }));
     this.indexingService.setProviderDefinitionBlockHandler(this.tableProviderService);
 
     this.indexingService.setEventEmitter({
@@ -343,10 +347,18 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private processTriggerActions(): void {
-    if (this.triggerActionProcessing) return;
+    void this.processPendingTriggerActions();
+  }
+
+  public async processPendingTriggerActions(): Promise<void> {
+    if (this.triggerActionProcessing) {
+      return this.triggerActionProcessing;
+    }
+
     this.triggerActionProcessing = this.runTriggerProcessingLoop().finally(() => {
       this.triggerActionProcessing = null;
     });
+    return this.triggerActionProcessing;
   }
 
   private async runTriggerProcessingLoop(): Promise<void> {
@@ -588,7 +600,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private getCustomViewRegistration(sql: string): { viewName: string; sql: string } | null {
-    const statement = this.stripSQLComments(sql);
+    const statement = stripSqlComments(sql);
     if (!/^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?VIEW\b/i.test(statement)) {
       return null;
     }
@@ -603,7 +615,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private getDroppedCustomViewName(sql: string): string | null {
-    const statement = this.stripSQLComments(sql);
+    const statement = stripSqlComments(sql);
     const match = statement.match(/^\s*DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:"([^"]+)"|'([^']+)'|`([^`]+)`|\[([^\]]+)\]|(\w+))/i);
     return match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4] ?? match?.[5] ?? null;
   }
@@ -750,7 +762,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     // Don't wait for indexing - queries can run with partial data
     // Users see results immediately and can refresh after indexing completes
 
-    return await this.executeQuerySafely(() => this.database.all(sql), sql) as QueryResult[];
+    return await this.executeQuerySafely(() => this.database.all(sql)) as QueryResult[];
   }
 
 
@@ -1071,7 +1083,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         name: typeof row.name === 'string' ? row.name : '',
         type: row.type === 'view' ? 'view' as const : 'table' as const,
       }))
-      .filter((row) => row.name.length > 0);
+      .filter((row) => this.shouldIncludeAutocompleteRelation(row));
 
     const columns: AutocompleteSchemaColumn[] = [];
     for (const relation of relations) {
@@ -1114,14 +1126,20 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return { relations, columns, functions };
   }
 
-  private stripSQLComments(sql: string): string {
-    return sql
-      .replace(VaultQueryAPI.LINE_COMMENT_REGEX, '')
-      .replace(VaultQueryAPI.BLOCK_COMMENT_REGEX, '')
-      .trim();
+  private shouldIncludeAutocompleteRelation(relation: AutocompleteSchemaRelation): boolean {
+    if (!relation.name || relation.name.startsWith('_') || relation.name.startsWith('sqlite_')) {
+      return false;
+    }
+
+    const config = TABLE_FEATURE_CONFIG[relation.name];
+    if (!config) {
+      return true;
+    }
+
+    return this.settings.enabledFeatures[config.setting];
   }
 
-  private async executeQuerySafely<T>(operation: () => Promise<T>, query: string): Promise<T> {
+  private async executeQuerySafely<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     }
@@ -1129,18 +1147,21 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       const errorMessage = getErrorMessage(error);
       const missingTable = this.getMissingTableName(errorMessage);
       if (missingTable && await this.waitForProviderTableIfRegistering(missingTable)) {
-        try {
-          logger.debug(`Retrying query after provider table became available: ${missingTable}`);
-          return await operation();
-        }
-        catch (retryError: unknown) {
-          const friendlyRetryError = this.getFriendlyErrorMessage(getErrorMessage(retryError), query);
-          throw new Error(friendlyRetryError);
-        }
+        logger.debug(`Retrying query after provider table became available: ${missingTable}`);
+        return await this.retryQueryWithFriendlyError(operation);
       }
 
-      const friendlyError = this.getFriendlyErrorMessage(errorMessage, query);
+      const friendlyError = this.getFriendlyErrorMessage(errorMessage);
       throw new Error(friendlyError);
+    }
+  }
+
+  private async retryQueryWithFriendlyError<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    }
+    catch (error: unknown) {
+      throw new Error(this.getFriendlyErrorMessage(getErrorMessage(error)));
     }
   }
 
@@ -1158,10 +1179,15 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       return false;
     }
 
-    const deadline = Date.now() + PROVIDER_TABLE_RETRY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (await this.tableExists(tableName)) {
-        return true;
+    for (let remainingMs = PROVIDER_TABLE_RETRY_TIMEOUT_MS; remainingMs > 0; remainingMs -= PROVIDER_TABLE_RETRY_INTERVAL_MS) {
+      try {
+        if (await this.tableExists(tableName)) {
+          return true;
+        }
+      }
+      catch (error) {
+        logger.warn(`Provider table availability check failed for "${tableName}"`, error);
+        return false;
       }
 
       await new Promise<void>(resolve => activeWindow.setTimeout(resolve, PROVIDER_TABLE_RETRY_INTERVAL_MS));
@@ -1171,19 +1197,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private async tableExists(tableName: string): Promise<boolean> {
-    try {
-      const rows = await this.database.all(
-        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND lower(name) = ? LIMIT 1",
-        [tableName.toLowerCase()]
-      );
-      return rows.length > 0;
-    }
-    catch {
-      return false;
-    }
+    const rows = await this.database.all(
+      "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND lower(name) = ? LIMIT 1",
+      [tableName.toLowerCase()]
+    );
+    return rows.length > 0;
   }
 
-  private getFriendlyErrorMessage(errorMessage: string, _query: string): string {
+  private getFriendlyErrorMessage(errorMessage: string): string {
     const tableName = this.getMissingTableName(errorMessage);
     if (tableName) {
       const config = TABLE_FEATURE_CONFIG[tableName];
@@ -1305,6 +1326,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     try {
       affectedPaths = await this.writeSyncService.syncChanges(previewResult);
       await this.database.applyDML(previewResult);
+      await this.processPendingTriggerActions();
     }
     catch (error: unknown) {
       logger.error(CONSOLE_ERRORS.APPLY_PREVIEW_FAILED, error);
@@ -1315,36 +1337,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private containsBlockedSQL(sql: string, allowWriteOperations: boolean = false): boolean {
-    const sqlWithoutComments = this.stripSQLComments(sql);
-
-    const alwaysBlocked = [
-      /ATTACH\s+DATABASE/i,
-      /PRAGMA/i,
-      /\.load/i,
-      /\.shell/i,
-      /\.system/i,
-      /LOAD_EXTENSION/i
-    ];
-
-    const writeOperations = [
-      /DROP\s+TABLE/i,
-      /ALTER\s+TABLE/i,
-      /CREATE\s+TABLE/i,
-      /CREATE\s+INDEX/i,
-      /DROP\s+INDEX/i,
-      /CREATE\s+VIEW/i,
-      /DROP\s+VIEW/i
-    ];
-
-    if (alwaysBlocked.some(pattern => pattern.test(sqlWithoutComments))) {
-      return true;
-    }
-
-    if (!allowWriteOperations && writeOperations.some(pattern => pattern.test(sqlWithoutComments))) {
-      return true;
-    }
-
-    return false;
+    return containsBlockedSql(sql, allowWriteOperations);
   }
 
 

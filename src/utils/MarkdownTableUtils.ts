@@ -4,13 +4,29 @@ interface MarkdownTable {
   block_id?: string;
   start_offset: number;
   end_offset: number;
+  line_number: number;
+}
+
+export interface ParsedMarkdownTable {
+  headers: string[];
+  rows: string[][];
+  totalLines: number;
+  dataStartLine: number;
+}
+
+export interface MarkdownTableLineInfo {
+  startLine: number;
+  endLine: number;
+  headerLine: number;
+  separatorLine: number;
+  columns: string[];
+  dataStartLine: number;
 }
 
 export class MarkdownTableUtils {
-  /**
-   * Split a markdown table row on unescaped pipe characters.
-   * Leading/trailing table delimiters are removed, escaped pipes are kept as cell text.
-   */
+  private static readonly TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
+  private static readonly TABLE_ALIGN_ROW_PATTERN = /^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/;
+
   static splitTableRow(line: string): string[] {
     const cells: string[] = [];
     let current = '';
@@ -46,18 +62,11 @@ export class MarkdownTableUtils {
     return cells;
   }
 
-  /**
-   * Detect all markdown tables in content.
-   */
   static detectAllTables(content: string, contentOffset: number = 0, noteTitle?: string): MarkdownTable[] {
     const lines = content.split('\n');
     const tables: MarkdownTable[] = [];
     let tableIdx = 0;
     let currentHeading: string | undefined;
-
-    const isTableHeader = (s: string) => /^\s*\|.*\|\s*$/.test(s);
-    const isAlignRow = (s: string) => /^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/.test(s);
-    const isTableRow = (s: string) => /^\s*\|.*\|\s*$/.test(s);
 
     let i = 0;
     while (i < lines.length) {
@@ -66,10 +75,10 @@ export class MarkdownTableUtils {
         currentHeading = headingMatch[2].trim();
       }
 
-      if (i < lines.length - 1 && isTableHeader(lines[i]) && isAlignRow(lines[i + 1])) {
+      if (i < lines.length - 1 && this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
         const start_offset = this.getLineStartOffset(content, i) + contentOffset;
         let j = i + 2;
-        while (j < lines.length && isTableRow(lines[j])) j++;
+        while (j < lines.length && this.isTableRow(lines[j])) j++;
 
         let block_id: string | undefined;
         if (j < lines.length) {
@@ -87,7 +96,8 @@ export class MarkdownTableUtils {
           table_name,
           block_id,
           start_offset,
-          end_offset
+          end_offset,
+          line_number: i + 1
         });
         i = j;
         currentHeading = undefined;
@@ -106,14 +116,13 @@ export class MarkdownTableUtils {
       const currentLine = lines[i];
       const nextLine = lines[i + 1];
       
-      if (/^\s*\|.*\|\s*$/.test(currentLine) && 
-        /^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/.test(nextLine)) {
+      if (this.isTableRow(currentLine) && this.isAlignRow(nextLine)) {
         
         if (found === tableIndex) {
           const start = this.getLineStartOffset(content, i);
           let j = i + 2;
 
-          while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) {
+          while (j < lines.length && this.isTableRow(lines[j])) {
             j++;
           }
 
@@ -124,7 +133,7 @@ export class MarkdownTableUtils {
         found++;
         
         let j = i + 2;
-        while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) {
+        while (j < lines.length && this.isTableRow(lines[j])) {
           j++;
         }
         i = j;
@@ -139,9 +148,137 @@ export class MarkdownTableUtils {
   static isMarkdownTable(s: string): boolean {
     const lines = s.trim().split('\n');
     if (lines.length < 2) return false;
-    if (!/^\s*\|.*\|\s*$/.test(lines[0])) return false;
-    if (!/^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/.test(lines[1])) return false;
+    if (!this.isTableRow(lines[0])) return false;
+    if (!this.isAlignRow(lines[1])) return false;
     return true;
+  }
+
+  static parseMarkdownTable(tableMd: string): { header: string[]; rows: string[][] } | null {
+    const parsed = this.parseMarkdownTableAt(tableMd.split('\n'), 0);
+    if (parsed.headers.length === 0) {
+      return null;
+    }
+
+    return {
+      header: parsed.headers,
+      rows: parsed.rows,
+    };
+  }
+
+  static parseMarkdownTableAt(lines: string[], startIndex: number): ParsedMarkdownTable {
+    const tableLines: string[] = [];
+    let currentIndex = startIndex;
+
+    while (currentIndex < lines.length && this.isTableRow(lines[currentIndex])) {
+      tableLines.push(lines[currentIndex]);
+      currentIndex++;
+    }
+
+    if (tableLines.length < 2) {
+      return { headers: [], rows: [], totalLines: 0, dataStartLine: 0 };
+    }
+
+    let headerLineIndex = -1;
+    let separatorLineIndex = -1;
+
+    for (let i = 0; i < Math.min(3, tableLines.length); i++) {
+      const cells = this.splitTableRow(tableLines[i]);
+      const isSeparator = this.isSeparatorCells(cells);
+
+      if (isSeparator) {
+        separatorLineIndex = i;
+      }
+      else if (headerLineIndex === -1 && cells.length > 0) {
+        headerLineIndex = i;
+      }
+    }
+
+    if (headerLineIndex === -1 || separatorLineIndex === -1) {
+      return { headers: [], rows: [], totalLines: 0, dataStartLine: 0 };
+    }
+
+    const headers = this.splitTableRow(tableLines[headerLineIndex]);
+    const rows: string[][] = [];
+
+    for (let i = separatorLineIndex + 1; i < tableLines.length; i++) {
+      const cells = this.splitTableRow(tableLines[i]);
+      if (this.isSeparatorCells(cells) || cells.length === 0) {
+        continue;
+      }
+
+      while (cells.length < headers.length) {
+        cells.push('');
+      }
+      if (cells.length > headers.length) {
+        cells.splice(headers.length);
+      }
+      rows.push(cells);
+    }
+
+    return {
+      headers,
+      rows,
+      totalLines: tableLines.length,
+      dataStartLine: separatorLineIndex + 1,
+    };
+  }
+
+  static parseTableLines(lines: string[]): MarkdownTableLineInfo[] {
+    const tables: MarkdownTableLineInfo[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      if (i + 1 < lines.length && this.isLooseTableRow(lines[i]) && this.isLooseAlignRow(lines[i + 1])) {
+        const headerLine = i;
+        const separatorLine = i + 1;
+        const columns = this.splitTableRow(lines[headerLine]);
+        let endLine = separatorLine;
+
+        for (let j = separatorLine + 1; j < lines.length; j++) {
+          if (lines[j].includes('|')) {
+            endLine = j;
+          } else {
+            break;
+          }
+        }
+
+        tables.push({
+          startLine: headerLine,
+          endLine,
+          headerLine,
+          separatorLine,
+          columns,
+          dataStartLine: separatorLine + 1
+        });
+
+        i = endLine + 1;
+        continue;
+      }
+
+      i++;
+    }
+
+    return tables;
+  }
+
+  private static isTableRow(line: string): boolean {
+    return MarkdownTableUtils.TABLE_ROW_PATTERN.test(line);
+  }
+
+  private static isAlignRow(line: string): boolean {
+    return MarkdownTableUtils.TABLE_ALIGN_ROW_PATTERN.test(line);
+  }
+
+  private static isLooseTableRow(line: string): boolean {
+    return line.includes('|') && /^\|?(.+?)\|?$/.test(line);
+  }
+
+  private static isLooseAlignRow(line: string): boolean {
+    return /^\|?[\s\-:|]+\|?$/.test(line);
+  }
+
+  private static isSeparatorCells(cells: string[]): boolean {
+    return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
   }
 
   private static getLineStartOffset(content: string, lineIndex: number): number {

@@ -3,6 +3,7 @@ import { mergeHelpers, obsidianHelpers, escapeHtml } from 'placeholder-resolver'
 import { renderUserHtmlTemplate } from 'user-template-renderer';
 import { BaseRenderer } from './BaseRenderer';
 import { logger as rootLogger } from '../utils/logger';
+import { getErrorMessage } from '../utils/ErrorMessages';
 
 const logger = rootLogger.scope('JavaScriptRenderer');
 
@@ -101,10 +102,9 @@ export class JavaScriptRenderer extends BaseRenderer {
     catch (error: unknown) {
       logger.error('JavaScript rendering failed', error);
       container.empty();
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       BaseRenderer.renderError(container, {
         title: 'JavaScript rendering error',
-        message: errorMessage
+        message: getErrorMessage(error)
       });
     }
   }

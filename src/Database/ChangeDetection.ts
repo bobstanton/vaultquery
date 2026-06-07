@@ -247,27 +247,34 @@ export function toDbTableCell(c: InputTableCellData): DbTableCellData {
 }
 
 type KeyFn<T> = (item: T) => string;
+type MapMode = 'first' | 'all';
 
-/** Build a lookup map: key -> first matching item (for unique keys) */
-function indexBy<T>(items: T[], keyFn: KeyFn<T>): Map<string, T> {
-  const map = new Map<string, T>();
+function mapBy<T>(items: T[], keyFn: KeyFn<T>, mode: 'first'): Map<string, T>;
+function mapBy<T>(items: T[], keyFn: KeyFn<T>, mode: 'all'): Map<string, T[]>;
+function mapBy<T>(items: T[], keyFn: KeyFn<T>, mode: MapMode): Map<string, T | T[]> {
+  const map = new Map<string, T | T[]>();
   for (const item of items) {
     const key = keyFn(item);
-    if (!map.has(key)) map.set(key, item);
-  }
-  return map;
-}
+    if (mode === 'first') {
+      if (!map.has(key)) map.set(key, item);
+      continue;
+    }
 
-/** Build a multi-map: key -> all matching items (for non-unique keys) */
-function groupBy<T>(items: T[], keyFn: KeyFn<T>): Map<string, T[]> {
-  const map = new Map<string, T[]>();
-  for (const item of items) {
-    const key = keyFn(item);
-    const list = map.get(key);
+    const list = map.get(key) as T[] | undefined;
     if (list) list.push(item);
     else map.set(key, [item]);
   }
   return map;
+}
+
+/** Build a lookup map: key -> first matching item (for unique keys) */
+function indexBy<T>(items: T[], keyFn: KeyFn<T>): Map<string, T> {
+  return mapBy(items, keyFn, 'first');
+}
+
+/** Build a multi-map: key -> all matching items (for non-unique keys) */
+function groupBy<T>(items: T[], keyFn: KeyFn<T>): Map<string, T[]> {
+  return mapBy(items, keyFn, 'all');
 }
 
 /** Find first unmatched item from a list */

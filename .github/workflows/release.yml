@@ -13,10 +13,10 @@ jobs:
             id-token: write
             attestations: write
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v6
             - uses: actions/setup-node@v4
               with:
-                node-version: 20
+                node-version: 24
             - name: Clone dependencies
               run: |
                   git clone https://github.com/bobstanton/md-to-obsidian-dom.git ../md-to-obsidian-dom
@@ -33,6 +33,12 @@ jobs:
                   npm run lint
                   npm run typecheck
                   npm run build --if-present
+            - name: Create release archive
+              run: |
+                  mkdir -p release/vaultquery
+                  cp main.js manifest.json styles.css release/vaultquery/
+                  cd release
+                  zip -r ../vaultquery.zip vaultquery
             - name: Attest Release Assets
               uses: actions/attest@v4
               with:
@@ -40,13 +46,20 @@ jobs:
                       main.js
                       manifest.json
                       styles.css
+                      vaultquery.zip
             - name: Generate Release Notes
               run: |
                   git log -1 --pretty=%B > release-notes.md
             - name: Create Release
-              # https://github.com/ncipollo/release-action
-              uses: ncipollo/release-action@v1.20.0
+              uses: softprops/action-gh-release@v3
               with:
-                  artifacts: "main.js,manifest.json,styles.css"
-                  bodyFile: release-notes.md
-                  token: ${{ secrets.GITHUB_TOKEN }}
+                  body_path: release-notes.md
+                  files: |
+                      vaultquery.zip
+                      main.js
+                      manifest.json
+                      styles.css
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

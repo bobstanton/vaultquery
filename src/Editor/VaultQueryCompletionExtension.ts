@@ -11,6 +11,7 @@ import { ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { PROVIDER_DEFINITION_LANGUAGES } from '../Constants/EditorConstants';
 import { logger as rootLogger } from '../utils/logger';
+import { extractSqlAliasMap } from '../utils/SQLParsingUtils';
 import type { ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem } from '../Providers/TableProviderTypes';
 
 const logger = rootLogger.scope('Completion');
@@ -110,6 +111,12 @@ const QUERY_SECTION_SUGGESTIONS: SuggestionItem[] = [
   { label: 'template', apply: 'template:\nreturn ``', detail: 'Template renderer section', type: 'property' },
 ];
 
+const TABLE_CONFIG_KEYS: SuggestionItem[] = [
+  { label: 'height', apply: 'height: ', detail: 'Fixed grid height', type: 'property' },
+  { label: 'minHeight', apply: 'minHeight: ', detail: 'Minimum grid height', type: 'property' },
+  { label: 'maxHeight', apply: 'maxHeight: ', detail: 'Maximum grid height', type: 'property' },
+];
+
 const MARKDOWN_CONFIG_KEYS: SuggestionItem[] = [
   { label: 'columns', apply: 'columns: ', detail: 'Column selection', type: 'property' },
   { label: 'alignment', apply: 'alignment: ', detail: 'Column alignment', type: 'property' },
@@ -131,6 +138,7 @@ const CALENDAR_CONFIG_KEYS: SuggestionItem[] = [
   { label: 'firstDay', apply: 'firstDay: ', detail: 'Week start day', type: 'property' },
   { label: 'weekNumbers', apply: 'weekNumbers: ', detail: 'Show week numbers', type: 'property' },
   { label: 'visibleWeeks', apply: 'visibleWeeks: ', detail: 'Month view visible weeks', type: 'property' },
+  { label: 'skipBlankPeriods', apply: 'skipBlankPeriods: ', detail: 'Skip blank calendar periods when navigating', type: 'property' },
   { label: 'dayMaxEvents', apply: 'dayMaxEvents: ', detail: 'Maximum visible events per day cell', type: 'property' },
   { label: 'dayMaxEventRows', apply: 'dayMaxEventRows: ', detail: 'Maximum event rows per day cell', type: 'property' },
   { label: 'dayMinHeight', apply: 'dayMinHeight: ', detail: 'Minimum day cell height', type: 'property' },
@@ -147,6 +155,10 @@ const CALENDAR_CONFIG_KEYS: SuggestionItem[] = [
 const BOOLEAN_VALUES = ['true', 'false'].map((label) => ({ label, apply: label, detail: 'Boolean value', type: 'constant' }));
 const CHART_TYPE_VALUES = ['bar', 'line', 'pie', 'doughnut', 'scatter'].map((label) => ({ label, apply: label, detail: 'Chart type', type: 'enum' }));
 const CALENDAR_VIEW_VALUES = ['dayGridMonth', 'timeGridWeek', 'timeGridDay', 'month', 'week', 'day'].map((label) => ({ label, apply: label, detail: 'Calendar view', type: 'enum' }));
+const CALENDAR_INITIAL_DATE_VALUES = [
+  { label: 'first', apply: 'first', detail: 'Earliest event date', type: 'enum' },
+  { label: 'last', apply: 'last', detail: 'Latest event date', type: 'enum' },
+];
 const SCHEMA_CACHE_TTL_MS = 30_000;
 
 class VaultQueryCompletionProvider {
@@ -270,6 +282,9 @@ class VaultQueryCompletionProvider {
       return providerCompletions.keys.map(toSuggestionItemForKey);
     }
 
+    if (language === 'vaultquery') {
+      return TABLE_CONFIG_KEYS;
+    }
     if (language === 'vaultquery-markdown') {
       return MARKDOWN_CONFIG_KEYS;
     }
@@ -294,8 +309,11 @@ class VaultQueryCompletionProvider {
         return CHART_TYPE_VALUES;
       case 'initialview':
         return CALENDAR_VIEW_VALUES;
+      case 'initialdate':
+        return CALENDAR_INITIAL_DATE_VALUES;
       case 'weeknumbers':
       case 'expandrows':
+      case 'skipblankperiods':
         return BOOLEAN_VALUES;
       default:
         return [];
@@ -307,7 +325,7 @@ class VaultQueryCompletionProvider {
     const beforeCursor = getLinePrefix(state, context.to);
     const sqlContext = getSqlSuggestionContext(beforeCursor);
     const schema = await this.getSchemaCache();
-    const aliasMap = getSqlAliasMap(sqlSource);
+    const aliasMap = extractSqlAliasMap(sqlSource);
     const qualifiedColumns = getQualifiedColumnSuggestions(beforeCursor, aliasMap, schema);
     const primaryColumns = qualifiedColumns.length > 0
       ? qualifiedColumns
@@ -406,6 +424,7 @@ class VaultQueryCompletionProvider {
 
   public isKnownConfigContext(language: string): boolean {
     return this.isProviderDefinitionLanguage(language)
+      || language === 'vaultquery'
       || language === 'vaultquery-markdown'
       || language === 'vaultquery-chart'
       || language === 'vaultquery-calendar';
@@ -644,27 +663,6 @@ function getSqlSourceBeforeCursor(state: EditorState, fence: ActiveFence, pos: n
   }
 
   return lines.join('\n');
-}
-
-function getSqlAliasMap(sqlSource: string): Map<string, string> {
-  const aliases = new Map<string, string>();
-  const relationPattern = /\b(?:from|join|update|into)\s+("([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][\w.]*))(?:\s+(?:as\s+)?([A-Za-z_][\w]*))?/giu;
-  let match: RegExpExecArray | null;
-
-  while ((match = relationPattern.exec(sqlSource)) !== null) {
-    const relation = match[2] || match[3] || match[4] || match[5];
-    const alias = match[6];
-    if (!relation) {
-      continue;
-    }
-
-    aliases.set(relation.toLowerCase(), relation);
-    if (alias) {
-      aliases.set(alias.toLowerCase(), relation);
-    }
-  }
-
-  return aliases;
 }
 
 function getQualifiedColumnSuggestions(beforeCursor: string, aliasMap: Map<string, string>, schema: SchemaCache): SuggestionItem[] {

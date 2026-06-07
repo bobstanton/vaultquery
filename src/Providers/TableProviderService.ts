@@ -1,7 +1,10 @@
 import { MarkdownPostProcessorContext } from 'obsidian';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
+import { extractMarkdownCodeFences } from '../utils/MarkdownFenceUtils';
 import { hashString } from '../utils/StringUtils';
 import { logger as rootLogger } from '../utils/logger';
+import { getErrorMessage } from '../utils/ErrorMessages';
+import { quoteValidatedIdentifier } from '../utils/SqlIdentifierUtils';
 import type { VaultDatabase } from '../Database/DatabaseService';
 import type { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import type {
@@ -363,7 +366,7 @@ export class TableProviderService {
       });
     } catch (error) {
       logger.error(`Provider refresh failed: provider=${providerId}, definition=${definitionId}`, error);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       runtime.error = message;
       for (const table of provider.tables) {
           this.updateStatus(provider, runtime.definition.id, table, { lastError: message });
@@ -613,7 +616,7 @@ export class TableProviderService {
           id: `${block.path}:${block.blockIndex}`,
           request: {},
         },
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
       this.definitions.set(key, runtime);
       return runtime;
@@ -828,7 +831,7 @@ export class TableProviderService {
   private renderProviderError(container: HTMLElement, title: string, error: unknown, onRefresh: () => Promise<void>): void {
     BaseRenderer.renderError(container, {
       title,
-      message: error instanceof Error ? error.message : String(error),
+      message: getErrorMessage(error),
     });
     this.addProviderRefreshButton(container, onRefresh);
   }
@@ -849,7 +852,7 @@ export class TableProviderService {
     try {
       await this.refreshDefinition(runtime.providerId, runtime.definition.id);
     } catch (error) {
-      runtime.error = error instanceof Error ? error.message : String(error);
+      runtime.error = getErrorMessage(error);
       container.empty();
       this.renderRuntimeDefinition(container, runtime);
       throw error;
@@ -898,25 +901,14 @@ export class TableProviderService {
   }
 
   private extractFencedCodeBlocks(path: string, content: string): IndexedProviderDefinitionBlock[] {
-    const blocks: IndexedProviderDefinitionBlock[] = [];
-    const regex = /```([^\s`]+)[^\n]*\n([\s\S]*?)```/g;
-    let match: RegExpExecArray | null;
-    let blockIndex = 0;
-
-    while ((match = regex.exec(content)) !== null) {
-      const language = match[1].trim();
-      const source = match[2].trim();
-      blocks.push({
+    return extractMarkdownCodeFences(content)
+      .map(block => ({
         path,
-        language,
-        source,
-        blockIndex,
-        blockHash: hashString(source),
-      });
-      blockIndex++;
-    }
-
-    return blocks;
+        language: block.language,
+        source: block.source,
+        blockIndex: block.blockIndex,
+        blockHash: hashString(block.source),
+      }));
   }
 
   private findBlockIndex(path: string, language: string, blockHash: string): number | null {
@@ -978,8 +970,7 @@ export class TableProviderService {
   }
 
   private quoteIdentifier(identifier: string): string {
-    this.validateIdentifier(identifier, 'SQL identifier');
-    return `"${identifier}"`;
+    return quoteValidatedIdentifier(identifier);
   }
 
   private toSqlParam(value: ProviderRowValue | undefined): SqlParam {

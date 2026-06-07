@@ -20,6 +20,14 @@ export interface BlockProcessor {
   process(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void>;
 }
 
+interface WaitForIndexingOptions {
+  getApi: () => VaultQueryAPI | null;
+  hasPendingFileModifications?: () => boolean;
+  timeoutMs?: number;
+  pendingCheckIntervalMs?: number;
+  onPendingTimeout?: () => void;
+}
+
 export function createLoadingIndicator(container: HTMLElement, initialText: string = 'Loading...'): {
   setText: (text: string) => void;
   remove: () => void;
@@ -35,6 +43,31 @@ export function createLoadingIndicator(container: HTMLElement, initialText: stri
     setText: (text: string) => { loadingText.textContent = text; },
     remove: () => loadingContainer.remove()
   };
+}
+
+export async function waitForVaultQueryIndexing(options: WaitForIndexingOptions): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 5000;
+  const pendingCheckIntervalMs = options.pendingCheckIntervalMs ?? 50;
+  const startedAt = Date.now();
+
+  while (options.hasPendingFileModifications?.() === true) {
+    if (Date.now() - startedAt > timeoutMs) {
+      options.onPendingTimeout?.();
+      return;
+    }
+
+    await new Promise(resolve => activeWindow.setTimeout(resolve, pendingCheckIntervalMs));
+  }
+
+  const api = options.getApi();
+  if (!api) {
+    return;
+  }
+
+  const remainingTime = timeoutMs - (Date.now() - startedAt);
+  if (remainingTime > 0) {
+    await api.waitForIndexing(remainingTime);
+  }
 }
 
 export function renderIndexingProgress(loadingDiv: HTMLElement, progress?: IndexingProgress): void {
@@ -73,46 +106,40 @@ interface IndexingCheckOptions {
 }
 
 export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, container: HTMLElement, onReady: () => void | Promise<void>): boolean {
-  const api = getApi();
-
-  if (api && !api.getIndexingStatus().isIndexing) {
-    return true;
-  }
-
-  const loading = createLoadingIndicator(container, VAULTQUERY_DATABASE_PREPARING_MESSAGE);
-  const indexingStatus = api?.getIndexingStatus();
-  if (indexingStatus?.progress) {
-    loading.setText("Indexing: " + indexingStatus.progress.current + "/" + indexingStatus.progress.total + " files");
-  }
-
-  const checkInterval = activeWindow.setInterval(() => {
-    if (!container.isConnected) {
-      activeWindow.clearInterval(checkInterval);
-      return;
-    }
-
-    const polledApi = getApi();
-    if (!polledApi) return;
-
-    const status = polledApi.getIndexingStatus();
-    if (!status.isIndexing) {
-      activeWindow.clearInterval(checkInterval);
-      loading.remove();
-      void Promise.resolve(onReady());
-    }
-    else if (status.progress) {
-      loading.setText("Indexing: " + status.progress.current + "/" + status.progress.total + " files");
-    }
-  }, 500);
-
-  return false;
+  return waitForIndexingAndRender({
+    getApi,
+    container,
+    onReady: async () => { await Promise.resolve(onReady()); },
+    clearContainerOnReady: false,
+    removeLoadingOnReady: true,
+  }).ready;
 }
 
 export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingCheckResult {
-  const { getApi, container, pendingBlocks, blockInfo, onReady } = options;
+  const { pendingBlocks, blockInfo } = options;
+  const result = waitForIndexingAndRender({
+    getApi: options.getApi,
+    container: options.container,
+    onReady: options.onReady,
+    clearContainerOnReady: true,
+    removeLoadingOnReady: false,
+  });
 
-  const api = getApi();
+  if (!result.ready) {
+    pendingBlocks.add(blockInfo);
+  }
 
+  return result;
+}
+
+function waitForIndexingAndRender(options: {
+  getApi: () => VaultQueryAPI | null;
+  container: HTMLElement;
+  onReady: () => Promise<void>;
+  clearContainerOnReady: boolean;
+  removeLoadingOnReady: boolean;
+}): IndexingCheckResult {
+  const api = options.getApi();
   if (api) {
     const indexingStatus = api.getIndexingStatus();
     if (!indexingStatus.isIndexing) {
@@ -120,23 +147,21 @@ export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingChe
     }
   }
 
-  const loadingDiv = container.createDiv({ cls: 'vaultquery-loading' });
-  const currentApi = getApi();
+  const loadingDiv = options.container.createDiv({ cls: 'vaultquery-loading' });
+  const currentApi = options.getApi();
   if (currentApi) {
     renderIndexingProgress(loadingDiv, currentApi.getIndexingStatus().progress);
   }
   else {
     renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE });
   }
-  pendingBlocks.add(blockInfo);
-
   const checkInterval = activeWindow.setInterval(async () => {
-    if (!container.isConnected) {
+    if (!options.container.isConnected) {
       activeWindow.clearInterval(checkInterval);
       return;
     }
 
-    const polledApi = getApi();
+    const polledApi = options.getApi();
     if (!polledApi) {
       return;
     }
@@ -145,8 +170,13 @@ export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingChe
 
     if (!status.isIndexing) {
       activeWindow.clearInterval(checkInterval);
-      container.empty();
-      await onReady();
+      if (options.clearContainerOnReady) {
+        options.container.empty();
+      }
+      else if (options.removeLoadingOnReady) {
+        loadingDiv.remove();
+      }
+      await options.onReady();
     }
     else if (status.progress) {
       renderIndexingProgress(loadingDiv, status.progress);

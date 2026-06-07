@@ -6,6 +6,7 @@ import type { ISchemaManager, VaultFileAdapter } from './DatabaseInterface';
 import type { TriggerFunctions } from '../Triggers/TriggerFunctions';
 import type { WasmSettings } from '../Settings/Settings';
 import { logger as rootLogger } from '../utils/logger';
+import { getErrorMessage } from '../utils/ErrorMessages';
 // @ts-expect-error - inline worker import
 import DatabaseWorker from './database.worker';
 
@@ -43,8 +44,6 @@ class WorkerSchemaProxy implements ISchemaManager {
   }
 
   discoverTableStructures(): TableStructure[] {
-    // Table structure discovery is performed by the worker during rebuildTableViews().
-    // This sync method returns empty for interface compatibility.
     return [];
   }
 }
@@ -297,13 +296,14 @@ export class WorkerDatabase {
       return await this.callWorker<DatabaseHealth>({ type: 'health' }, timeoutMs);
     }
     catch (error) {
+      const message = getErrorMessage(error);
       return {
         healthy: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
         diagnostics: {
           timestamp: new Date().toISOString(),
           mode: 'worker',
-          workerCallTimedOut: error instanceof Error && error.message.includes('timed out'),
+          workerCallTimedOut: message.includes('timed out'),
           pendingWorkerCallCount: this.pendingWorkerCalls.size,
         },
       };

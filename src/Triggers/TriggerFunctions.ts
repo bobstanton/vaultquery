@@ -32,6 +32,14 @@ interface DeferTimer {
   win: Window;
 }
 
+type TriggerArgumentType = 'string' | 'number';
+type TriggerArgumentValues = Record<string, string | number>;
+
+interface TriggerArgumentSpec {
+  name: string;
+  type: TriggerArgumentType;
+}
+
 export type PendingAction =
   | { type: 'set_property'; params: SetPropertyParams }
   | { type: 'remove_property'; params: RemovePropertyParams }
@@ -69,9 +77,9 @@ export class TriggerFunctions {
   private currentDeferKey: string | null = null;
   private onDeferredReady: (() => void) | null = null;
 
-  // Track direct apply target to distinguish from cascade
-  // During applyDML, only block sync for the DIRECT target; allow cascade to queue
-  private directApplyTarget: { path: string; tableIndex: number } | null = null;
+  // Track direct apply targets to distinguish them from cascades.
+  // During applyDML, only block sync for DIRECT targets; allow cascades to queue.
+  private directApplyTargets: Set<string> | null = null;
 
   /**
    * Central guard for standard trigger functions: blocks during processing/preview,
@@ -85,6 +93,28 @@ export class TriggerFunctions {
     if (action === null) return 0;
     this.queueAction(action);
     return 1;
+  }
+
+  private actionFromArgs(functionName: string, args: unknown[], specs: TriggerArgumentSpec[], build: (values: TriggerArgumentValues) => PendingAction | null): PendingAction | null {
+    const values: TriggerArgumentValues = {};
+    const invalidValues: Record<string, unknown> = {};
+
+    for (let index = 0; index < specs.length; index++) {
+      const spec = specs[index];
+      const value = args[index];
+      if (typeof value !== spec.type) {
+        invalidValues[spec.name] = value;
+        continue;
+      }
+      values[spec.name] = value as string | number;
+    }
+
+    if (Object.keys(invalidValues).length > 0) {
+      logger.warn(`${functionName}: invalid arguments`, invalidValues);
+      return null;
+    }
+
+    return build(values);
   }
 
   /**
@@ -105,23 +135,17 @@ export class TriggerFunctions {
    */
   public register(db: Database): void {
     db.create_function('vq_set_property', (path: unknown, key: unknown, value: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof key !== 'string') {
-          logger.warn('vq_set_property: invalid arguments', { path, key, value });
-          return null;
-        }
-        return { type: 'set_property', params: { path, key, value: value == null ? '' : String(value) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_property', [path, key], [{ name: 'path', type: 'string' }, { name: 'key', type: 'string' }], values => ({
+        type: 'set_property',
+        params: { path: values.path as string, key: values.key as string, value: value == null ? '' : String(value) }
+      })))
     );
 
     db.create_function('vq_remove_property', (path: unknown, key: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof key !== 'string') {
-          logger.warn('vq_remove_property: invalid arguments', { path, key });
-          return null;
-        }
-        return { type: 'remove_property', params: { path, key } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_remove_property', [path, key], [{ name: 'path', type: 'string' }, { name: 'key', type: 'string' }], values => ({
+        type: 'remove_property',
+        params: { path: values.path as string, key: values.key as string }
+      })))
     );
 
     // Allow during preview mode since notifications don't modify files.
@@ -139,33 +163,24 @@ export class TriggerFunctions {
     });
 
     db.create_function('vq_rename_note', (path: unknown, newName: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof newName !== 'string') {
-          logger.warn('vq_rename_note: invalid arguments', { path, newName });
-          return null;
-        }
-        return { type: 'rename_note', params: { path, newName } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_rename_note', [path, newName], [{ name: 'path', type: 'string' }, { name: 'newName', type: 'string' }], values => ({
+        type: 'rename_note',
+        params: { path: values.path as string, newName: values.newName as string }
+      })))
     );
 
     db.create_function('vq_set_content', (path: unknown, content: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string') {
-          logger.warn('vq_set_content: invalid arguments', { path });
-          return null;
-        }
-        return { type: 'set_content', params: { path, content: content == null ? '' : String(content) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_content', [path], [{ name: 'path', type: 'string' }], values => ({
+        type: 'set_content',
+        params: { path: values.path as string, content: content == null ? '' : String(content) }
+      })))
     );
 
     db.create_function('vq_replace_content', (path: unknown, search: unknown, replacement: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof search !== 'string') {
-          logger.warn('vq_replace_content: invalid arguments', { path, search });
-          return null;
-        }
-        return { type: 'replace_content', params: { path, search, replacement: replacement == null ? '' : String(replacement) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_replace_content', [path, search], [{ name: 'path', type: 'string' }, { name: 'search', type: 'string' }], values => ({
+        type: 'replace_content',
+        params: { path: values.path as string, search: values.search as string, replacement: replacement == null ? '' : String(replacement) }
+      })))
     );
 
     // Use after direct SQL changes to notes.content:
@@ -249,189 +264,134 @@ export class TriggerFunctions {
     });
 
     db.create_function('vq_complete_task', (path: unknown, lineNumber: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_complete_task: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'complete_task', params: { path, lineNumber, status: 'DONE' } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_complete_task', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'complete_task',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: 'DONE' }
+      })))
     );
 
     db.create_function('vq_uncomplete_task', (path: unknown, lineNumber: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_uncomplete_task: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'complete_task', params: { path, lineNumber, status: 'TODO' } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_uncomplete_task', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'complete_task',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: 'TODO' }
+      })))
     );
 
     db.create_function('vq_set_task_status', (path: unknown, lineNumber: unknown, status: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number' || typeof status !== 'string') {
-          logger.warn('vq_set_task_status: invalid arguments', { path, lineNumber, status });
-          return null;
-        }
-        return { type: 'complete_task', params: { path, lineNumber, status } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_task_status', [path, lineNumber, status], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }, { name: 'status', type: 'string' }], values => ({
+        type: 'complete_task',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: values.status as string }
+      })))
     );
 
     db.create_function('vq_set_task_text', (path: unknown, lineNumber: unknown, text: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_set_task_text: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'update_task', params: { path, lineNumber, status: null, taskText: text == null ? '' : String(text) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_task_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'update_task',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: null, taskText: text == null ? '' : String(text) }
+      })))
     );
 
     db.create_function('vq_add_task', (path: unknown, text: unknown, afterLine: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string') {
-          logger.warn('vq_add_task: invalid arguments', { path });
-          return null;
-        }
-        return { type: 'add_task', params: { path, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_add_task', [path], [{ name: 'path', type: 'string' }], values => ({
+        type: 'add_task',
+        params: { path: values.path as string, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
+      })))
     );
 
     db.create_function('vq_delete_task', (path: unknown, lineNumber: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_delete_task: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'delete_task', params: { path, lineNumber } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_delete_task', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'delete_task',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number }
+      })))
     );
 
     db.create_function('vq_set_heading_text', (path: unknown, lineNumber: unknown, text: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_set_heading_text: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'update_heading', params: { path, lineNumber, level: null, headingText: text == null ? '' : String(text) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_heading_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'update_heading',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, level: null, headingText: text == null ? '' : String(text) }
+      })))
     );
 
     db.create_function('vq_set_heading_level', (path: unknown, lineNumber: unknown, level: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number' || typeof level !== 'number') {
-          logger.warn('vq_set_heading_level: invalid arguments', { path, lineNumber, level });
-          return null;
-        }
-        return { type: 'update_heading', params: { path, lineNumber, level: Math.max(1, Math.min(6, level)), headingText: null } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_heading_level', [path, lineNumber, level], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }, { name: 'level', type: 'number' }], values => ({
+        type: 'update_heading',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, level: Math.max(1, Math.min(6, values.level as number)), headingText: null }
+      })))
     );
 
     db.create_function('vq_add_heading', (path: unknown, level: unknown, text: unknown, afterLine: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof level !== 'number') {
-          logger.warn('vq_add_heading: invalid arguments', { path, level });
-          return null;
+      this.guarded(() => this.actionFromArgs('vq_add_heading', [path, level], [{ name: 'path', type: 'string' }, { name: 'level', type: 'number' }], values => ({
+        type: 'add_heading',
+        params: {
+          path: values.path as string,
+          level: Math.max(1, Math.min(6, values.level as number)),
+          text: text == null ? '' : String(text),
+          afterLine: typeof afterLine === 'number' ? afterLine : 0
         }
-        return {
-          type: 'add_heading',
-          params: {
-            path,
-            level: Math.max(1, Math.min(6, level)),
-            text: text == null ? '' : String(text),
-            afterLine: typeof afterLine === 'number' ? afterLine : 0
-          }
-        };
-      })
+      })))
     );
 
     db.create_function('vq_delete_heading', (path: unknown, lineNumber: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_delete_heading: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'delete_heading', params: { path, lineNumber } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_delete_heading', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'delete_heading',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number }
+      })))
     );
 
     db.create_function('vq_set_list_item_text', (path: unknown, lineNumber: unknown, text: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_set_list_item_text: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'update_list_item', params: { path, lineNumber, itemText: text == null ? '' : String(text) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_list_item_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'update_list_item',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, itemText: text == null ? '' : String(text) }
+      })))
     );
 
     db.create_function('vq_add_list_item', (path: unknown, text: unknown, afterLine: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string') {
-          logger.warn('vq_add_list_item: invalid arguments', { path });
-          return null;
-        }
-        return { type: 'add_list_item', params: { path, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_add_list_item', [path], [{ name: 'path', type: 'string' }], values => ({
+        type: 'add_list_item',
+        params: { path: values.path as string, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
+      })))
     );
 
     db.create_function('vq_delete_list_item', (path: unknown, lineNumber: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof lineNumber !== 'number') {
-          logger.warn('vq_delete_list_item: invalid arguments', { path, lineNumber });
-          return null;
-        }
-        return { type: 'delete_list_item', params: { path, lineNumber } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_delete_list_item', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
+        type: 'delete_list_item',
+        params: { path: values.path as string, lineNumber: values.lineNumber as number }
+      })))
     );
 
     db.create_function('vq_add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof valuesJson !== 'string') {
-          logger.warn('vq_add_table_row: invalid arguments', { path, tableIndex, valuesJson });
-          return null;
-        }
+      this.guarded(() => this.actionFromArgs('vq_add_table_row', [path, tableIndex, valuesJson], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'valuesJson', type: 'string' }], values => {
         let parsedValues: Record<string, string>;
         try {
-          parsedValues = JSON.parse(valuesJson);
+          parsedValues = JSON.parse(values.valuesJson as string);
         } catch (e) {
           logger.warn('vq_add_table_row: invalid JSON', { valuesJson, error: e });
           return null;
         }
-        return { type: 'add_table_row', params: { path, tableIndex, valuesJson: JSON.stringify(parsedValues) } };
-      })
+        return { type: 'add_table_row', params: { path: values.path as string, tableIndex: values.tableIndex as number, valuesJson: JSON.stringify(parsedValues) } };
+      }))
     );
 
     db.create_function('vq_set_table_cell', (path: unknown, tableIndex: unknown, rowIndex: unknown, columnName: unknown, value: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number' || typeof columnName !== 'string') {
-          logger.warn('vq_set_table_cell: invalid arguments', { path, tableIndex, rowIndex, columnName });
-          return null;
-        }
-        return { type: 'set_table_cell', params: { path, tableIndex, rowIndex, columnName, value: value == null ? '' : String(value) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_set_table_cell', [path, tableIndex, rowIndex, columnName], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'rowIndex', type: 'number' }, { name: 'columnName', type: 'string' }], values => ({
+        type: 'set_table_cell',
+        params: { path: values.path as string, tableIndex: values.tableIndex as number, rowIndex: values.rowIndex as number, columnName: values.columnName as string, value: value == null ? '' : String(value) }
+      })))
     );
 
     db.create_function('vq_delete_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number') {
-          logger.warn('vq_delete_table_row: invalid arguments', { path, tableIndex, rowIndex });
-          return null;
-        }
-        return { type: 'delete_table_row', params: { path, tableIndex, rowIndex } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_delete_table_row', [path, tableIndex, rowIndex], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'rowIndex', type: 'number' }], values => ({
+        type: 'delete_table_row',
+        params: { path: values.path as string, tableIndex: values.tableIndex as number, rowIndex: values.rowIndex as number }
+      })))
     );
 
     // If the note already exists, this does nothing (use vq_set_content to overwrite)
     db.create_function('vq_create_note', (path: unknown, content: unknown) =>
-      this.guarded(() => {
-        if (typeof path !== 'string') {
-          logger.warn('vq_create_note: invalid arguments', { path });
-          return null;
-        }
-        return { type: 'create_note', params: { path, content: content == null ? '' : String(content) } };
-      })
+      this.guarded(() => this.actionFromArgs('vq_create_note', [path], [{ name: 'path', type: 'string' }], values => ({
+        type: 'create_note',
+        params: { path: values.path as string, content: content == null ? '' : String(content) }
+      })))
     );
 
     this.registerSyncHandlers();
@@ -451,11 +411,11 @@ export class TriggerFunctions {
         return 0;
       }
 
-      if (this.isPreviewMode && !this.directApplyTarget) {
+      if (this.isPreviewMode && !this.directApplyTargets) {
         return 0;
       }
 
-      if (this.directApplyTarget) {
+      if (this.directApplyTargets) {
         if (this.isDirectApplyTarget(path, tableIndex)) {
           return 0;
         }
@@ -593,12 +553,21 @@ export class TriggerFunctions {
   }
 
   public setDirectApplyTarget(target: { path: string; tableIndex: number } | null): void {
-    this.directApplyTarget = target;
+    this.setDirectApplyTargets(target ? [target] : null);
+  }
+
+  public setDirectApplyTargets(targets: Array<{ path: string; tableIndex: number }> | null): void {
+    this.directApplyTargets = targets
+      ? new Set(targets.map(target => this.formatDirectApplyTargetKey(target.path, target.tableIndex)))
+      : null;
   }
 
   public isDirectApplyTarget(path: string, tableIndex: number): boolean {
-    if (!this.directApplyTarget) return false;
-    return this.directApplyTarget.path === path && this.directApplyTarget.tableIndex === tableIndex;
+    return this.directApplyTargets?.has(this.formatDirectApplyTargetKey(path, tableIndex)) ?? false;
+  }
+
+  private formatDirectApplyTargetKey(path: string, tableIndex: number): string {
+    return `${path}\u0000${tableIndex}`;
   }
 
   public clearPendingActions(): void {

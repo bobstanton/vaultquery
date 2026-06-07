@@ -26,7 +26,8 @@ import { CustomSQLFunctions } from './CustomSQLFunctions';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
 import { type VaultFileAdapter } from './DatabaseInterface';
 import { loadWasmBinary, cacheWasmBinaryIfNeeded, CDN_URL } from './WasmLoader';
-import { collectStatementRows, getCachedMultiRowInsertSql, runPreparedStatement } from './StatementRows';
+import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
+import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
 import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
 import { rewriteTriggerWithPrefix } from '../utils/SQLParsingUtils';
@@ -131,7 +132,7 @@ export class VaultDatabase {
         db = new sqlJs.Database(new Uint8Array(data));
       }
       catch (error) {
-        throw new Error(ERROR_MESSAGES.DATABASE_READ_FAILED(actualDatabasePath, error instanceof Error ? error.message : 'Unknown error'));
+        throw new Error(ERROR_MESSAGES.DATABASE_READ_FAILED(actualDatabasePath, getErrorMessage(error)));
       }
     }
 
@@ -269,7 +270,7 @@ export class VaultDatabase {
         if (firstKey) {
           const oldStmt = this.preparedStatements.get(firstKey);
           if (oldStmt) {
-            try { oldStmt.free(); } catch { /* statement may already be freed */ }
+            freePreparedStatement(oldStmt);
           }
           this.preparedStatements.delete(firstKey);
         }
@@ -582,19 +583,9 @@ export class VaultDatabase {
   }
 
   private runMultiRowInsert(baseSQL: string, columnsCount: number, rows: (string | number | null)[][], maxRowsPerBatch: number = MAX_ROWS_PER_INSERT_BATCH): void {
-    if (rows.length === 0) return;
-
-    for (let i = 0; i < rows.length; i += maxRowsPerBatch) {
-      const batch = rows.slice(i, i + maxRowsPerBatch);
-      const sql = this.getMultiRowInsertSql(baseSQL, columnsCount, batch.length);
-      const params = batch.flat();
-
+    runMultiRowInsertBatches(this.multiRowInsertSqlCache, baseSQL, columnsCount, rows, maxRowsPerBatch, (sql, params) => {
       this.db.run(sql, params);
-    }
-  }
-
-  private getMultiRowInsertSql(baseSQL: string, columnsCount: number, rowCount: number): string {
-    return getCachedMultiRowInsertSql(this.multiRowInsertSqlCache, baseSQL, columnsCount, rowCount);
+    });
   }
 
   public async indexNotesBatch(notesData: IndexNoteData[], isInitialIndexing: boolean = false, skipDiskSave: boolean = false): Promise<void> {
@@ -668,9 +659,9 @@ export class VaultDatabase {
     // For INSERT INTO table_rows, set direct apply target to allow cascade
     // The DIRECT insert is handled by WriteSyncService, but CASCADE inserts
     // (from triggers like wuphf_broadcast) need to queue
-    const directTarget = this.extractTableRowsTarget(previewResult);
-    if (directTarget) {
-      this.triggerFunctions?.setDirectApplyTarget(directTarget);
+    const directTargets = this.extractTableRowsTargets(previewResult);
+    if (directTargets.length > 0) {
+      this.triggerFunctions?.setDirectApplyTargets(directTargets);
     }
 
     try {
@@ -682,7 +673,7 @@ export class VaultDatabase {
       });
     } finally {
       this.triggerFunctions?.setPreviewMode(false);
-      this.triggerFunctions?.setDirectApplyTarget(null);
+      this.triggerFunctions?.setDirectApplyTargets(null);
     }
   }
 
@@ -691,29 +682,46 @@ export class VaultDatabase {
    * Used to distinguish direct inserts (handled by WriteSyncService) from
    * cascade inserts (which should queue for trigger processing).
    */
-  private extractTableRowsTarget(previewResult: PreviewResult): { path: string; tableIndex: number } | null {
+  private extractTableRowsTargets(previewResult: PreviewResult): Array<{ path: string; tableIndex: number }> {
+    const targets = new Map<string, { path: string; tableIndex: number }>();
+
+    const addTarget = (path: unknown, tableIndex: unknown) => {
+      if (typeof path !== 'string' || path.length === 0 || typeof tableIndex !== 'number' || !Number.isFinite(tableIndex)) {
+        return;
+      }
+
+      targets.set(`${path}\u0000${tableIndex}`, { path, tableIndex });
+    };
+
+    const collectFromResult = (result: PreviewResult) => {
+      if (result.op === 'multi' && result.multiResults) {
+        result.multiResults.forEach(collectFromResult);
+        return;
+      }
+
+      if (result.table === 'table_rows' && result.op === 'insert') {
+        for (const row of result.after) {
+          addTarget(row.path, row.table_index);
+        }
+      }
+    };
+
+    collectFromResult(previewResult);
+
     for (const { sql, params } of previewResult.sqlToApply) {
       if (/INSERT\s+INTO\s+table_rows/i.test(sql)) {
         if (params && params.length >= 2) {
-          const path = params[0];
-          const tableIndex = params[1];
-          if (typeof path === 'string' && typeof tableIndex === 'number') {
-            return { path, tableIndex };
-          }
+          addTarget(params[0], params[1]);
         }
 
-        // Fallback: parse inline VALUES from SQL
         const valuesMatch = sql.match(/VALUES\s*\(\s*'([^']+)'\s*,\s*(\d+)/i);
         if (valuesMatch) {
-          const path = valuesMatch[1];
-          const tableIndex = parseInt(valuesMatch[2], 10);
-          if (path && !isNaN(tableIndex)) {
-            return { path, tableIndex };
-          }
+          addTarget(valuesMatch[1], parseInt(valuesMatch[2], 10));
         }
       }
     }
-    return null;
+
+    return Array.from(targets.values());
   }
 
   private applyDMLWithoutTransaction(previewResult: PreviewResult): void {
@@ -727,51 +735,12 @@ export class VaultDatabase {
     }
   }
 
-  /**
-   * Check if the database is still healthy (WASM memory not reclaimed).
-   * Returns an object with health status and diagnostic info.
-   */
   public checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
-    const diagnostics: Record<string, unknown> = {
+    return checkSqlJsDatabaseHealth(this.db, {
       timestamp: new Date().toISOString(),
       useMemoryStorage: this.useMemoryStorage,
-      hasDb: !!this.db,
       preparedStatementCount: this.preparedStatements.size
-    };
-
-    try {
-      const result = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'");
-      const notesTableExists = result.length > 0 && result[0].values.length > 0;
-
-      diagnostics.notesTableExists = notesTableExists;
-
-      if (!notesTableExists) {
-        const allTables = this.db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-        diagnostics.existingTables = allTables.length > 0
-          ? allTables[0].values.map(row => row[0])
-          : [];
-
-        return {
-          healthy: false,
-          error: 'notes table does not exist',
-          diagnostics
-        };
-      }
-
-      const countResult = this.db.exec("SELECT COUNT(*) FROM notes");
-      diagnostics.noteCount = countResult.length > 0 ? countResult[0].values[0][0] : 0;
-
-      return { healthy: true, diagnostics };
-    } catch (error) {
-      diagnostics.exceptionType = error?.constructor?.name;
-      diagnostics.exceptionMessage = error instanceof Error ? error.message : String(error);
-
-      return {
-        healthy: false,
-        error: `Database query failed: ${error instanceof Error ? error.message : String(error)}`,
-        diagnostics
-      };
-    }
+    });
   }
 
   public async close(): Promise<boolean> {
@@ -780,9 +749,7 @@ export class VaultDatabase {
 
       this.cleanupPreparedStatements();
 
-      if (typeof this.db.close === 'function') {
-        this.db.close();
-      }
+      this.db.close();
 
       return true;
     }
@@ -793,106 +760,114 @@ export class VaultDatabase {
   }
 
   private replaceTasks(path: string, tasks: IndexNoteData['tasks'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
-    // We compare against file data, not DB data, to detect trigger modifications
-    const fileTasks = new Map<number, { status: string; task_text: string }>();
-    if (tasks && this.shouldPerformAutoSync(skipAutoSync, tasks.length)) {
-      for (const task of tasks) {
-        fileTasks.set(task.line_number, {
+    this.replaceWithAutoSync({
+      path,
+      rows: tasks,
+      skipDeletes,
+      skipAutoSync,
+      replace: () => replaceTasksCore(this.createIndexingAdapter(), path, tasks, skipDeletes),
+      selectSql: INDEXING_SQL.SELECT_TASKS_FOR_SYNC,
+      mapFileRow: (task) => ({
+        lineNumber: task.line_number,
+        value: {
           status: task.status,
           task_text: task.task_text
-        });
-      }
-    }
-
-    replaceTasksCore(this.createIndexingAdapter(), path, tasks, skipDeletes);
-
-    // Auto-sync: Check if a trigger modified tasks (compare DB state vs file state)
-    if (this.shouldPerformAutoSync(skipAutoSync, fileTasks.size)) {
-      try {
-        const syncResult = this.db.exec(INDEXING_SQL.SELECT_TASKS_FOR_SYNC, [path]);
-        if (syncResult.length > 0 && syncResult[0].values) {
-          for (const row of syncResult[0].values) {
-            const lineNumber = row[0] as number;
-            const dbStatus = row[1] as string;
-            const dbTaskText = row[2] as string;
-            const fileTask = fileTasks.get(lineNumber);
-            // If DB differs from file, a trigger modified it - queue sync
-            if (fileTask && (fileTask.status !== dbStatus || fileTask.task_text !== dbTaskText)) {
-              this.triggerFunctions!.queueUpdateTask(path, lineNumber, dbStatus, dbTaskText);
-            }
-          }
         }
-      } catch (error) {
-        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
+      }),
+      syncChangedRow: (lineNumber, fileTask, dbRow) => {
+        const dbStatus = dbRow[1] as string;
+        const dbTaskText = dbRow[2] as string;
+        if (fileTask.status !== dbStatus || fileTask.task_text !== dbTaskText) {
+          this.triggerFunctions!.queueUpdateTask(path, lineNumber, dbStatus, dbTaskText);
+        }
       }
-    }
+    });
   }
 
   private replaceHeadings(path: string, headings: IndexNoteData['headings'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
-    const fileHeadingsForSync = new Map<number, { level: number; heading_text: string }>();
-    if (headings && this.shouldPerformAutoSync(skipAutoSync, headings.length)) {
-      for (const heading of headings) {
-        fileHeadingsForSync.set(heading.line_number, {
+    this.replaceWithAutoSync({
+      path,
+      rows: headings,
+      skipDeletes,
+      skipAutoSync,
+      replace: () => replaceHeadingsCore(this.createIndexingAdapter(), path, headings, skipDeletes),
+      selectSql: INDEXING_SQL.SELECT_HEADINGS_FOR_SYNC,
+      mapFileRow: (heading) => ({
+        lineNumber: heading.line_number,
+        value: {
           level: heading.level,
           heading_text: heading.heading_text
-        });
-      }
-    }
-
-    replaceHeadingsCore(this.createIndexingAdapter(), path, headings, skipDeletes);
-
-    // Auto-sync: Check if a trigger modified headings (compare DB state vs file state)
-    if (this.shouldPerformAutoSync(skipAutoSync, fileHeadingsForSync.size)) {
-      try {
-        const syncResult = this.db.exec(INDEXING_SQL.SELECT_HEADINGS_FOR_SYNC, [path]);
-        if (syncResult.length > 0 && syncResult[0].values) {
-          for (const row of syncResult[0].values) {
-            const lineNumber = row[0] as number;
-            const dbLevel = row[1] as number;
-            const dbHeadingText = row[2] as string;
-            const fileHeading = fileHeadingsForSync.get(lineNumber);
-            if (fileHeading && (fileHeading.level !== dbLevel || fileHeading.heading_text !== dbHeadingText)) {
-              this.triggerFunctions!.queueUpdateHeading(path, lineNumber, dbLevel, dbHeadingText);
-            }
-          }
         }
-      } catch (error) {
-        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
+      }),
+      syncChangedRow: (lineNumber, fileHeading, dbRow) => {
+        const dbLevel = dbRow[1] as number;
+        const dbHeadingText = dbRow[2] as string;
+        if (fileHeading.level !== dbLevel || fileHeading.heading_text !== dbHeadingText) {
+          this.triggerFunctions!.queueUpdateHeading(path, lineNumber, dbLevel, dbHeadingText);
+        }
       }
-    }
+    });
   }
 
   private replaceListItems(path: string, listItems: IndexNoteData['listItems'], skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
-    // We compare against file data, not DB data, to detect trigger modifications
-    const fileListItems = new Map<number, { content: string }>();
-    if (listItems && this.shouldPerformAutoSync(skipAutoSync, listItems.length)) {
-      for (const item of listItems) {
-        fileListItems.set(item.line_number, {
+    this.replaceWithAutoSync({
+      path,
+      rows: listItems,
+      skipDeletes,
+      skipAutoSync,
+      replace: () => replaceListItemsCore(this.createIndexingAdapter(), path, listItems, skipDeletes),
+      selectSql: INDEXING_SQL.SELECT_LIST_ITEMS_FOR_SYNC,
+      mapFileRow: (item) => ({
+        lineNumber: item.line_number,
+        value: {
           content: item.content
-        });
+        }
+      }),
+      syncChangedRow: (lineNumber, fileItem, dbRow) => {
+        const dbContent = dbRow[1] as string;
+        if (fileItem.content !== dbContent) {
+          this.triggerFunctions!.queueUpdateListItem(path, lineNumber, dbContent);
+        }
+      }
+    });
+  }
+
+  private replaceWithAutoSync<TRow, TFileValue>(options: {
+    path: string;
+    rows: TRow[] | undefined;
+    skipDeletes: boolean;
+    skipAutoSync: boolean;
+    replace: () => void;
+    selectSql: string;
+    mapFileRow: (row: TRow) => { lineNumber: number; value: TFileValue };
+    syncChangedRow: (lineNumber: number, fileValue: TFileValue, dbRow: unknown[]) => void;
+  }): void {
+    const fileRows = new Map<number, TFileValue>();
+    const shouldSync = options.rows ? this.shouldPerformAutoSync(options.skipAutoSync, options.rows.length) : false;
+    if (options.rows && shouldSync) {
+      for (const row of options.rows) {
+        const mapped = options.mapFileRow(row);
+        fileRows.set(mapped.lineNumber, mapped.value);
       }
     }
 
-    replaceListItemsCore(this.createIndexingAdapter(), path, listItems, skipDeletes);
+    options.replace();
 
-    // Auto-sync: Check if a trigger modified list items (compare DB state vs file state)
-    if (this.shouldPerformAutoSync(skipAutoSync, fileListItems.size)) {
-      try {
-        const syncResult = this.db.exec(INDEXING_SQL.SELECT_LIST_ITEMS_FOR_SYNC, [path]);
-        if (syncResult.length > 0 && syncResult[0].values) {
-          for (const row of syncResult[0].values) {
-            const lineNumber = row[0] as number;
-            const dbContent = row[1] as string;
-            const fileItem = fileListItems.get(lineNumber);
-            // If DB differs from file, a trigger modified it - queue sync
-            if (fileItem && fileItem.content !== dbContent) {
-              this.triggerFunctions!.queueUpdateListItem(path, lineNumber, dbContent);
-            }
-          }
+    if (!shouldSync || fileRows.size === 0) {
+      return;
+    }
+
+    try {
+      const syncResult = this.db.exec(options.selectSql, [options.path]);
+      for (const row of syncResult[0]?.values ?? []) {
+        const lineNumber = row[0] as number;
+        const fileValue = fileRows.get(lineNumber);
+        if (fileValue) {
+          options.syncChangedRow(lineNumber, fileValue, row);
         }
-      } catch (error) {
-        logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
       }
+    } catch (error) {
+      logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
     }
   }
 
@@ -922,16 +897,12 @@ export class VaultDatabase {
         enabled: row[3] as number
       })) ?? [];
     }
-    catch (e) {
-      logger.warn('DatabaseService.getAllUserTriggers: Query failed', e);
+    catch (error) {
+      logger.warn('DatabaseService.getAllUserTriggers: Query failed', error);
       return [];
     }
   }
 
-  /**
-   * Register all user triggers from _user_triggers table with SQLite.
-   * Called once after vault indexing completes to activate all triggers.
-   */
   public registerUserTriggers(): void {
     const triggers = this.getAllUserTriggers();
 
@@ -945,12 +916,6 @@ export class VaultDatabase {
     }
   }
 
-  /**
-   * Register all user functions from _user_functions table with SQLite.
-   * Called once after vault indexing completes (or after database transfer from worker).
-   * Functions are stored in the database but need to be re-registered with create_function
-   * since that's an in-memory operation that doesn't persist in the SQLite binary.
-   */
   public registerUserFunctions(): void {
     const functions = this.getAllUserFunctions();
 
@@ -964,13 +929,7 @@ export class VaultDatabase {
     }
   }
 
-  /**
-   * Register a single trigger at render time.
-   * Called by TriggerCodeBlockProcessor when a trigger block is rendered.
-   * Stores the trigger in _user_triggers table and activates it immediately.
-   */
   public registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
-    // Validate trigger SQL - reject patterns that won't sync to files
     const disallowedPatterns = [
       { pattern: /UPDATE\s+notes\s+SET\s+content\s*=/i, message: 'UPDATE notes SET content is not auto-synced. Use vq_replace_content() or vq_set_content() instead.' },
     ];
@@ -993,22 +952,15 @@ export class VaultDatabase {
     this.activateTrigger(triggerName, triggerSql, sourcePath);
   }
 
-  /**
-   * Internal helper to activate a SQLite trigger.
-   * Handles name prefixing and {this.path} placeholder replacement.
-   */
   private activateTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
     const prefixedName = `_vq_user_${triggerName}`;
 
     this.db.run(`DROP TRIGGER IF EXISTS "${prefixedName}"`);
 
-    // Replace {this.path} placeholder with the actual source path (escaped for SQL string literals)
     const sqlWithPath = sourcePath
       ? triggerSql.replace(/\{this\.path\}/g, sourcePath.replace(/'/g, "''"))
       : triggerSql;
 
-    // Rewrite triggers on table_rows VIEW to use _table_row_events shadow table
-    // (SQLite views only support INSTEAD OF triggers, not AFTER triggers)
     const sqlWithTableRowsRewrite = sqlWithPath.replace(
       /\bON\s+table_rows\b/gi,
       'ON _table_row_events'
@@ -1036,8 +988,8 @@ export class VaultDatabase {
         sql: row[2] as string
       })) ?? [];
     }
-    catch (e) {
-      logger.warn('DatabaseService.getAllUserViews: Query failed', e);
+    catch (error) {
+      logger.warn('DatabaseService.getAllUserViews: Query failed', error);
       return [];
     }
   }
@@ -1051,8 +1003,8 @@ export class VaultDatabase {
         source: row[2] as string
       })) ?? [];
     }
-    catch (e) {
-      logger.warn('DatabaseService.getAllUserFunctions: Query failed', e);
+    catch (error) {
+      logger.warn('DatabaseService.getAllUserFunctions: Query failed', error);
       return [];
     }
   }
@@ -1066,14 +1018,19 @@ export class VaultDatabase {
     triggerFunctions.register(this.db);
   }
 
-  /**
-   * Helper to check if auto-sync should be performed.
-   * Consolidates the repeated conditional check across replace* methods.
-   */
   private shouldPerformAutoSync(skipAutoSync: boolean, dataLength: number | undefined): boolean {
     return !skipAutoSync &&
            !!dataLength &&
            !!this.triggerFunctions &&
            !this.triggerFunctions.getIsProcessingTriggers();
+  }
+}
+
+function freePreparedStatement(stmt: Statement): void {
+  try {
+    stmt.free();
+  }
+  catch (error) {
+    logger.warn(WARNING_MESSAGES.STATEMENT_FREE_ERROR, error);
   }
 }

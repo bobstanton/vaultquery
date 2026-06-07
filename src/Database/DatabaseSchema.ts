@@ -1,3 +1,5 @@
+import { escapeSqlString, quoteIdentifier } from '../utils/SqlIdentifierUtils';
+
 const TABLE_DEFINITIONS = `
 CREATE TABLE IF NOT EXISTS notes (
   path TEXT PRIMARY KEY,
@@ -251,8 +253,27 @@ CREATE TABLE IF NOT EXISTS tables (
 );
 CREATE INDEX IF NOT EXISTS ix_tables_path ON tables(path);
 
-INSERT OR IGNORE INTO tables(path, table_index, table_name)
-SELECT path, table_index, MIN(table_name) FROM table_cells GROUP BY path, table_index;
+INSERT OR IGNORE INTO tables(path, table_index, table_name, line_number)
+SELECT
+  path,
+  table_index,
+  MIN(table_name),
+  MIN(CASE
+    WHEN line_number IS NOT NULL THEN line_number - row_index - 2
+    ELSE NULL
+  END)
+FROM table_cells
+GROUP BY path, table_index;
+
+UPDATE tables
+SET line_number = (
+  SELECT MIN(c.line_number - c.row_index - 2)
+  FROM table_cells c
+  WHERE c.path = tables.path
+    AND c.table_index = tables.table_index
+    AND c.line_number IS NOT NULL
+)
+WHERE line_number IS NULL;
 
 -- Shadow table for table_rows user triggers (views don't support AFTER triggers)
 -- User triggers targeting table_rows are rewritten to target this table
@@ -401,23 +422,40 @@ SELECT
 FROM list_items item
 LEFT JOIN list_items parent
   ON item.path = parent.path
+  AND item.list_index = parent.list_index
   AND item.parent_index = parent.item_index;
 
-CREATE TRIGGER IF NOT EXISTS trg_list_items_view_update
+DROP TRIGGER IF EXISTS trg_list_items_view_update;
+CREATE TRIGGER trg_list_items_view_update
 INSTEAD OF UPDATE ON list_items_view
 BEGIN
   UPDATE list_items
   SET content = COALESCE(NEW.content, content)
   WHERE path = OLD.path
+    AND list_index = OLD.list_index
     AND item_index = OLD.item_index;
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_list_items_view_delete
+DROP TRIGGER IF EXISTS trg_list_items_view_delete;
+CREATE TRIGGER trg_list_items_view_delete
 INSTEAD OF DELETE ON list_items_view
 BEGIN
   DELETE FROM list_items
   WHERE path = OLD.path
-    AND item_index = OLD.item_index;
+    AND list_index = OLD.list_index
+    AND item_index IN (
+      WITH RECURSIVE descendants(item_index) AS (
+        SELECT OLD.item_index
+        UNION ALL
+        SELECT child.item_index
+        FROM list_items child
+        JOIN descendants parent
+          ON child.parent_index = parent.item_index
+        WHERE child.path = OLD.path
+          AND child.list_index = OLD.list_index
+      )
+      SELECT item_index FROM descendants
+    );
 END;
 
 CREATE VIEW IF NOT EXISTS note_properties AS
@@ -521,7 +559,7 @@ BEGIN
     NEW.path,
     COALESCE(NEW.level, 1),
     NEW.heading_text,
-    COALESCE(NEW.line_number, (SELECT COALESCE(MAX(line_number), 0) + 1 FROM headings WHERE path = NEW.path)),
+    NEW.line_number,
     NEW.block_id
   );
 END;
@@ -649,6 +687,32 @@ FROM notes;
   return TABLE_DEFINITIONS + '\n' + VIEWS_AND_TRIGGERS + '\n' + initialPropertiesView;
 }
 
+interface PropertyColumn {
+  columnName: string;
+  keys: string[];
+}
+
+function getPropertyColumns(propertyKeys: string[]): PropertyColumn[] {
+  const columns = new Map<string, PropertyColumn>();
+
+  for (const key of propertyKeys) {
+    const sanitized = key.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase() || 'property';
+    const existing = columns.get(sanitized);
+
+    if (existing) {
+      existing.keys.push(key);
+    }
+    else {
+      columns.set(sanitized, {
+        columnName: sanitized,
+        keys: [key]
+      });
+    }
+  }
+
+  return Array.from(columns.values());
+}
+
 export function generateDynamicPropertiesView(propertyKeys: string[]): string {
   if (propertyKeys.length === 0) {
     return `
@@ -659,42 +723,38 @@ FROM notes;
 `;
   }
 
-  const sanitizedKeys = propertyKeys.map((key, index) => {
-    const sanitized = key.replace(/[^a-zA-Z0-9_]/g, '_');
-    const uniqueAlias = `p${index}_${sanitized}`;
-    return {
-      original: key,
-      sanitized: sanitized,
-      alias: uniqueAlias
-    };
-  });
+  const propertyColumnsConfig = getPropertyColumns(propertyKeys);
 
-  const propertyColumns = sanitizedKeys.map(({sanitized, alias}) =>
-    `  ${alias}.value AS ${sanitized}`
+  const propertyColumns = propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
+    return `  CASE
+    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
+    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
+  END AS ${quoteIdentifier(columnName)}`;
+  }
   ).join(',\n');
 
-  const propertyJoins = sanitizedKeys.map(({original, alias}) =>
-    `LEFT JOIN properties ${alias} ON n.path = ${alias}.path AND ${alias}.key = '${original.replace(/'/g, "''")}' AND ${alias}.array_index IS NULL`
-  ).join('\n');
-
-  const updateStatements = sanitizedKeys.map(({original, sanitized}) => {
-    const escapedKey = original.replace(/'/g, "''");
-    // Use UPSERT for proper trigger semantics:
-    // - New properties fire AFTER INSERT triggers
-    // - Updated properties fire AFTER UPDATE triggers
-    return `  -- Update ${sanitized}
-  DELETE FROM properties WHERE path = OLD.path AND key = '${escapedKey}' AND array_index IS NULL AND NEW.${sanitized} IS NULL;
+  const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const columnIdentifier = quoteIdentifier(columnName);
+    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
+  UPDATE properties
+  SET value = NEW.${columnIdentifier}, value_type = 'string'
+  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
   INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT OLD.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL
-  ON CONFLICT(path, key, array_index) DO UPDATE SET value = excluded.value, value_type = excluded.value_type;`;
+  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
+    );`;
   }).join('\n');
 
-  const insertStatements = sanitizedKeys.map(({original, sanitized}) => {
-    const escapedKey = original.replace(/'/g, "''");
+  const insertStatements = propertyColumnsConfig.map(({columnName}) => {
+    const columnIdentifier = quoteIdentifier(columnName);
     return `  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT NEW.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL;`;
+  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
   }).join('\n');
 
   return `
@@ -709,7 +769,8 @@ SELECT
   n.size,
 ${propertyColumns}
 FROM notes n
-${propertyJoins};
+LEFT JOIN properties p ON n.path = p.path AND p.array_index IS NULL
+GROUP BY n.path, n.title, n.content, n.created, n.modified, n.size;
 
 DROP TRIGGER IF EXISTS trg_notes_with_properties_update;
 CREATE TRIGGER trg_notes_with_properties_update
@@ -760,52 +821,49 @@ SELECT DISTINCT path FROM properties;
 `;
   }
 
-  const sanitizedKeys = propertyKeys.map((key, index) => {
-    const sanitized = key.replace(/[^a-zA-Z0-9_]/g, '_');
-    const uniqueAlias = `p${index}_${sanitized}`;
-    return {
-      original: key,
-      sanitized: sanitized,
-      alias: uniqueAlias
-    };
-  });
+  const propertyColumnsConfig = getPropertyColumns(propertyKeys);
 
-  const propertyColumns = sanitizedKeys.map(({sanitized, alias}) =>
-    `  ${alias}.value AS ${sanitized}`
+  const propertyColumns = propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
+    return `  CASE
+    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
+    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
+  END AS ${quoteIdentifier(columnName)}`;
+  }
   ).join(',\n');
 
-  const propertyJoins = sanitizedKeys.map(({original, alias}) =>
-    `LEFT JOIN properties ${alias} ON base.path = ${alias}.path AND ${alias}.key = '${original.replace(/'/g, "''")}' AND ${alias}.array_index IS NULL`
-  ).join('\n');
-
-  const updateStatements = sanitizedKeys.map(({original, sanitized}) => {
-    const escapedKey = original.replace(/'/g, "''");
-    // Use UPSERT for proper trigger semantics:
-    // - New properties fire AFTER INSERT triggers
-    // - Updated properties fire AFTER UPDATE triggers
-    return `  -- Update ${sanitized}
-  DELETE FROM properties WHERE path = OLD.path AND key = '${escapedKey}' AND array_index IS NULL AND NEW.${sanitized} IS NULL;
+  const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const columnIdentifier = quoteIdentifier(columnName);
+    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
+  UPDATE properties
+  SET value = NEW.${columnIdentifier}, value_type = 'string'
+  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
   INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT OLD.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL
-  ON CONFLICT(path, key, array_index) DO UPDATE SET value = excluded.value, value_type = excluded.value_type;`;
+  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
+    );`;
   }).join('\n');
 
-  const insertStatements = sanitizedKeys.map(({original, sanitized}) => {
-    const escapedKey = original.replace(/'/g, "''");
+  const insertStatements = propertyColumnsConfig.map(({columnName}) => {
+    const columnIdentifier = quoteIdentifier(columnName);
     return `  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT NEW.path, '${escapedKey}', NEW.${sanitized}, 'string', NULL
-  WHERE NEW.${sanitized} IS NOT NULL;`;
+  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
   }).join('\n');
 
   return `
 DROP VIEW IF EXISTS note_properties;
 CREATE VIEW note_properties AS
 SELECT
-  base.path,
+  p.path,
 ${propertyColumns}
-FROM (SELECT DISTINCT path FROM properties) base
-${propertyJoins};
+FROM properties p
+WHERE p.array_index IS NULL
+GROUP BY p.path;
 
 DROP TRIGGER IF EXISTS trg_note_properties_update;
 CREATE TRIGGER trg_note_properties_update
@@ -881,7 +939,19 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
     const quotedViewName = `"${viewName.replace(/"/g, '""')}"`;
     const joinsClause = columnJoins ? `\n${columnJoins}` : '';
 
-    const triggerName = `"${viewName.replace(/"/g, '""')}_update_trigger"`;
+    const triggerNameBase = viewName.replace(/"/g, '""');
+    const insertTriggerName = `"${triggerNameBase}_insert_trigger"`;
+    const updateTriggerName = `"${triggerNameBase}_update_trigger"`;
+    const deleteTriggerName = `"${triggerNameBase}_delete_trigger"`;
+    const defaultTableName = tableNames && tableNames.length > 0
+      ? `'${tableNames[0].replace(/'/g, "''")}'`
+      : 'NULL';
+    const tableNameValue = `COALESCE(NEW.table_name, ${defaultTableName})`;
+    const rowJsonArgs = sanitizedColumns.map(({ original }) => {
+      const escapedColName = original.replace(/'/g, "''");
+      const quotedColName = `"${original.replace(/"/g, '""')}"`;
+      return `      '${escapedColName}', NEW.${quotedColName}`;
+    }).join(',\n');
     const updateStatements = sanitizedColumns.map(({ original }) => {
       const escapedColName = original.replace(/'/g, "''");
       const quotedColName = `"${original.replace(/"/g, '""')}"`;
@@ -901,12 +971,50 @@ ${columnSelections}
 FROM table_cells ${primaryCol.alias}${joinsClause}
 WHERE ${whereClause};
 
-DROP TRIGGER IF EXISTS ${triggerName};
-CREATE TRIGGER ${triggerName}
+DROP TRIGGER IF EXISTS ${insertTriggerName};
+CREATE TRIGGER ${insertTriggerName}
+INSTEAD OF INSERT ON ${quotedViewName}
+FOR EACH ROW
+BEGIN
+  INSERT INTO table_rows (path, table_index, row_index, row_json)
+  VALUES (
+    NEW.path,
+    COALESCE(NEW.table_index, 0),
+    NEW.row_index,
+    json_object(
+${rowJsonArgs}
+    )
+  );
+
+  UPDATE table_cells
+  SET table_name = ${tableNameValue}
+  WHERE path = NEW.path
+    AND table_index = COALESCE(NEW.table_index, 0)
+    AND row_index = COALESCE(
+      NEW.row_index,
+      (SELECT MAX(tc.row_index)
+       FROM table_cells tc
+       WHERE tc.path = NEW.path AND tc.table_index = COALESCE(NEW.table_index, 0))
+    );
+END;
+
+DROP TRIGGER IF EXISTS ${updateTriggerName};
+CREATE TRIGGER ${updateTriggerName}
 INSTEAD OF UPDATE ON ${quotedViewName}
 FOR EACH ROW
 BEGIN
 ${updateStatements}
+END;
+
+DROP TRIGGER IF EXISTS ${deleteTriggerName};
+CREATE TRIGGER ${deleteTriggerName}
+INSTEAD OF DELETE ON ${quotedViewName}
+FOR EACH ROW
+BEGIN
+  DELETE FROM table_rows
+  WHERE path = OLD.path
+    AND table_index = COALESCE(OLD.table_index, 0)
+    AND row_index = OLD.row_index;
 END;`;
   }).join('\n');
 

@@ -1,4 +1,4 @@
-import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range, InsertionPoint } from '../Services/ContentLocationService';
+import { ContentLocationService, type TaskRow, type HeadingRow, type ListItemRow, type TableCellRow, type Range, type InsertionPoint } from '../Services/ContentLocationService';
 
 export type { TaskRow, HeadingRow, ListItemRow, TableCellRow };
 
@@ -54,6 +54,20 @@ export interface EntityPlanResult {
   warnings: string[];
 }
 
+export type LocatedRange = { kind: "ok"; range: Range } | { kind: "miss"; reason: string };
+
+export interface LineEntityPlannerOptions<T extends { line_number?: number | null; block_id?: string | null }> {
+  entityName: string;
+  insertAtLineReason: string;
+  insertNewReason: string;
+  updateReason: string;
+  deleteReason: string;
+  locate: (row: T) => LocatedRange;
+  missingMessage: (row: T, action: string, reason: string) => string;
+  emit: (row: T, existing?: string) => string;
+  findNewInsertionPoint: () => InsertionPoint;
+}
+
 export function validateLineNumberBatch<T extends { line_number?: number | null }>(
   items: T[],
   entityName: string,
@@ -80,6 +94,73 @@ export function pushInsertionEdit(edits: ReplaceRangeEdit[], ctx: EntityPlannerC
     text: prefix + text + suffix,
     reason
   });
+}
+
+export function planLineEntityEdits<T extends { line_number?: number | null; start_offset?: number | null; end_offset?: number | null; block_id?: string | null }>(
+  ctx: EntityPlannerContext,
+  rows: T[],
+  rowsToDelete: T[],
+  options: LineEntityPlannerOptions<T>
+): EntityPlanResult {
+  const edits: ReplaceRangeEdit[] = [];
+  const warnings: string[] = [];
+  const newRows: T[] = [];
+  const rowsWithLineNumber: T[] = [];
+
+  for (const row of rows) {
+    if (row.line_number === -1) {
+      newRows.push(row);
+      continue;
+    }
+
+    if (row.line_number != null && row.line_number > 0 && row.start_offset == null && row.end_offset == null && !row.block_id) {
+      rowsWithLineNumber.push(row);
+      continue;
+    }
+
+    const loc = options.locate(row);
+    if (loc.kind === "miss") {
+      warnings.push(options.missingMessage(row, '', loc.reason));
+      continue;
+    }
+
+    const existing = ctx.content.slice(loc.range.start, loc.range.end);
+    const next = options.emit(row, existing);
+    if (next !== existing) {
+      edits.push({ type: "replaceRange", path: ctx.path, range: loc.range, text: next, reason: options.updateReason });
+    }
+  }
+
+  if (rowsWithLineNumber.length > 0) {
+    const minLineNumber = validateLineNumberBatch(rowsWithLineNumber, options.entityName, warnings);
+    const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
+    const combinedText = rowsWithLineNumber.map(row => options.emit(row)).join('\n');
+    pushInsertionEdit(edits, ctx, insertionPoint, combinedText, options.insertAtLineReason);
+  }
+
+  if (newRows.length > 0) {
+    const newText = newRows.map(row => options.emit(row)).join('\n');
+    pushInsertionEdit(edits, ctx, options.findNewInsertionPoint(), newText, options.insertNewReason);
+  }
+
+  for (const row of rowsToDelete) {
+    const loc = options.locate(row);
+    if (loc.kind === "miss") {
+      warnings.push(options.missingMessage(row, ' to delete', loc.reason));
+      continue;
+    }
+
+    const deleteRange = ContentLocationService.expandRangeToIncludeNewline(ctx.content, loc.range);
+    edits.push({
+      type: "replaceRange",
+      path: ctx.path,
+      range: deleteRange,
+      text: "",
+      reason: options.deleteReason
+    });
+  }
+
+  return { edits, warnings };
 }
 
 /**

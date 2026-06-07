@@ -32,7 +32,7 @@ Return `backgroundColor`, `borderColor`, and `color` to match CSS-style naming f
 | Option              | Description |
 |---------------------|-------------|
 | `initialView`       | FullCalendar initial view: `dayGridMonth` (default), `timeGridWeek`, or `timeGridDay`. Short aliases `month`, `week`, and `day` also work |
-| `initialDate`       | Initial date to display, as `YYYY-MM-DD` |
+| `initialDate`       | Initial date to display, as `YYYY-MM-DD`, `first`, or `last`. `first` uses the earliest event date; `last` uses the latest event date |
 | `height`            | FullCalendar height for the whole calendar. Use `auto` (default), a number of pixels, or a CSS size like `70vh` |
 | `contentHeight`     | FullCalendar content area height, excluding the toolbar |
 | `aspectRatio`       | Width-to-height ratio used by FullCalendar when height is not fixed |
@@ -41,6 +41,7 @@ Return `backgroundColor`, `borderColor`, and `color` to match CSS-style naming f
 | `weekNumbers`       | FullCalendar week number display: `true` or `false` |
 | `visibleWeeks`      | Number of week rows shown by the Month toolbar button. Use `1` through `6`; omitted means the normal FullCalendar month range |
 | `mobileVisibleDays` | On narrow screens, target this many visible day columns at once and page Month/Week forward by that many days. Use `1` through `7` |
+| `skipBlankPeriods`  | Replace toolbar previous/next navigation with jumps to the nearest earlier or later period that contains events. Defaults to `false` |
 | `dayMaxEvents`      | FullCalendar maximum events to show in month cells before overflow. Use a number or `true` |
 | `dayMaxEventRows`   | FullCalendar maximum event rows in day grid cells. Use a number or `true` |
 | `dayMinHeight`      | VaultQuery month day-cell minimum height in pixels |

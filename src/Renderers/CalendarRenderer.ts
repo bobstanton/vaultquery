@@ -4,6 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { RenderContext } from './BaseRenderer';
+import { parseBooleanOptionOrNull, parseCssDimensionOrNull } from '../utils/ConfigParsingUtils';
 
 declare const activeWindow: Window;
 
@@ -43,6 +44,7 @@ interface CalendarConfig {
   slotMinTime?: string;
   slotMaxTime?: string;
   slotDuration?: string;
+  skipBlankPeriods?: boolean;
 }
 
 interface CalendarInstance {
@@ -54,6 +56,15 @@ interface CalendarInstance {
   responsiveConfig: ResponsiveCalendarConfig;
   isMobileLayout: boolean | null;
   lastDesktopView: string | null;
+}
+
+interface CalendarReference {
+  current?: Calendar;
+}
+
+interface CalendarNavigationRange {
+  start: string;
+  endExclusive: string;
 }
 
 interface NormalizedTemporalValue {
@@ -70,6 +81,7 @@ interface ResponsiveCalendarConfig {
   desktopDayViewName: string;
   mobileDayViewName: string;
   requestedInitialView: NonNullable<CalendarConfig['initialView']>;
+  skipBlankPeriods: boolean;
 }
 
 const DEFAULT_FIELDS = {
@@ -106,48 +118,45 @@ export class CalendarRenderer {
     if (typeof options?.initialview === 'string') config.initialView = this.parseInitialView(options.initialview);
     if (typeof options?.initialdate === 'string') config.initialDate = options.initialdate.trim();
 
-    set('height', this.parseDimensionOption(options?.height));
-    set('contentHeight', this.parseDimensionOption(options?.contentheight));
+    set('height', parseCssDimensionOrNull(options?.height, {
+      allowNumber: true,
+      allowAuto: true,
+      bareNumber: 'number',
+      units: ['px', 'em', 'rem', 'vh', 'vw', '%'],
+    }));
+    set('contentHeight', parseCssDimensionOrNull(options?.contentheight, {
+      allowNumber: true,
+      allowAuto: true,
+      bareNumber: 'number',
+      units: ['px', 'em', 'rem', 'vh', 'vw', '%'],
+    }));
 
     const aspectRatio = this.parseNumberOption(options?.aspectratio);
     if (aspectRatio !== null && aspectRatio > 0) set('aspectRatio', aspectRatio);
 
-    set('expandRows', this.parseBooleanOption(options?.expandrows));
+    set('expandRows', parseBooleanOptionOrNull(options?.expandrows));
 
-    const firstDay = this.parseIntegerOption(options?.firstday);
-    if (firstDay !== null && firstDay >= 0 && firstDay <= 6) set('firstDay', firstDay as CalendarConfig['firstDay']);
+    const firstDay = this.parseBoundedIntegerOption(options?.firstday, 0, 6);
+    if (firstDay !== null) set('firstDay', firstDay as CalendarConfig['firstDay']);
 
-    set('weekNumbers', this.parseBooleanOption(options?.weeknumbers));
+    set('weekNumbers', parseBooleanOptionOrNull(options?.weeknumbers));
 
-    const visibleWeeks = this.parseIntegerOption(options?.visibleweeks);
-    if (visibleWeeks !== null && visibleWeeks >= 1 && visibleWeeks <= 6) set('visibleWeeks', visibleWeeks);
+    set('visibleWeeks', this.parseBoundedIntegerOption(options?.visibleweeks, 1, 6));
 
-    const mobileVisibleDays = this.parseIntegerOption(options?.mobilevisibledays);
-    if (mobileVisibleDays !== null && mobileVisibleDays >= 1 && mobileVisibleDays <= 7) set('mobileVisibleDays', mobileVisibleDays);
+    set('mobileVisibleDays', this.parseBoundedIntegerOption(options?.mobilevisibledays, 1, 7));
 
-    const dayMaxEventsInt = this.parseIntegerOption(options?.daymaxevents);
-    if (dayMaxEventsInt !== null && dayMaxEventsInt >= 0) {
-      set('dayMaxEvents', dayMaxEventsInt);
-    } else {
-      set('dayMaxEvents', this.parseBooleanOption(options?.daymaxevents));
-    }
+    set('dayMaxEvents', this.parseIntegerOrBooleanOption(options?.daymaxevents, 0));
 
-    const dayMaxEventRowsInt = this.parseIntegerOption(options?.daymaxeventrows);
-    if (dayMaxEventRowsInt !== null && dayMaxEventRowsInt >= 0) {
-      set('dayMaxEventRows', dayMaxEventRowsInt);
-    } else {
-      set('dayMaxEventRows', this.parseBooleanOption(options?.daymaxeventrows));
-    }
+    set('dayMaxEventRows', this.parseIntegerOrBooleanOption(options?.daymaxeventrows, 0));
 
-    const dayMinHeight = this.parseIntegerOption(options?.dayminheight);
-    if (dayMinHeight !== null && dayMinHeight >= 40) set('dayMinHeight', dayMinHeight);
+    set('dayMinHeight', this.parseBoundedIntegerOption(options?.dayminheight, 40));
 
-    const eventMaxStack = this.parseIntegerOption(options?.eventmaxstack);
-    if (eventMaxStack !== null && eventMaxStack >= 0) set('eventMaxStack', eventMaxStack);
+    set('eventMaxStack', this.parseBoundedIntegerOption(options?.eventmaxstack, 0));
 
     set('slotMinTime', this.parseDurationOption(options?.slotmintime));
     set('slotMaxTime', this.parseDurationOption(options?.slotmaxtime));
     set('slotDuration', this.parseDurationOption(options?.slotduration));
+    set('skipBlankPeriods', parseBooleanOptionOrNull(options?.skipblankperiods));
 
     return config;
   }
@@ -175,8 +184,10 @@ export class CalendarRenderer {
       root.dataset.vaultqueryCalendarVisibleWeeks = String(config.visibleWeeks);
     }
 
-    const { options, responsiveConfig } = this.createCalendarOptions(normalized, config, openFile, root);
+    const calendarRef: CalendarReference = {};
+    const { options, responsiveConfig } = this.createCalendarOptions(normalized, config, openFile, root, calendarRef);
     const calendar = new Calendar(root, options);
+    calendarRef.current = calendar;
     calendar.render();
 
     const instance: CalendarInstance = {
@@ -259,7 +270,7 @@ export class CalendarRenderer {
     return events;
   }
 
-  private static createCalendarOptions(events: CalendarEvent[], config: CalendarConfig, openFile: (path: string) => void, root: HTMLElement): { options: CalendarOptions; responsiveConfig: ResponsiveCalendarConfig } {
+  private static createCalendarOptions(events: CalendarEvent[], config: CalendarConfig, openFile: (path: string) => void, root: HTMLElement, calendarRef: CalendarReference): { options: CalendarOptions; responsiveConfig: ResponsiveCalendarConfig } {
     const initialDate = this.resolveInitialDate(config.initialDate, events);
     const desktopMonthViewName = config.visibleWeeks ? this.VISIBLE_WEEKS_VIEW : 'dayGridMonth';
     const mobileMonthViewName = config.mobileVisibleDays
@@ -285,6 +296,7 @@ export class CalendarRenderer {
       desktopDayViewName,
       mobileDayViewName,
       requestedInitialView,
+      skipBlankPeriods: config.skipBlankPeriods ?? false,
     };
     const initialView = this.resolvePreferredView(false, responsiveConfig);
 
@@ -294,11 +306,7 @@ export class CalendarRenderer {
       initialDate,
       firstDay,
       weekNumbers: config.weekNumbers ?? false,
-      headerToolbar: {
-        left: 'prev,next today',
-        center: 'title',
-        right: `${desktopMonthViewName},${desktopWeekViewName},${desktopDayViewName}`
-      },
+      headerToolbar: this.getHeaderToolbar(false, responsiveConfig),
       buttonText: {
         today: 'Today',
         month: 'Month',
@@ -378,6 +386,9 @@ export class CalendarRenderer {
           : {})
       },
       events: events.map((event) => this.toEventInput(event)),
+      ...(config.skipBlankPeriods
+        ? { customButtons: this.createSkipBlankPeriodButtons(events, calendarRef) }
+        : {}),
       eventOrder: events.some((e) => e.sortOrder !== undefined)
         ? 'order,start,-duration,allDay,title'
         : 'start,-duration,allDay,title',
@@ -579,12 +590,77 @@ export class CalendarRenderer {
   }
 
   private static getHeaderToolbar(isMobile: boolean, responsiveConfig: ResponsiveCalendarConfig): CalendarOptions['headerToolbar'] {
+    const navigationButtons = responsiveConfig.skipBlankPeriods
+      ? 'vaultqueryPrev,vaultqueryNext today'
+      : 'prev,next today';
+
     return {
-      left: 'prev,next today',
+      left: navigationButtons,
       center: 'title',
       right: isMobile
         ? `${responsiveConfig.mobileMonthViewName},${responsiveConfig.mobileWeekViewName},${responsiveConfig.mobileDayViewName}`
         : `${responsiveConfig.desktopMonthViewName},${responsiveConfig.desktopWeekViewName},${responsiveConfig.desktopDayViewName}`
+    };
+  }
+
+  private static createSkipBlankPeriodButtons(events: CalendarEvent[], calendarRef: CalendarReference): NonNullable<CalendarOptions['customButtons']> {
+    return {
+      vaultqueryPrev: {
+        icon: 'chevron-left',
+        hint: 'Previous period with events',
+        click: () => this.navigateToAdjacentEventPeriod(calendarRef.current, events, -1),
+      },
+      vaultqueryNext: {
+        icon: 'chevron-right',
+        hint: 'Next period with events',
+        click: () => this.navigateToAdjacentEventPeriod(calendarRef.current, events, 1),
+      },
+    };
+  }
+
+  private static navigateToAdjacentEventPeriod(calendar: Calendar | undefined, events: CalendarEvent[], direction: -1 | 1): void {
+    if (!calendar) {
+      return;
+    }
+
+    const targetDate = this.findAdjacentEventDate(calendar, events, direction);
+    if (targetDate) {
+      calendar.gotoDate(targetDate);
+    }
+  }
+
+  private static findAdjacentEventDate(calendar: Calendar, events: CalendarEvent[], direction: -1 | 1): string | null {
+    const currentStart = this.formatDate(calendar.view.currentStart);
+    const currentEnd = this.formatDate(calendar.view.currentEnd);
+    const eventRanges = events
+      .map(event => this.toNavigationRange(event))
+      .sort((left, right) => left.start.localeCompare(right.start));
+
+    if (direction > 0) {
+      const targetDates = eventRanges
+        .filter(range => range.endExclusive > currentEnd)
+        .map(range => range.start < currentEnd ? currentEnd : range.start)
+        .sort((left, right) => left.localeCompare(right));
+      return targetDates[0] ?? null;
+    }
+
+    const targetDates = eventRanges
+      .filter(range => range.start < currentStart)
+      .map((range) => {
+        const rangeLastDate = this.addDays(range.endExclusive, -1);
+        return rangeLastDate >= currentStart
+          ? this.addDays(currentStart, -1)
+          : rangeLastDate;
+      })
+      .sort((left, right) => right.localeCompare(left));
+
+    return targetDates[0] ?? null;
+  }
+
+  private static toNavigationRange(event: CalendarEvent): CalendarNavigationRange {
+    return {
+      start: event.startDate,
+      endExclusive: this.addDays(event.endDate ?? event.startDate, 1),
     };
   }
 
@@ -747,14 +823,26 @@ export class CalendarRenderer {
   }
 
   private static resolveInitialDate(configInitialDate: string | undefined, events: CalendarEvent[]): string | undefined {
-    const normalizedInitialDate = configInitialDate ? this.normalizeTemporalValue(configInitialDate)?.date ?? null : null;
-    if (normalizedInitialDate) {
-      return normalizedInitialDate;
+    const sortedStartDates = events
+      .map(event => event.startDate)
+      .sort((left, right) => left.localeCompare(right));
+
+    if (configInitialDate) {
+      const normalizedKeyword = configInitialDate.trim().toLowerCase();
+      if (normalizedKeyword === 'first') {
+        return sortedStartDates[0];
+      }
+      if (normalizedKeyword === 'last') {
+        return sortedStartDates[sortedStartDates.length - 1];
+      }
+
+      const normalizedInitialDate = this.normalizeTemporalValue(configInitialDate)?.date ?? null;
+      if (normalizedInitialDate) {
+        return normalizedInitialDate;
+      }
     }
 
-    return events
-      .map(event => event.startDate)
-      .sort((left, right) => left.localeCompare(right))[0];
+    return sortedStartDates[0];
   }
 
   private static normalizeDateRange(start: NormalizedTemporalValue, end?: NormalizedTemporalValue): { start: NormalizedTemporalValue; end?: NormalizedTemporalValue } {
@@ -900,6 +988,15 @@ export class CalendarRenderer {
     return null;
   }
 
+  private static parseBoundedIntegerOption(value: unknown, min: number, max: number = Number.POSITIVE_INFINITY): number | null {
+    const parsed = this.parseIntegerOption(value);
+    return parsed !== null && parsed >= min && parsed <= max ? parsed : null;
+  }
+
+  private static parseIntegerOrBooleanOption(value: unknown, min: number): boolean | number | null {
+    return this.parseBoundedIntegerOption(value, min) ?? parseBooleanOptionOrNull(value);
+  }
+
   private static parseNumberOption(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
       return value;
@@ -913,31 +1010,6 @@ export class CalendarRenderer {
     return null;
   }
 
-  private static parseDimensionOption(value: unknown): string | number | null {
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-      return value;
-    }
-
-    if (typeof value !== 'string') {
-      return null;
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
-      return Number(trimmed);
-    }
-
-    if (/^\d+(\.\d+)?(px|em|rem|vh|vw|%)$/.test(trimmed) || trimmed === 'auto') {
-      return trimmed;
-    }
-
-    return null;
-  }
-
   private static parseDurationOption(value: unknown): string | null {
     if (typeof value !== 'string') {
       return null;
@@ -946,27 +1018,6 @@ export class CalendarRenderer {
     const trimmed = value.trim();
     if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
       return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
-    }
-
-    return null;
-  }
-
-  private static parseBooleanOption(value: unknown): boolean | null {
-    if (typeof value === 'boolean') {
-      return value;
-    }
-
-    if (typeof value !== 'string') {
-      return null;
-    }
-
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true' || normalized === 'yes' || normalized === '1') {
-      return true;
-    }
-
-    if (normalized === 'false' || normalized === 'no' || normalized === '0') {
-      return false;
     }
 
     return null;

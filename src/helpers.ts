@@ -11,6 +11,7 @@ import type {
   TableProviderStatus,
   VaultQueryTableProvider,
 } from './Providers/TableProviderTypes';
+import { getErrorMessage } from './utils/ErrorMessages';
 
 declare const activeWindow: Window;
 
@@ -378,7 +379,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
         await api.unregisterTableProvider(provider.id);
       }
       catch (error) {
-        this.logger.warn(`[VaultQuery] ${this.options.pluginId}: failed to unregister table provider ${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.warn(`[VaultQuery] ${this.options.pluginId}: failed to unregister table provider ${provider.id}: ${getErrorMessage(error)}`);
       }
     }
   }

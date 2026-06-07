@@ -69,7 +69,7 @@ export class WriteCodeBlockProcessor {
       }
     }
     catch (error: unknown) {
-      container.empty();
+      SlickGridRenderer.cleanupContainer(container);
       BaseRenderer.renderQueryError(this.app, container, error, source);
     }
   }
@@ -81,7 +81,7 @@ export class WriteCodeBlockProcessor {
     const requestId = Date.now() + Math.random();
     this.activeRequests.set(container, requestId);
 
-    container.empty();
+    SlickGridRenderer.cleanupContainer(container);
 
     const writeContainer = container.createDiv({ cls: 'vaultquery-write-container' });
 
@@ -121,6 +121,7 @@ export class WriteCodeBlockProcessor {
         },
         onCancel: () => {
           if (previewContainer) {
+            SlickGridRenderer.cleanupContainer(previewContainer);
             previewContainer.remove();
             previewContainer = null;
           }
@@ -230,7 +231,7 @@ export class WriteCodeBlockProcessor {
     catch (error: unknown) {
       logger.error('Apply preview failed', error);
 
-      previewContainer.empty();
+      SlickGridRenderer.cleanupContainer(previewContainer);
       BaseRenderer.renderError(previewContainer, {
         title: 'Apply failed',
         message: `Failed to apply changes: ${getErrorMessage(error)}`
@@ -252,13 +253,13 @@ export class WriteCodeBlockProcessor {
         throw new Error('Could not find parent container for refresh');
       }
 
-      parentContainer.empty();
+      SlickGridRenderer.cleanupContainer(parentContainer);
       await this.processWriteBlockInContainer(parentContainer, parsed, sourcePath);
     }
     catch (error: unknown) {
       const parentContainer = writeContainer.parentElement;
 
-      writeContainer.empty();
+      SlickGridRenderer.cleanupContainer(writeContainer);
       BaseRenderer.renderError(writeContainer, {
         title: 'Refresh Error',
         message: getErrorMessage(error)

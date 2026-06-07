@@ -33,6 +33,7 @@ export interface IndexNoteData {
     block_id?: string;
     start_offset: number;
     end_offset: number;
+    line_number: number;
   }>;
   tableCells?: TableCellData[];
   tasks?: TaskData[];

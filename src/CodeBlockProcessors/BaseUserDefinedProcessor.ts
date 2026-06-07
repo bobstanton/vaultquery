@@ -1,7 +1,11 @@
 import { App, Component, MarkdownPostProcessorContext } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
+import { CalendarRenderer } from '../Renderers/CalendarRenderer';
+import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
+import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
 import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
+import { getErrorMessage } from '../utils/ErrorMessages';
 
 export abstract class BaseUserDefinedProcessor {
   protected component: Component;
@@ -16,7 +20,8 @@ export abstract class BaseUserDefinedProcessor {
       return;
     }
 
-    el.empty();
+    SlickGridRenderer.cleanupContainer(el);
+    CalendarRenderer.cleanupContainer(el);
     const container = el.createDiv({ cls: this.getContainerClass() });
 
     const ready = waitForIndexingWithProgress(
@@ -42,19 +47,23 @@ export abstract class BaseUserDefinedProcessor {
   }
 
   private async renderWithRefresh(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext): Promise<void> {
-    container.empty();
+    SlickGridRenderer.cleanupContainer(container);
+    CalendarRenderer.cleanupContainer(container);
+
+    const refresh = async () => {
+      await this.renderWithRefresh(container, source, ctx);
+    };
+    QueryRefreshRegistry.register(container, { onRefresh: refresh });
 
     try {
       await this.processContent(container, source, ctx);
     }
     catch (error) {
-      this.renderError(container, error instanceof Error ? error.message : String(error));
+      this.renderError(container, getErrorMessage(error));
     }
 
     const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-    BaseRenderer.addRefreshButton(buttonContainer, async () => {
-      await this.renderWithRefresh(container, source, ctx);
-    });
+    BaseRenderer.addRefreshButton(buttonContainer, refresh);
   }
 
   public unload(): void {

@@ -17,8 +17,9 @@
     --vaultquery-table-header-background: var(--background-secondary);
     --vaultquery-table-row-hover-background: var(--background-modifier-hover);
     width: 100%;
-    min-height: 400px;
-    max-height: 600px;
+    height: var(--vaultquery-grid-height, auto);
+    min-height: var(--vaultquery-grid-min-height, 400px);
+    max-height: var(--vaultquery-grid-max-height, 600px);
     border: 1px solid var(--vaultquery-table-border-color);
     border-radius: var(--radius-s);
     margin: 0;
