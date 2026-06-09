@@ -85,22 +85,39 @@ export abstract class BaseRenderer {
     button.addEventListener('click', () => {
       if (isProcessing) return;
       isProcessing = true;
+      button.setAttribute('aria-disabled', 'true');
 
-      if (config.spinnerClass) {
-        button.addClass(config.spinnerClass);
+      const isRefreshButton = Boolean(config.spinnerClass);
+      if (isRefreshButton) {
+        button.addClass(config.spinnerClass!);
+        button.empty();
+        setIcon(button, 'loader');
       }
 
       void (async () => {
         try {
           await config.onClick();
-          this.showButtonFeedback(button, 'check', config.icon, config.spinnerClass);
+          if (!isRefreshButton) {
+            this.showButtonFeedback(button, 'check', config.icon);
+          }
         } catch (err) {
           logger.error(`${config.ariaLabel} failed`, err);
-          this.showButtonFeedback(button, 'x', config.icon, config.spinnerClass);
+          if (!isRefreshButton) {
+            this.showButtonFeedback(button, 'x', config.icon);
+          }
         } finally {
-          activeWindow.setTimeout(() => {
+          if (isRefreshButton) {
+            button.removeClass(config.spinnerClass!);
+            button.empty();
+            setIcon(button, config.icon);
+            button.removeAttribute('aria-disabled');
             isProcessing = false;
-          }, 2000);
+          } else {
+            activeWindow.setTimeout(() => {
+              button.removeAttribute('aria-disabled');
+              isProcessing = false;
+            }, 2000);
+          }
         }
       })();
     });
@@ -108,10 +125,7 @@ export abstract class BaseRenderer {
     return button;
   }
 
-  private static showButtonFeedback(button: HTMLElement, feedbackIcon: string, originalIcon: string, spinnerClass?: string): void {
-    if (spinnerClass) {
-      button.removeClass(spinnerClass);
-    }
+  private static showButtonFeedback(button: HTMLElement, feedbackIcon: string, originalIcon: string): void {
     button.empty();
     setIcon(button, feedbackIcon);
     activeWindow.setTimeout(() => {

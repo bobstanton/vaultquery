@@ -40,6 +40,7 @@ export type {
   ProviderRowValue,
   ProviderTableDefinition,
   ProviderTableRows,
+  ProviderTablesChangedEvent,
   TableProviderRegistration,
   TableProviderStatus,
   VaultQueryTableProvider,

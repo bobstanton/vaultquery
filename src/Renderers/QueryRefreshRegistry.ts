@@ -51,7 +51,7 @@ export class QueryRefreshRegistry {
   static async refreshAll(options: RefreshAllOptions = {}): Promise<void> {
     const promises: Promise<void>[] = [];
 
-    for (const [container, entry] of this.entries.entries()) {
+    for (const [container, entry] of Array.from(this.entries.entries())) {
       if (!container.isConnected) {
         this.entries.delete(container);
         continue;

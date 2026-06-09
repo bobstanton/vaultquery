@@ -16,12 +16,14 @@ import type {
   ProviderRefreshResult,
   ProviderRowValue,
   ProviderTableDefinition,
+  ProviderTablesChangedEvent,
   TableProviderRegistration,
   TableProviderStatus,
   VaultQueryTableProvider,
 } from './TableProviderTypes';
 
 const logger = rootLogger.scope('ProviderTables');
+declare const activeWindow: Window;
 
 type ProviderDatabase = VaultDatabase | WorkerDatabase;
 type SqlParam = string | number | null;
@@ -73,11 +75,16 @@ export class TableProviderService {
   private registerBlockLanguage?: (language: string) => void;
   private refreshingStaleDefinitions = false;
   private onAllQueriesRefresh?: () => Promise<void>;
+  private onProviderTablesChanged?: (event: ProviderTablesChangedEvent) => void;
 
   public constructor(private database: ProviderDatabase, private enabled = true) {}
 
   public setOnAllQueriesRefresh(callback: () => Promise<void>): void {
     this.onAllQueriesRefresh = callback;
+  }
+
+  public setOnProviderTablesChanged(callback: (event: ProviderTablesChangedEvent) => void): void {
+    this.onProviderTablesChanged = callback;
   }
 
   public async setDatabase(database: ProviderDatabase): Promise<void> {
@@ -361,9 +368,19 @@ export class TableProviderService {
       await this.materializeRefreshResult(provider, runtime, result);
       runtime.error = undefined;
       await this.rerenderProviderBlocks(providerId, definitionId);
-      void this.onAllQueriesRefresh?.().catch(error => {
-        logger.error('Query refresh after provider refresh failed', error);
+      this.onProviderTablesChanged?.({
+        providerId,
+        definitionId,
+        tables: Object.keys(result.tables),
       });
+      const refreshQueries = this.onAllQueriesRefresh;
+      if (refreshQueries) {
+        activeWindow.setTimeout(() => {
+          void refreshQueries().catch(error => {
+            logger.error('Query refresh after provider refresh failed', error);
+          });
+        }, 0);
+      }
     } catch (error) {
       logger.error(`Provider refresh failed: provider=${providerId}, definition=${definitionId}`, error);
       const message = getErrorMessage(error);
@@ -408,13 +425,15 @@ export class TableProviderService {
     for (const table of provider.tables) {
       this.validateTable(table);
       if (await this.tableExists(table.name)) {
-        await this.ensureCompatibleTableSchema(provider, table);
+        try {
+          await this.ensureCompatibleTableSchema(provider, table);
+        } catch (error) {
+          logger.warn(`Recreating incompatible provider table: provider=${provider.id}, table=${table.name}`, error);
+          await this.database.run(`DROP TABLE IF EXISTS ${this.quoteIdentifier(table.name)}`);
+          await this.createProviderTable(table);
+        }
       } else {
-        const columnsSql = table.columns.map(column => this.columnSql(column)).join(', ');
-        const primaryKeySql = table.primaryKey.length > 0
-          ? `, PRIMARY KEY (${table.primaryKey.map(column => this.quoteIdentifier(column)).join(', ')})`
-          : '';
-        await this.database.run(`CREATE TABLE ${this.quoteIdentifier(table.name)} (${columnsSql}${primaryKeySql})`);
+        await this.createProviderTable(table);
       }
 
       for (const index of table.indexes ?? []) {
@@ -437,6 +456,14 @@ export class TableProviderService {
       [tableName]
     );
     return rows.length > 0;
+  }
+
+  private async createProviderTable(table: ProviderTableDefinition): Promise<void> {
+    const columnsSql = table.columns.map(column => this.columnSql(column)).join(', ');
+    const primaryKeySql = table.primaryKey.length > 0
+      ? `, PRIMARY KEY (${table.primaryKey.map(column => this.quoteIdentifier(column)).join(', ')})`
+      : '';
+    await this.database.run(`CREATE TABLE ${this.quoteIdentifier(table.name)} (${columnsSql}${primaryKeySql})`);
   }
 
   private async ensureCompatibleTableSchema(provider: VaultQueryTableProvider, table: ProviderTableDefinition): Promise<void> {
@@ -686,7 +713,9 @@ export class TableProviderService {
       return;
     }
 
-    await this.renderDefinitionBlock(block.language, block.source, container, block.ctx);
+    const currentBlock = this.findCurrentIndexedBlock(block);
+    const source = currentBlock?.source ?? block.source;
+    await this.renderDefinitionBlock(block.language, source, container, block.ctx);
   }
 
   private shouldRefreshRuntimeDefinition(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, now: number): boolean {
@@ -710,8 +739,22 @@ export class TableProviderService {
   private storeRuntimeDefinition(provider: VaultQueryTableProvider, source: string, context: ProviderDefinitionBlockContext, definition: ProviderRefreshDefinition): RuntimeRefreshDefinition {
     const runtime = this.createRuntimeDefinition(provider, source, context, definition);
     const key = this.runtimeDefinitionKey(provider.id, context.path, context.blockIndex, context.blockHash);
+    this.removeRuntimeDefinitionForBlock(provider.id, context.path, context.blockIndex, key);
     this.definitions.set(key, runtime);
     return runtime;
+  }
+
+  private removeRuntimeDefinitionForBlock(providerId: string, path: string, blockIndex: number, exceptKey: string): void {
+    for (const [key, definition] of this.definitions.entries()) {
+      if (
+        key !== exceptKey &&
+        definition.providerId === providerId &&
+        definition.sourcePath === path &&
+        definition.blockIndex === blockIndex
+      ) {
+        this.definitions.delete(key);
+      }
+    }
   }
 
   private createRuntimeDefinition(provider: VaultQueryTableProvider, source: string, context: ProviderDefinitionBlockContext, definition: ProviderRefreshDefinition): RuntimeRefreshDefinition {
@@ -914,7 +957,26 @@ export class TableProviderService {
   private findBlockIndex(path: string, language: string, blockHash: string): number | null {
     const blocks = this.indexedBlocksByPath.get(path) ?? [];
     const block = blocks.find(candidate => candidate.language === language && candidate.blockHash === blockHash);
-    return block?.blockIndex ?? null;
+    if (block) {
+      return block.blockIndex;
+    }
+
+    const languageBlocks = blocks.filter(candidate => candidate.language === language);
+    return languageBlocks.length === 1 ? languageBlocks[0].blockIndex : null;
+  }
+
+  private findCurrentIndexedBlock(block: RenderedProviderBlock): IndexedProviderDefinitionBlock | undefined {
+    const blocks = this.indexedBlocksByPath.get(block.sourcePath) ?? [];
+    const matchingBlock = blocks.find(candidate =>
+      candidate.language === block.language &&
+      candidate.blockIndex === this.findBlockIndex(block.sourcePath, block.language, hashString(block.source))
+    );
+    if (matchingBlock) {
+      return matchingBlock;
+    }
+
+    const languageBlocks = blocks.filter(candidate => candidate.language === block.language);
+    return languageBlocks.length === 1 ? languageBlocks[0] : undefined;
   }
 
   private updateStatus(provider: VaultQueryTableProvider, definitionId: string | undefined, table: ProviderTableDefinition, updates: Partial<RuntimeTableStatus>): void {

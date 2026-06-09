@@ -337,6 +337,11 @@
 	animation: spin 1s linear infinite;
 }
 
+.vaultquery-floating-button.vaultquery-refresh-spinning {
+	pointer-events: none;
+	opacity: 0.6;
+}
+
 .vaultquery-rendered-content {
 	font-size: var(--font-ui-medium);
 	line-height: var(--line-height-normal);
@@ -1541,10 +1546,6 @@
 
 .vaultquery-stats-row-highlight {
 	background-color: var(--background-modifier-hover);
-}
-
-.vaultquery-refresh-spinning {
-	animation: spin 1s linear infinite;
 }
 
 @keyframes spin {

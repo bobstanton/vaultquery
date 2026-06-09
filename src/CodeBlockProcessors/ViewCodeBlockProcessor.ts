@@ -19,7 +19,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
     return 'vaultquery-container vaultquery-view';
   }
 
-  protected async processContent(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext): Promise<void> {
+  protected async processContent(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext, renderVersion: number): Promise<void> {
     const sql = source.trim();
 
     if (!validateSQLObjectStart(sql, 'VIEW')) {
@@ -35,6 +35,9 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
 
     try {
       const duplicatePath = await this.findDuplicateViewPath(viewName, ctx.sourcePath);
+      if (!this.isCurrentRender(container, renderVersion)) {
+        return;
+      }
       if (duplicatePath) {
         this.renderError(container, `Another vaultquery-view block already defines "${viewName}" in ${duplicatePath}`);
         return;
@@ -45,25 +48,40 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       if (needsRecreation) {
         logger.debug(`dropping and recreating view "${viewName}"`);
         await this.plugin.api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
+        if (!this.isCurrentRender(container, renderVersion)) {
+          return;
+        }
         await this.plugin.api.execute(sql);
+        if (!this.isCurrentRender(container, renderVersion)) {
+          return;
+        }
         logger.debug(`calling reindexNote for "${ctx.sourcePath}"`);
         await this.plugin.api.reindexNote(ctx.sourcePath);
+        if (!this.isCurrentRender(container, renderVersion)) {
+          return;
+        }
         logger.debug(`reindexNote complete for "${ctx.sourcePath}"`);
       }
 
-      await this.renderViewPreview(container, viewName);
+      await this.renderViewPreview(container, viewName, renderVersion);
     }
     catch (error) {
+      if (!this.isCurrentRender(container, renderVersion)) {
+        return;
+      }
       this.renderError(container, `Failed to create view: ${getErrorMessage(error)}`);
     }
   }
 
-  private async renderViewPreview(container: HTMLElement, viewName: string): Promise<void> {
+  private async renderViewPreview(container: HTMLElement, viewName: string, renderVersion: number): Promise<void> {
     try {
       const limit = this.plugin.settings.viewPreviewLimit;
 
       const query = `SELECT * FROM "${viewName}" LIMIT ${Math.max(1, limit)}`;
       const results = await this.plugin.api.query(query);
+      if (!this.isCurrentRender(container, renderVersion)) {
+        return;
+      }
 
       const successDiv = container.createDiv({ cls: 'vaultquery-success' });
       successDiv.createEl('strong', { text: `View "${viewName}" created` });
@@ -92,6 +110,9 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       SlickGridRenderer.render(renderContext);
     }
     catch (error) {
+      if (!this.isCurrentRender(container, renderVersion)) {
+        return;
+      }
       BaseRenderer.renderError(container, {
         title: `View "${viewName}" created with errors`,
         message: getErrorMessage(error)

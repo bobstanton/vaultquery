@@ -87,6 +87,12 @@ export interface ProviderRefreshResult {
   tables: Record<string, ProviderTableRows>;
 }
 
+export interface ProviderTablesChangedEvent {
+  providerId: string;
+  definitionId: string;
+  tables: string[];
+}
+
 export interface VaultQueryTableProvider {
   id: string;
   displayName: string;

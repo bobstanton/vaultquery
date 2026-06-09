@@ -20,6 +20,7 @@ import type {
   TableProviderRegistration,
   TableProviderStatus,
   ProviderDefinitionCompletionConfig,
+  ProviderTablesChangedEvent,
   VaultQueryTableProvider,
 } from './Providers/TableProviderTypes';
 
@@ -262,6 +263,11 @@ export interface IVaultQueryAPI {
   on(event: 'database-restored', callback: (event: DatabaseRestoredEvent) => void): EventRef;
 
   /**
+   * Fired after a third-party provider table refresh has been materialized.
+   */
+  on(event: 'provider-tables-changed', callback: (event: ProviderTablesChangedEvent) => void): EventRef;
+
+  /**
    * Remove a listener returned from `on()`.
    */
   off(ref: EventRef): void;
@@ -277,6 +283,7 @@ interface VaultQueryEvents {
   'vault-indexed': VaultIndexedEvent;
   'database-lost': DatabaseLostEvent;
   'database-restored': DatabaseRestoredEvent;
+  'provider-tables-changed': ProviderTablesChangedEvent;
 }
 
 export type { EventRef };
@@ -298,6 +305,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     'vault-indexed',
     'database-lost',
     'database-restored',
+    'provider-tables-changed',
   ]);
 
   private triggerActionProcessing: Promise<void> | null = null;
@@ -310,6 +318,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.triggerFunctions = triggerFunctions;
     this.tableProviderService = new TableProviderService(database, this.settings.enableThirdPartyProviderTables);
     this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll({ force: true }));
+    this.tableProviderService.setOnProviderTablesChanged(event => {
+      this.emit('provider-tables-changed', event);
+    });
     this.indexingService.setProviderDefinitionBlockHandler(this.tableProviderService);
 
     this.indexingService.setEventEmitter({
@@ -1346,6 +1357,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public on(event: 'vault-indexed', callback: (event: VaultIndexedEvent) => void): EventRef;
   public on(event: 'database-lost', callback: (event: DatabaseLostEvent) => void): EventRef;
   public on(event: 'database-restored', callback: (event: DatabaseRestoredEvent) => void): EventRef;
+  public on(event: 'provider-tables-changed', callback: (event: ProviderTablesChangedEvent) => void): EventRef;
   public on<EventName extends keyof VaultQueryEvents & string>(
     event: EventName,
     callback: (event: VaultQueryEvents[EventName]) => void
