@@ -111,17 +111,32 @@ export function stripSqlComments(sql: string): string {
     .trim();
 }
 
-export function containsSqlKeywords(sql: string, keywords: string[]): boolean {
-  const queryWithoutStrings = stripSqlComments(sql)
+/**
+ * Blank out string literals and quoted identifiers so keyword scans don't
+ * match text inside them (e.g. WHERE content LIKE '%PRAGMA%').
+ */
+export function stripSqlStringLiterals(sql: string): string {
+  return sql
     .replace(/'([^']|'')*'/g, "''")
     .replace(/"([^"]|"")*"/g, '""');
+}
+
+export function containsSqlKeywords(sql: string, keywords: string[]): boolean {
+  const queryWithoutStrings = stripSqlStringLiterals(stripSqlComments(sql));
 
   return keywords.some(keyword => new RegExp(`\\b${keyword}\\b`, 'i').test(queryWithoutStrings));
 }
 
 export function containsBlockedSql(sql: string, allowSchemaChanges: boolean = false): boolean {
-  const sqlWithoutComments = stripSqlComments(sql);
+  return containsBlockedSqlInStripped(stripSqlStringLiterals(stripSqlComments(sql)), allowSchemaChanges);
+}
 
+/**
+ * Blocklist check against SQL that has already had comments and string
+ * literals stripped. Callers that analyze the same statement repeatedly can
+ * strip once and reuse the result.
+ */
+export function containsBlockedSqlInStripped(strippedSql: string, allowSchemaChanges: boolean = false): boolean {
   const alwaysBlocked = [
     /ATTACH\s+DATABASE/i,
     /PRAGMA/i,
@@ -141,8 +156,8 @@ export function containsBlockedSql(sql: string, allowSchemaChanges: boolean = fa
     /DROP\s+VIEW/i
   ];
 
-  return alwaysBlocked.some(pattern => pattern.test(sqlWithoutComments)) ||
-    (!allowSchemaChanges && schemaChanges.some(pattern => pattern.test(sqlWithoutComments)));
+  return alwaysBlocked.some(pattern => pattern.test(strippedSql)) ||
+    (!allowSchemaChanges && schemaChanges.some(pattern => pattern.test(strippedSql)));
 }
 
 export function rewriteTriggerWithPrefix(triggerSql: string, prefix: string): string {

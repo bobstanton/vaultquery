@@ -32,6 +32,7 @@ import { batchDeleteRowsByIds } from './BatchDelete';
 import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
 import { rewriteTriggerWithPrefix } from '../utils/SQLParsingUtils';
 import { hashString } from '../utils/StringUtils';
+import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
 import { type SqlResult } from './ChangeDetection';
 import type { TriggerFunctions } from '../Triggers';
 import type { IndexNoteData, NoteRecord } from '../types';
@@ -51,8 +52,6 @@ interface DatabaseOptions {
   wasmSettings?: WasmSettings;
 }
 
-declare const activeWindow: Window;
-
 export class VaultDatabase {
   private db: Database;
   private fileAdapter: VaultFileAdapter | null;
@@ -65,8 +64,6 @@ export class VaultDatabase {
   private previewService: PreviewService;
   public readonly schema: DatabaseSchemaManager;
   private triggerFunctions: TriggerFunctions | null = null;
-
-  private txDepth = 0;
 
   private dbLock: Promise<void> = Promise.resolve();
   private indexesCreated = false;
@@ -128,7 +125,7 @@ export class VaultDatabase {
       db = new sqlJs.Database();
     } else {
       try {
-        const data = await fileAdapter!.readBinary(actualDatabasePath);
+        const data = await fileAdapter.readBinary(actualDatabasePath);
         db = new sqlJs.Database(new Uint8Array(data));
       }
       catch (error) {
@@ -190,66 +187,45 @@ export class VaultDatabase {
     return releaseLock!;
   }
 
+  /**
+   * Run `fn` inside a transaction, serialized behind the database lock.
+   *
+   * Nested calls are NOT supported: `fn` must not call `withTx` again (it would
+   * deadlock on the lock). The previous savepoint-based nesting detection used
+   * `txDepth`, which conflated "nested in the same call chain" with "another
+   * caller arrived while a transaction was open" — a concurrent caller would
+   * skip the lock and interleave its statements with the open transaction.
+   */
   public async withTx<T>(fn: () => T | Promise<T>, opts: { deferFK?: boolean } = {}): Promise<T> {
-    const needsLock = this.txDepth === 0;
-    let releaseLock: (() => void) | undefined;
+    const releaseLock = await this.acquireDbLock();
 
-    if (needsLock) {
-      releaseLock = await this.acquireDbLock();
-    }
-
-    const nested = this.txDepth > 0;
-    const sp = `sp_${this.txDepth + 1}`;
-
-    this.txDepth++;
     try {
-      if (!nested) {
-        this.db.run('BEGIN TRANSACTION');
-        if (opts.deferFK) {
-          this.db.exec('PRAGMA defer_foreign_keys = ON');
-        }
-      }
-      else {
-        this.db.exec(`SAVEPOINT ${sp}`);
+      this.db.run('BEGIN TRANSACTION');
+      if (opts.deferFK) {
+        this.db.exec('PRAGMA defer_foreign_keys = ON');
       }
 
-      const result = await fn();
+      try {
+        const result = await fn();
 
-      if (!nested) {
         if (opts.deferFK) {
           this.db.exec('PRAGMA defer_foreign_keys = OFF');
         }
         this.db.run('COMMIT');
-      }
-      else {
-        this.db.exec(`RELEASE ${sp}`);
-      }
 
-      return result;
-    }
-    catch (error) {
-      if (!nested) {
+        return result;
+      }
+      catch (error) {
         try {
           this.db.run('ROLLBACK');
         }
         catch (rollbackError) {
           logger.error(CONSOLE_ERRORS.DATABASE_ROLLBACK_FAILED, rollbackError);
         }
+        throw error;
       }
-      else {
-        try {
-          this.db.exec(`ROLLBACK TO ${sp}; RELEASE ${sp}`);
-        }
-        catch (rollbackError) {
-          logger.error(CONSOLE_ERRORS.DATABASE_SAVEPOINT_ROLLBACK_FAILED, rollbackError);
-        }
-      }
-      throw error;
     } finally {
-      this.txDepth--;
-      if (releaseLock) {
-        releaseLock();
-      }
+      releaseLock();
     }
   }
 
@@ -343,7 +319,14 @@ export class VaultDatabase {
   public async indexNote(data: IndexNoteData): Promise<void> {
     logger.debug(`indexNote called for: ${data.note.path}`);
     this.createIndexes();
-    return this.withTx(() => this.performIndexingOperations(data, false));
+    try {
+      return await this.withTx(() => this.performIndexingOperations(data, false));
+    } finally {
+      // Scope vq_defer to this note's indexing pass so a defer key set by one
+      // note's trigger doesn't capture (and potentially discard) actions queued
+      // by later, unrelated triggers.
+      this.triggerFunctions?.clearCurrentDeferKey();
+    }
   }
 
   private performIndexingOperations(data: IndexNoteData, skipDeletes: boolean, skipAutoSync: boolean = false): void {
@@ -438,12 +421,14 @@ export class VaultDatabase {
         ...Array.from(pendingKeys).map(key => ({ key, arrayIndex: null }))
       ];
 
-      const tuples = allKeysToKeep.map(p =>
-        `('${p.key.replace(/'/g, "''")}', ${p.arrayIndex ?? -1})`
-      ).join(', ');
+      const placeholders = allKeysToKeep.map(() => '(?, ?)').join(', ');
+      const params: (string | number)[] = [path];
+      for (const p of allKeysToKeep) {
+        params.push(p.key, p.arrayIndex ?? -1);
+      }
 
-      const deleteStaleSQL = `${INDEXING_SQL.DELETE_STALE_PROPERTIES}(VALUES ${tuples})`;
-      this.db.run(deleteStaleSQL, [path]);
+      const deleteStaleSQL = `${INDEXING_SQL.DELETE_STALE_PROPERTIES}(VALUES ${placeholders})`;
+      this.db.run(deleteStaleSQL, params);
     }
   }
 
@@ -484,14 +469,7 @@ export class VaultDatabase {
       return;
     }
 
-    // eslint-disable-next-line no-new-func -- user SQL function
-    const fn = new Function(`return (${source})`)();
-
-    if (typeof fn !== 'function') {
-      throw new Error(`Invalid function definition: expected a function, got ${typeof fn}`);
-    }
-
-    this.db.create_function(name, fn);
+    this.db.create_function(name, createUserSqlFunction(source));
     this.registeredFunctionHashes.set(name, newHash);
   }
 
@@ -537,7 +515,7 @@ export class VaultDatabase {
     return true;
   }
 
-  public async all(sql: string, params: (string | number | null)[] = []): Promise<Record<string, unknown>[]> {
+  public all(sql: string, params: (string | number | null)[] = []): Promise<Record<string, unknown>[]> {
     try {
       const stmt = this.getPreparedStatement(sql);
 
@@ -549,11 +527,7 @@ export class VaultDatabase {
         const results = collectStatementRows(stmt);
         stmt.reset();
 
-        if (results.length > 1000) {
-          await new Promise(resolve => activeWindow.setTimeout(resolve, 0));
-        }
-
-        return results;
+        return Promise.resolve(results);
       }
       catch (error) {
         try {
@@ -566,7 +540,7 @@ export class VaultDatabase {
       }
     }
     catch (error: unknown) {
-      throw new Error(ERROR_MESSAGES.SQL_QUERY_FAILED(getErrorMessage(error)));
+      return Promise.reject(new Error(ERROR_MESSAGES.SQL_QUERY_FAILED(getErrorMessage(error))));
     }
   }
 
@@ -634,7 +608,13 @@ export class VaultDatabase {
     }
 
     // Skip auto-sync during batch indexing - triggers will process all changes after batch completes
-    notesData.forEach(data => this.performIndexingOperations(data, skipDeletes, true));
+    notesData.forEach(data => {
+      try {
+        this.performIndexingOperations(data, skipDeletes, true);
+      } finally {
+        this.triggerFunctions?.clearCurrentDeferKey();
+      }
+    });
   }
 
   public async previewDML(sql: string, params: unknown[] = []): Promise<PreviewResult> {

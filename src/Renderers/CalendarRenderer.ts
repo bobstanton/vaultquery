@@ -741,7 +741,7 @@ export class CalendarRenderer {
     info.el.dataset.vaultqueryCalendarTooltip = tooltip;
 
     const win = info.el.ownerDocument.defaultView ?? activeWindow;
-    let showTimeout: ReturnType<typeof win.setTimeout> | null = null;
+    let showTimeout: number | null = null;
 
     const show = () => {
       if (showTimeout) {

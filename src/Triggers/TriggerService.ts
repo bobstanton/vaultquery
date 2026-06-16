@@ -272,7 +272,7 @@ export class TriggerService {
     const file = this.getFile(path, 'set_property');
     if (!file) return;
 
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
+    await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
       fm[key] = value;
     });
   }
@@ -281,7 +281,7 @@ export class TriggerService {
     const file = this.getFile(path, 'remove_property');
     if (!file) return;
 
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
+    await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
       delete fm[key];
     });
   }
@@ -546,7 +546,7 @@ export class TriggerService {
     const { file, lines, table } = context;
     let values: Record<string, string>;
     try {
-      values = JSON.parse(valuesJson);
+      values = JSON.parse(valuesJson) as Record<string, string>;
     } catch {
       logger.warn('Trigger: invalid JSON for addTableRow', valuesJson);
       return;

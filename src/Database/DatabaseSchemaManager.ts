@@ -2,12 +2,15 @@ import { Database } from 'sql.js';
 import { generateDynamicPropertiesView, generateNotePropertiesView, generateDynamicTableViews } from './DatabaseSchema';
 import { SQL_QUERIES, getViewColumnsPragma, processTableStructureResults } from './SchemaQueries';
 import { CONSOLE_ERRORS } from '../utils/ErrorMessages';
+import { hashString } from '../utils/StringUtils';
 import type { TableStructure } from './DatabaseSchema';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('DatabaseSchema');
 
 export class DatabaseSchemaManager {
+  private lastTableStructuresHash: string | null = null;
+
   public constructor(private db: Database) {}
 
   private queryStrings(sql: string, columnIndex: number = 0): string[] {
@@ -79,11 +82,19 @@ export class DatabaseSchemaManager {
         return;
       }
 
+      // Skip the DROP/CREATE churn when nothing changed. This runs after every
+      // realtime indexing drain, and most saves don't alter table structures.
+      const structuresHash = hashString(JSON.stringify(structures));
+      if (structuresHash === this.lastTableStructuresHash) {
+        return;
+      }
+
       const viewSQL = generateDynamicTableViews(structures);
 
       if (viewSQL) {
         this.db.exec(viewSQL);
       }
+      this.lastTableStructuresHash = structuresHash;
     }
 
     catch (error) {

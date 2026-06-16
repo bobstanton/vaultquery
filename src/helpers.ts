@@ -13,8 +13,6 @@ import type {
 } from './Providers/TableProviderTypes';
 import { getErrorMessage } from './utils/ErrorMessages';
 
-declare const activeWindow: Window;
-
 export interface WaitForAPIOptions {
   /** Maximum number of retry attempts (default: 5) */
   maxRetries?: number;
@@ -145,7 +143,7 @@ export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: Wai
 
       opts.onRetry?.(attempt);
 
-      await new Promise<void>(resolve => activeWindow.setTimeout(resolve, delay));
+      await new Promise<void>(resolve => window.setTimeout(resolve, delay));
 
       api = getVaultQueryAPI(app);
       if (api !== null) {
@@ -336,7 +334,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
   private clearRetryTimer(): void {
     if (this.retryTimer !== null) {
-      activeWindow.clearTimeout(this.retryTimer);
+      window.clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
   }
@@ -347,7 +345,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
     this.retryAttempts++;
     this.logger.info(`[VaultQuery] ${this.options.pluginId}: retrying table provider registration in ${this.retryDelayMs}ms (${reason})`);
-    this.retryTimer = activeWindow.setTimeout(() => {
+    this.retryTimer = window.setTimeout(() => {
       this.retryTimer = null;
       void this.retryNow();
     }, this.retryDelayMs);

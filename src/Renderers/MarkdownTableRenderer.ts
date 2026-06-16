@@ -62,7 +62,7 @@ export class MarkdownTableRenderer extends BaseRenderer {
     if (!columns.length) {
       throw new Error('Markdown output columns config did not match any query result columns.');
     }
-    const shouldRenderMarkdownContent = context.settings?.contentRenderingMode === 'rendered-markdown';
+    const shouldRenderMarkdownContent = context.settings.contentRenderingMode === 'rendered-markdown';
 
     renderComponents.get(container)?.unload();
     const renderComponent = new Component();

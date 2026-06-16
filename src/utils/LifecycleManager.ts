@@ -1,5 +1,3 @@
-declare const activeWindow: Window;
-
 type TimerKey = string;
 
 interface DomEventRegistration<K extends keyof DocumentEventMap = keyof DocumentEventMap> {
@@ -25,7 +23,7 @@ export class LifecycleManager {
 
   public setInterval(key: TimerKey, handler: () => void, delayMs: number): void {
     this.clearInterval(key);
-    this.intervals.set(key, activeWindow.setInterval(handler, delayMs));
+    this.intervals.set(key, window.setInterval(handler, delayMs));
   }
 
   public clearInterval(key: TimerKey): void {
@@ -34,13 +32,13 @@ export class LifecycleManager {
       return;
     }
 
-    activeWindow.clearInterval(interval);
+    window.clearInterval(interval);
     this.intervals.delete(key);
   }
 
   public setTimeout(key: TimerKey, handler: () => void, delayMs: number): void {
     this.clearTimeout(key);
-    this.timeouts.set(key, activeWindow.setTimeout(() => {
+    this.timeouts.set(key, window.setTimeout(() => {
       this.timeouts.delete(key);
       handler();
     }, delayMs));
@@ -52,7 +50,7 @@ export class LifecycleManager {
       return;
     }
 
-    activeWindow.clearTimeout(timeout);
+    window.clearTimeout(timeout);
     this.timeouts.delete(key);
   }
 
@@ -75,12 +73,12 @@ export class LifecycleManager {
 
   public cleanup(): void {
     for (const interval of this.intervals.values()) {
-      activeWindow.clearInterval(interval);
+      window.clearInterval(interval);
     }
     this.intervals.clear();
 
     for (const timeout of this.timeouts.values()) {
-      activeWindow.clearTimeout(timeout);
+      window.clearTimeout(timeout);
     }
     this.timeouts.clear();
 

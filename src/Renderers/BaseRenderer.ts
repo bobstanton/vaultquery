@@ -6,8 +6,6 @@ import { formatIsoDateString, formatResultsAsMarkdown } from '../utils/ResultFor
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 
-declare const activeWindow: Window;
-
 const logger = rootLogger.scope('Renderer');
 
 interface FloatingButtonConfig {
@@ -16,6 +14,13 @@ interface FloatingButtonConfig {
   spinnerClass?: string;
   onClick: () => Promise<void>;
 }
+
+/**
+ * Keep refresh buttons busy for at least this long, even when the refresh resolves
+ * instantly, so rapid double clicks cannot trigger a second refresh.
+ * Mirrors the Places plugins' refresh-button behavior.
+ */
+const MIN_REFRESH_BUSY_MS = 1000;
 
 interface ErrorRenderOptions {
   title: string;
@@ -32,7 +37,7 @@ export interface RenderContext {
   openFile: (path: string) => void;
   MarkdownRenderer?: typeof MarkdownRenderer;
   pluginContext?: Component;
-  settings?: VaultQuerySettings;
+  settings: VaultQuerySettings;
   onRefresh?: () => Promise<void>;
   sourcePath?: string;
 }
@@ -82,17 +87,32 @@ export abstract class BaseRenderer {
 
     let isProcessing = false;
 
+    const beginRefreshProgress = (): (() => void) => {
+      const host = container.parentElement;
+      if (!host) return () => undefined;
+      host.addClass('vaultquery-refresh-progress-host');
+      const bar = host.createDiv('vaultquery-refresh-progress');
+      return () => {
+        bar.remove();
+        host.removeClass('vaultquery-refresh-progress-host');
+      };
+    };
+
     button.addEventListener('click', () => {
       if (isProcessing) return;
       isProcessing = true;
       button.setAttribute('aria-disabled', 'true');
 
       const isRefreshButton = Boolean(config.spinnerClass);
+      let endRefreshProgress: (() => void) | null = null;
       if (isRefreshButton) {
+        container.addClass('vaultquery-floating-buttons-active');
         button.addClass(config.spinnerClass!);
         button.empty();
         setIcon(button, 'loader');
+        endRefreshProgress = beginRefreshProgress();
       }
+      const startedAt = Date.now();
 
       void (async () => {
         try {
@@ -107,13 +127,21 @@ export abstract class BaseRenderer {
           }
         } finally {
           if (isRefreshButton) {
+            // Keep the busy state visible for a minimum window to absorb double clicks
+            // even when the refresh is effectively instantaneous.
+            const remainingMs = MIN_REFRESH_BUSY_MS - (Date.now() - startedAt);
+            if (remainingMs > 0) {
+              await new Promise(resolve => window.setTimeout(resolve, remainingMs));
+            }
+            endRefreshProgress?.();
             button.removeClass(config.spinnerClass!);
+            container.removeClass('vaultquery-floating-buttons-active');
             button.empty();
             setIcon(button, config.icon);
             button.removeAttribute('aria-disabled');
             isProcessing = false;
           } else {
-            activeWindow.setTimeout(() => {
+            window.setTimeout(() => {
               button.removeAttribute('aria-disabled');
               isProcessing = false;
             }, 2000);
@@ -128,7 +156,7 @@ export abstract class BaseRenderer {
   private static showButtonFeedback(button: HTMLElement, feedbackIcon: string, originalIcon: string): void {
     button.empty();
     setIcon(button, feedbackIcon);
-    activeWindow.setTimeout(() => {
+    window.setTimeout(() => {
       button.empty();
       setIcon(button, originalIcon);
     }, 2000);
@@ -177,7 +205,9 @@ export abstract class BaseRenderer {
       sqlQuery = sections.sqlQuery;
       templateConfigText = sections.templateConfigText;
       configSectionText = sections.configSection;
-    } catch {
+    } catch (error) {
+      // Best-effort section split for error display; keep the raw query on failure.
+      logger.info('Failed to split query sections for error display; using raw query', error);
     }
 
     this.renderError(errorContainer, {

@@ -265,16 +265,16 @@ export class ContentLocationService {
     return true;
   }
 
-  public static looksLikeTask(slice: string): boolean {
+  public static looksLikeTask(this: void, slice: string): boolean {
     // Match tasks with any checkbox state: [ ], [x], [X], [/], [-], [?], [>], [<], [!], etc.
     return /^\s*[-*+]\s+\[[^\]]\]\s+/.test(slice);
   }
 
-  public static looksLikeHeading(slice: string): boolean {
+  public static looksLikeHeading(this: void, slice: string): boolean {
     return /^#{1,6}\s+/.test(slice);
   }
 
-  public static looksLikeListItem(slice: string): boolean {
+  public static looksLikeListItem(this: void, slice: string): boolean {
     // Match bullet lists (-, *, +) or numbered lists (1., 2), etc.)
     // Exclude task items (those have [x] or any other checkbox state)
     return /^\s*(?:[-*+]|\d+[.)])\s+(?!\[[^\]]\])/.test(slice);

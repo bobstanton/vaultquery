@@ -165,7 +165,9 @@ export class PreviewService {
       try {
         this.db.exec(`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
       }
-      catch {
+      catch (rollbackError) {
+        // Savepoint rollback is best-effort; preserve the original error below.
+        logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
       }
       this.resetDeferredForeignKeys();
       throw new Error(friendlySqliteError(e, activeStatement));
@@ -237,7 +239,9 @@ export class PreviewService {
       try {
         this.db.exec(`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
       }
-      catch {
+      catch (rollbackError) {
+        // Savepoint rollback is best-effort; preserve the original error below.
+        logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
       }
       throw error;
     }

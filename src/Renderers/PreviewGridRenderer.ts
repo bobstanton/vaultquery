@@ -60,7 +60,7 @@ export class PreviewGridRenderer {
         summaryText = `✅ ${rowCount} new row${rowCount !== 1 ? 's' : ''} will be inserted into table "${table}".`;
         summaryClass = 'vaultquery-summary-insert';
         break;
-      case 'update':
+      case 'update': {
         const changedFieldCount = this.countChangedFields(before, after);
         if (rowCount === 0) {
           summaryText = `ℹ️ No changes to apply. No rows matched the UPDATE statement.`;
@@ -73,18 +73,20 @@ export class PreviewGridRenderer {
         }
         summaryClass = 'vaultquery-summary-update';
         break;
+      }
       case 'delete':
         summaryText = rowCount === 0
           ? `ℹ️ No rows matched the DELETE statement.`
           : `⚠️ ${rowCount} row${rowCount !== 1 ? 's' : ''} will be deleted from table "${table}".`;
         summaryClass = 'vaultquery-summary-delete';
         break;
-      case 'multi':
+      case 'multi': {
         const operations = previewResult.multiResults || [];
         const totalRows = operations.reduce((sum, result) => sum + Math.max(result.before.length, result.after.length), 0);
         summaryText = `🔄 Multi-statement operation affecting ${totalRows} rows across ${operations.length} operations.`;
         summaryClass = 'vaultquery-summary-multi';
         break;
+      }
     }
 
     container.createDiv({
@@ -280,7 +282,7 @@ export class PreviewGridRenderer {
   }
 
   private static removeOperationDetails(element: Element): void {
-    if (element instanceof HTMLElement) {
+    if (element.instanceOf(HTMLElement)) {
       SlickGridRenderer.cleanupContainer(element);
     }
     element.remove();
@@ -304,7 +306,7 @@ export class PreviewGridRenderer {
       }
 
       cell.textContent = label;
-      if (cell instanceof HTMLElement) {
+      if (cell.instanceOf(HTMLElement)) {
         cell.addClass('vaultquery-clickable-cell');
       }
     });
@@ -550,10 +552,11 @@ export class PreviewGridRenderer {
       case 'delete':
         message = `Delete ${rowCount} row${rowCount !== 1 ? 's' : ''} from "${table}"?\n\nThis action cannot be undone.`;
         break;
-      case 'multi':
+      case 'multi': {
         const operations = previewResult.multiResults?.length || 0;
         message = `Execute ${operations} operations affecting multiple tables?`;
         break;
+      }
     }
 
     const modal = new ConfirmationModal(context.app, message);

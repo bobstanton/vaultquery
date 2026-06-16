@@ -58,7 +58,7 @@ export class TaskEditPlanner {
     text = text.replace(/📅\s*\d{4}-\d{2}-\d{2}/g, '');
     text = text.replace(/✅\s*\d{4}-\d{2}-\d{2}/g, '');
     text = text.replace(/❌\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/🔁\s*[^📅⏳🛫➕✅❌🔺⏫🔼🔽⏬🆔⛔🏁#]*/g, '');
+    text = text.replace(/🔁\s*[^📅⏳🛫➕✅❌🔺⏫🔼🔽⏬🆔⛔🏁#]*/gu, '');
     text = text.replace(/🏁\s*\w+/g, '');
     text = text.replace(/🆔\s*[\w-]+/g, '');
     text = text.replace(/⛔\s*[\w,-]+/g, '');

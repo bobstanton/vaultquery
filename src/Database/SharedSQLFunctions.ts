@@ -232,8 +232,13 @@ export class SharedSQLFunctions {
     const diffMs = date.getTime() - startOfYear.getTime();
     const dayOfYear = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
 
+    // Escape literal %% to a private-use sentinel so the directive replacements
+    // below don't see it, then restore it to a single % at the end. (A
+    // private-use code point avoids the control-character regex warning that a
+    // NUL sentinel triggers, and cannot occur in real date directive output.)
+    const ESCAPED_PERCENT = '\uF8FF';
     return format
-      .replace(/%%/g, '\x00') // Temporarily replace %%
+      .replace(/%%/g, ESCAPED_PERCENT)
       .replace(/%Y/g, String(year))
       .replace(/%y/g, String(year).slice(-2))
       .replace(/%B/g, monthNames[month - 1])
@@ -245,7 +250,7 @@ export class SharedSQLFunctions {
       .replace(/%a/g, dayAbbrev[date.getDay()])
       .replace(/%w/g, String(date.getDay()))
       .replace(/%j/g, String(dayOfYear).padStart(3, '0'))
-      .replace(/\x00/g, '%'); // Restore literal %
+      .replace(/\uF8FF/g, '%'); // Restore literal %
   }
 
   protected static registerGeoFunctions(db: Database): void {

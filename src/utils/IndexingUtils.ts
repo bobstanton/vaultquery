@@ -2,8 +2,6 @@ import { MarkdownPostProcessorContext } from 'obsidian';
 import { VaultQueryAPI } from '../VaultQueryAPI';
 import type { IndexingProgress } from '../types';
 
-declare const activeWindow: Window;
-
 export const VAULTQUERY_DATABASE_PREPARING_MESSAGE = 'Preparing VaultQuery database...';
 
 export interface PendingBlock {
@@ -56,7 +54,7 @@ export async function waitForVaultQueryIndexing(options: WaitForIndexingOptions)
       return;
     }
 
-    await new Promise(resolve => activeWindow.setTimeout(resolve, pendingCheckIntervalMs));
+    await new Promise(resolve => window.setTimeout(resolve, pendingCheckIntervalMs));
   }
 
   const api = options.getApi();
@@ -155,9 +153,9 @@ function waitForIndexingAndRender(options: {
   else {
     renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE });
   }
-  const checkInterval = activeWindow.setInterval(async () => {
+  const checkInterval = window.setInterval(async () => {
     if (!options.container.isConnected) {
-      activeWindow.clearInterval(checkInterval);
+      window.clearInterval(checkInterval);
       return;
     }
 
@@ -169,7 +167,7 @@ function waitForIndexingAndRender(options: {
     const status = polledApi.getIndexingStatus();
 
     if (!status.isIndexing) {
-      activeWindow.clearInterval(checkInterval);
+      window.clearInterval(checkInterval);
       if (options.clearContainerOnReady) {
         options.container.empty();
       }

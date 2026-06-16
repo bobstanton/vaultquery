@@ -5,8 +5,6 @@ import type { ContentRenderingMode, WasmSource } from './Settings';
 import type { ConsoleLogLevel } from 'obsidian-debug-logger';
 import { logger as rootLogger } from '../utils/logger';
 
-declare const activeWindow: Window;
-
 const logger = rootLogger.scope('Settings');
 
 export class VaultQuerySettingTab extends PluginSettingTab {
@@ -401,9 +399,8 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         })
       );
 
-    // eslint-disable-next-line obsidianmd/settings-tab/no-problematic-settings-headings -- section label
     new Setting(containerEl)
-      .setName('Display options')
+      .setName('Result display')
       .setHeading();
 
     new Setting(containerEl)
@@ -538,22 +535,22 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             if (status.isIndexing && status.progress) {
               const percentage = Math.round((status.progress.current / status.progress.total) * 100);
               button.setButtonText(`Rebuilding... ${percentage}%`);
-              activeWindow.setTimeout(checkProgress, 500);
+              window.setTimeout(checkProgress, 500);
             }
           };
 
-          activeWindow.setTimeout(checkProgress, 100);
+          window.setTimeout(checkProgress, 100);
 
           rebuildPromise.then(() => {
             button.setButtonText('Rebuild complete');
-            activeWindow.setTimeout(() => {
+            window.setTimeout(() => {
               button.setButtonText('Rebuild index');
               button.setDisabled(false);
             }, 3000);
           }).catch((error: unknown) => {
             logger.error('Failed to rebuild index', error);
             button.setButtonText('Error');
-            activeWindow.setTimeout(() => {
+            window.setTimeout(() => {
               button.setButtonText('Rebuild index');
               button.setDisabled(false);
             }, 2000);

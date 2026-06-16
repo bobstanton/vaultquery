@@ -220,6 +220,7 @@ export class TriggerFunctions {
       }
 
       this.debounceTimestamps.set(key, now);
+      this.prunedDebounceTimestamps(now);
       return 1;
     });
 
@@ -363,7 +364,7 @@ export class TriggerFunctions {
       this.guarded(() => this.actionFromArgs('vq_add_table_row', [path, tableIndex, valuesJson], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'valuesJson', type: 'string' }], values => {
         let parsedValues: Record<string, string>;
         try {
-          parsedValues = JSON.parse(values.valuesJson as string);
+          parsedValues = JSON.parse(values.valuesJson as string) as Record<string, string>;
         } catch (e) {
           logger.warn('vq_add_table_row: invalid JSON', { valuesJson, error: e });
           return null;
@@ -497,6 +498,25 @@ export class TriggerFunctions {
     }
   }
 
+  /** Line number (or insertion line) an action targets, for ordering. */
+  private getActionLine(action: PendingAction): number | null {
+    if ('lineNumber' in action.params) {
+      return action.params.lineNumber;
+    }
+    if ('afterLine' in action.params) {
+      return action.params.afterLine;
+    }
+    return null;
+  }
+
+  /** Row index for table actions, for ordering within one table. */
+  private getActionTablePosition(action: PendingAction): { tableIndex: number; rowIndex: number } | null {
+    if (action.type === 'set_table_cell' || action.type === 'delete_table_row') {
+      return { tableIndex: action.params.tableIndex, rowIndex: action.params.rowIndex };
+    }
+    return null;
+  }
+
   public getPendingActions(): PendingAction[] {
     const actions = [...this.pendingActions];
     this.pendingActions = [];
@@ -521,9 +541,56 @@ export class TriggerFunctions {
       return true;
     });
 
-    filteredActions.sort((a, b) => this.getActionPriority(a) - this.getActionPriority(b));
+    // Within one pass each action re-reads the file but targets line numbers
+    // captured before earlier actions shifted them. Processing positions in
+    // descending order keeps every remaining target valid. The sort is stable,
+    // so actions without a comparable position keep their queue order.
+    filteredActions.sort((a, b) => {
+      const priorityDelta = this.getActionPriority(a) - this.getActionPriority(b);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      if (this.getActionPriority(a) !== 1 || !('path' in a.params) || !('path' in b.params) || a.params.path !== b.params.path) {
+        return 0;
+      }
+
+      const tableA = this.getActionTablePosition(a);
+      const tableB = this.getActionTablePosition(b);
+      if (tableA && tableB && tableA.tableIndex === tableB.tableIndex) {
+        return tableB.rowIndex - tableA.rowIndex;
+      }
+      if (tableA || tableB) {
+        return 0;
+      }
+
+      const lineA = this.getActionLine(a);
+      const lineB = this.getActionLine(b);
+      if (lineA !== null && lineB !== null) {
+        return lineB - lineA;
+      }
+
+      return 0;
+    });
 
     return filteredActions;
+  }
+
+  /**
+   * Keep per-path debounce keys from accumulating forever. Entries older than
+   * an hour are no longer useful for any realistic debounce window.
+   */
+  private prunedDebounceTimestamps(now: number): void {
+    if (this.debounceTimestamps.size <= 1000) {
+      return;
+    }
+
+    const MAX_AGE_MS = 60 * 60 * 1000;
+    for (const [key, timestamp] of this.debounceTimestamps) {
+      if (now - timestamp > MAX_AGE_MS) {
+        this.debounceTimestamps.delete(key);
+      }
+    }
   }
 
   public hasPendingActions(): boolean {
@@ -586,7 +653,7 @@ export class TriggerFunctions {
     const keys = new Set<string>();
     for (const action of this.pendingActions) {
       if (action.type === 'set_property' && action.params.path === path) {
-        keys.add(action.params.key as string);
+        keys.add(action.params.key);
       }
     }
     return keys;

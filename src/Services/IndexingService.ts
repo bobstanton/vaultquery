@@ -11,9 +11,10 @@ import { extractAllCodeBlocks, parseSQLObjectName, parseFunctionName } from '../
 import { logger as rootLogger } from '../utils/logger';
 import type { IndexNoteData, NoteRecord, IndexingStats, IndexingProgress, IndexingStatus, TableCellData, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
 
-declare const activeWindow: Window;
-
 const logger = rootLogger.scope('Indexing');
+
+/** Sticky regex to measure a whitespace run without copying the string. */
+const WHITESPACE_RUN = /\s*/y;
 
 interface IndexingEventEmitter {
   emitFileIndexed: (path: string, isUpdate: boolean) => void;
@@ -111,6 +112,9 @@ export class IndexingService {
   }
 
   private async performReindex(force: boolean): Promise<void> {
+    // Settings may have changed since construction (e.g. exclude patterns edited
+    // in the settings tab, which schedules this reindex).
+    this.updateExcludePatterns();
     this.performanceMonitor.startOperation();
     this.setIndexingStatus(true);
 
@@ -185,12 +189,22 @@ export class IndexingService {
     await this.database.saveToDisk();
   }
 
-  private async getScalarPropertyKeySet(): Promise<Set<string>> {
+  /**
+   * Scalar property keys for a single note. Used to detect whether an index
+   * operation could have changed the global key set: the global set can only
+   * change through this note's keys, so comparing the note-scoped set avoids
+   * two vault-wide DISTINCT scans per file save.
+   */
+  private async getNotePropertyKeySet(path: string): Promise<Set<string>> {
     if (!this.settings.enabledFeatures.indexFrontmatter) {
       return new Set();
     }
 
-    return new Set(await this.database.schema.getAllPropertyKeys());
+    const rows = await this.database.all(
+      'SELECT DISTINCT key FROM properties WHERE path = ? AND array_index IS NULL',
+      [path]
+    );
+    return new Set(rows.map(row => row.key as string));
   }
 
   private propertyKeySetsEqual(before: Set<string>, after: Set<string>): boolean {
@@ -207,13 +221,17 @@ export class IndexingService {
     return true;
   }
 
-  private async rebuildPropertiesViewIfKeySetChanged(before: Set<string>): Promise<void> {
+  private async rebuildPropertiesViewIfNoteKeysChanged(path: string, before: Set<string>): Promise<void> {
     if (!this.settings.enabledFeatures.indexFrontmatter) {
       return;
     }
 
-    const after = await this.getScalarPropertyKeySet();
+    const after = await this.getNotePropertyKeySet(path);
     if (!this.propertyKeySetsEqual(before, after)) {
+      // The note's keys changed, so the global key set may have changed.
+      // Rebuilding unconditionally is fine here: this branch only runs when a
+      // note's frontmatter keys actually change, and a redundant rebuild just
+      // recreates an identical view.
       await this.database.schema.rebuildPropertiesView();
     }
   }
@@ -223,10 +241,10 @@ export class IndexingService {
 
     const content = this.needsContentProcessing() ? await this.app.vault.cachedRead(file) : '';
     const indexData = await this.prepareNoteForIndexing(file, content);
-    const propertyKeysBefore = await this.getScalarPropertyKeySet();
+    const propertyKeysBefore = await this.getNotePropertyKeySet(file.path);
 
     await this.database.indexNote(indexData);
-    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
+    await this.rebuildPropertiesViewIfNoteKeysChanged(file.path, propertyKeysBefore);
 
     this.eventEmitter?.emitFileIndexed(file.path, true);
   }
@@ -239,10 +257,10 @@ export class IndexingService {
       (this.shouldProcessFileContent(file) ? await this.app.vault.cachedRead(file) : '');
 
     const indexData = await this.prepareNoteForIndexing(file, actualContent);
-    const propertyKeysBefore = await this.getScalarPropertyKeySet();
+    const propertyKeysBefore = await this.getNotePropertyKeySet(file.path);
 
     await this.database.indexNote(indexData);
-    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
+    await this.rebuildPropertiesViewIfNoteKeysChanged(file.path, propertyKeysBefore);
 
     this.eventEmitter?.emitFileIndexed(file.path, isUpdate);
   }
@@ -264,7 +282,7 @@ export class IndexingService {
 
       const callback = () => {
         if (timeoutId !== undefined) {
-          activeWindow.clearTimeout(timeoutId);
+          window.clearTimeout(timeoutId);
         }
         resolve();
       };
@@ -277,7 +295,7 @@ export class IndexingService {
       }
 
       if (timeoutMs !== undefined) {
-        timeoutId = activeWindow.setTimeout(() => {
+        timeoutId = window.setTimeout(() => {
           let index = this.indexingCallbacks.indexOf(callback);
           if (index !== -1) {
             this.indexingCallbacks.splice(index, 1);
@@ -319,10 +337,10 @@ export class IndexingService {
 
   public async removeNote(notePath: string): Promise<void> {
     this.providerDefinitionBlockHandler?.removeProviderDefinitionBlocks(notePath);
-    const propertyKeysBefore = await this.getScalarPropertyKeySet();
+    const propertyKeysBefore = await this.getNotePropertyKeySet(notePath);
 
     await this.database.run('DELETE FROM notes WHERE path = ?', [notePath]);
-    await this.rebuildPropertiesViewIfKeySetChanged(propertyKeysBefore);
+    await this.rebuildPropertiesViewIfNoteKeysChanged(notePath, propertyKeysBefore);
 
     this.eventEmitter?.emitFileRemoved(notePath);
   }
@@ -532,7 +550,7 @@ export class IndexingService {
     concurrency: number,
     mapper: (item: T, index: number) => Promise<R>
   ): Promise<R[]> {
-    const results: R[] = new Array(items.length);
+    const results: R[] = new Array<R>(items.length);
     const executing = new Set<Promise<void>>();
     const concurrencyLimit = Math.min(Math.max(1, concurrency), items.length);
 
@@ -571,7 +589,7 @@ export class IndexingService {
 
   private async yieldToEventLoop(): Promise<void> {
     // Use a macrotask yield so rendering and input can run between indexing batches.
-    await new Promise(resolve => activeWindow.setTimeout(resolve, 0));
+    await new Promise(resolve => window.setTimeout(resolve, 0));
   }
 
   private async prepareNoteForIndexing(file: TFile, content: string): Promise<IndexNoteData> {
@@ -696,8 +714,13 @@ export class IndexingService {
     };
 
     const frontmatterOffset = cache?.frontmatterPosition?.end.offset ?? 0;
-    const trimmedOffset = frontmatterOffset > 0 ?
-      content.substring(frontmatterOffset).length - content.substring(frontmatterOffset).trimStart().length : 0;
+    // Count leading whitespace in place; substring().trimStart() here would
+    // allocate two copies of the note body just to measure it.
+    let trimmedOffset = 0;
+    if (frontmatterOffset > 0) {
+      WHITESPACE_RUN.lastIndex = frontmatterOffset;
+      trimmedOffset = WHITESPACE_RUN.exec(content)?.[0].length ?? 0;
+    }
     const contentOffset = frontmatterOffset + trimmedOffset;
 
     const fullLines = content ? content.split('\n') : [];
@@ -1322,7 +1345,7 @@ export class IndexingService {
     const cancelledDateMatch = taskText.match(/❌\s*(\d{4}-\d{2}-\d{2})/);
     const cancelledDate = cancelledDateMatch?.[1];
 
-    const recurrenceMatch = taskText.match(/🔁\s*([^📅⏳🛫➕✅❌🔺⏫🔼🔽⏬🆔⛔🏁#]+)/);
+    const recurrenceMatch = taskText.match(/🔁\s*([^📅⏳🛫➕✅❌🔺⏫🔼🔽⏬🆔⛔🏁#]+)/u);
     const recurrence = recurrenceMatch?.[1]?.trim();
 
     const onCompletionMatch = taskText.match(/🏁\s*(\w+)/);
@@ -1356,7 +1379,7 @@ export class IndexingService {
   private deriveTitle(path: string, basename: string): string {
     if (basename) return basename;
     // lastIndexOf returns -1 if not found, so substring(0) works for both cases
-    return path.substring(path.lastIndexOf('/') + 1).replace('.md', '');
+    return path.substring(path.lastIndexOf('/') + 1).replace(/\.md$/, '');
   }
 
   private deriveSize(statSize: number, content: string): number {

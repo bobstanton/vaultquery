@@ -18,7 +18,7 @@ interface AutoRefreshResolutionOptions {
   includeGlobalDefault?: boolean;
 }
 
-export function resolveAutoRefreshSetting(settings: VaultQuerySettings | undefined, parsed: ParsedQuery | undefined, resolutionOptions: AutoRefreshResolutionOptions = {}): boolean {
+export function resolveAutoRefreshSetting(settings: VaultQuerySettings, parsed: ParsedQuery | undefined, resolutionOptions: AutoRefreshResolutionOptions = {}): boolean {
   const options = parsed?.output?.options;
   const configuredValue = options?.autorefresh ?? options?.['auto-refresh'];
   const parsedOverride = parseBooleanOption(configuredValue);
@@ -30,13 +30,26 @@ export function resolveAutoRefreshSetting(settings: VaultQuerySettings | undefin
     return false;
   }
 
-  return settings?.autoRefreshOnIndexChange ?? false;
+  return settings.autoRefreshOnIndexChange;
 }
 
 export class QueryRefreshRegistry {
   private static entries = new Map<HTMLElement, RefreshEntry>();
 
+  static hasEntries(): boolean {
+    return this.entries.size > 0;
+  }
+
   static register(container: HTMLElement, entry: RefreshEntry): void {
+    // Opportunistically drop entries for DOM Obsidian has discarded, so the
+    // map (and the closures it holds over query results) doesn't grow for the
+    // lifetime of the session.
+    for (const registeredContainer of Array.from(this.entries.keys())) {
+      if (!registeredContainer.isConnected) {
+        this.entries.delete(registeredContainer);
+      }
+    }
+
     this.entries.set(container, entry);
   }
 

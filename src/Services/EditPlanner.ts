@@ -10,6 +10,7 @@ export type {
   ReplaceRangeEdit,
   FrontmatterEdit,
   Edit,
+  FrontmatterData,
 };
 
 export interface EditPlan {
@@ -110,10 +111,15 @@ export class EditPlanner {
           continue;
         }
 
+        // notes.content is indexed without frontmatter, so only replace the body.
+        // This matches vq_set_content semantics (TriggerService.setContent).
+        const frontmatterMatch = existingContent.match(/^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/);
+        const bodyStart = frontmatterMatch ? frontmatterMatch[0].length : 0;
+
         edits.push({
           type: 'replaceRange',
           path: update.path,
-          range: { start: 0, end: existingContent.length },
+          range: { start: bodyStart, end: existingContent.length },
           text: update.content,
           reason: 'UPDATE notes content'
         });
@@ -257,15 +263,17 @@ export class EditPlanner {
     }
 
     switch (type?.toLowerCase()) {
-      case 'number':
+      case 'number': {
         const num = Number(value);
         return isNaN(num) ? value : num;
+      }
 
-      case 'boolean':
+      case 'boolean': {
         const lower = value.toLowerCase();
         if (lower === 'true' || lower === '1' || lower === 'yes') return true;
         if (lower === 'false' || lower === '0' || lower === 'no') return false;
         return value;
+      }
 
       case 'date':
       case 'datetime':
@@ -274,7 +282,7 @@ export class EditPlanner {
       case 'list':
       case 'array':
         try {
-          const parsed = JSON.parse(value);
+          const parsed: unknown = JSON.parse(value);
           if (Array.isArray(parsed)) return parsed;
         }
         catch (e) {
@@ -288,7 +296,7 @@ export class EditPlanner {
       case 'aliases':
       case 'tags':
         try {
-          const parsed = JSON.parse(value);
+          const parsed: unknown = JSON.parse(value);
           if (Array.isArray(parsed)) return parsed;
         }
         catch (e) {

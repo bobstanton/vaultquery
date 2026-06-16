@@ -104,7 +104,11 @@ export class DatabaseRecoveryManager {
         }
       }
 
-      const api = await VaultQueryAPI.create(this.options.app, this.options.settings);
+      // Carry the event bus over so existing 'database-restored' (and other)
+      // subscriptions keep working on the replacement API instance.
+      const api = await VaultQueryAPI.create(this.options.app, this.options.settings, {
+        eventBus: currentApi?.getEventBus(),
+      });
       this.options.setApi(api);
       logger.lifecycle.info(`API recreated after database loss: thirdPartyProviderTablesEnabled=${this.options.settings.enableThirdPartyProviderTables}`);
       this.options.onApiRecreated();

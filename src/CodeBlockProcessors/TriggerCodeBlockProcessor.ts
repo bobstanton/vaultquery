@@ -50,7 +50,6 @@ export class TriggerCodeBlockProcessor extends BaseUserDefinedProcessor {
   private renderDisabled(container: HTMLElement): void {
     const header = container.createDiv({ cls: 'vaultquery-sql-preview-section vaultquery-disabled' });
     header.createSpan({ text: 'Triggers are disabled. Enable them in ' });
-    // eslint-disable-next-line obsidianmd/ui/sentence-case -- Matches actual settings UI label
     header.createEl('strong', { text: 'Settings → VaultQuery → Enable triggers' });
     header.createSpan({ text: '.' });
   }

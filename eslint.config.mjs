@@ -145,19 +145,6 @@ export default [
       "obsidianmd/validate-license": "warn",
     },
   },
-  // Disable sentence-case for help processor files (intentionally use title case for headings)
-  {
-    files: ["**/HelpBlockProcessor.ts"],
-    rules: {
-      "obsidianmd/ui/sentence-case": "off",
-    },
-  },
-  {
-    files: ["src/Settings/SettingsTab.ts"],
-    rules: {
-      "obsidianmd/ui/sentence-case": "off",
-    },
-  },
   // Generated help files - inline comments handle most rules, these cover the rest
   {
     files: ["**/generated-help/**/*.ts"],
@@ -166,8 +153,6 @@ export default [
       "@typescript-eslint/no-unused-vars": "off",
       // Help text mentions .obsidian as example path (documentation, not code)
       "obsidianmd/hardcoded-config-path": "off",
-      // Generated help uses innerHTML for static HTML content (no user input)
-      "@microsoft/sdl/no-inner-html": "off",
       // Generated help uses fire-and-forget pattern for MarkdownRenderer
       "@typescript-eslint/no-floating-promises": "off",
     },

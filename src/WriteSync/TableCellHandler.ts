@@ -41,7 +41,7 @@ export class TableCellHandler implements EntityHandler {
           'SELECT COALESCE(MAX(row_index), -1) as max_row FROM table_cells WHERE path = ? AND table_index = ?',
           [path, tableIndex]
         );
-        return ((existingMaxRows[0]?.max_row as number) ?? -1) + 1;
+        return ((existingMaxRows[0]?.max_row) ?? -1) + 1;
       },
       'TableCellHandler'
     );

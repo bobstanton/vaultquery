@@ -13,7 +13,7 @@ export class FunctionCodeBlockProcessor extends BaseUserDefinedProcessor {
     return 'vaultquery-container vaultquery-function';
   }
 
-  protected processContent(container: HTMLElement, source: string, _ctx: MarkdownPostProcessorContext): void {
+  protected async processContent(container: HTMLElement, source: string, _ctx: MarkdownPostProcessorContext): Promise<void> {
     if (!this.plugin.settings.enableJavaScriptFunctions) {
       this.renderError(container, 'JavaScript SQL functions are disabled. Enable them in VaultQuery settings before using vaultquery-function blocks.');
       return;
@@ -35,7 +35,7 @@ export class FunctionCodeBlockProcessor extends BaseUserDefinedProcessor {
 
     try {
       if (this.plugin.api.functionNeedsRecreation(functionName, trimmedSource)) {
-        this.plugin.api.registerCustomFunction(functionName, trimmedSource);
+        await this.plugin.api.registerCustomFunction(functionName, trimmedSource);
       }
       this.renderSuccess(container, functionName, trimmedSource);
     }

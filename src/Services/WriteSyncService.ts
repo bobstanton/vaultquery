@@ -11,7 +11,7 @@ import { appendCellsFromTableRows } from '../WriteSync/TableUtils';
 import { logger as rootLogger } from '../utils/logger';
 
 import type { PreviewResult as ServicePreviewResult } from './PreviewService';
-import type { EditPlan, Edit, ReplaceRangeEdit, FrontmatterEdit } from './EditPlanner';
+import type { EditPlan, Edit, ReplaceRangeEdit, FrontmatterEdit, FrontmatterData } from './EditPlanner';
 import type { TaskRow, HeadingRow, ListItemRow, TableCellRow } from './ContentLocationService';
 
 const logger = rootLogger.scope('WriteSync');
@@ -38,11 +38,16 @@ export class WriteSyncService {
     });
 
     this.handlerRegistry = new EntityHandlerRegistry();
+    // Use a getter so runtime settings changes (e.g. toggling "Allow file
+    // deletion") take effect without reloading the plugin.
+    const pluginSettings = this.settings;
     this.handlerContext = {
       readFileContent: this.readFileContent.bind(this),
       queryDatabase: this.queryDatabase.bind(this),
       settings: {
-        allowDeleteNotes: this.settings.allowDeleteNotes
+        get allowDeleteNotes(): boolean {
+          return pluginSettings.allowDeleteNotes;
+        }
       }
     };
   }
@@ -122,8 +127,8 @@ export class WriteSyncService {
     }
 
     const createEdit = edits.find(e => e.type === 'createFile');
-    const rangeEdits = edits.filter(e => e.type === 'replaceRange') as ReplaceRangeEdit[];
-    const frontmatterEdits = edits.filter(e => e.type === 'frontmatter') as FrontmatterEdit[];
+    const rangeEdits = edits.filter(e => e.type === 'replaceRange');
+    const frontmatterEdits = edits.filter(e => e.type === 'frontmatter');
 
     if (createEdit) {
       const pathParts = createEdit.path.split('/');
@@ -167,10 +172,10 @@ export class WriteSyncService {
       throw new WriteOperationError(ERROR_MESSAGES.FILE_NOT_FOUND(filePath), 'applyEditsToFile', filePath);
     }
 
-    for (const edit of frontmatterEdits) {
-      await this.applyFrontmatterEdit(file, edit);
-    }
-
+    // Apply range edits before frontmatter edits: range offsets were computed
+    // against the file as it was planned, and processFrontMatter can change the
+    // frontmatter block length, which would shift every body offset.
+    // processFrontMatter is structure-aware, so running it after body changes is safe.
     if (rangeEdits.length > 0) {
       const content = await this.app.vault.read(file);
 
@@ -181,6 +186,10 @@ export class WriteSyncService {
       }
 
       await this.app.vault.modify(file, modifiedContent);
+    }
+
+    for (const edit of frontmatterEdits) {
+      await this.applyFrontmatterEdit(file, edit);
     }
   }
 
@@ -199,7 +208,7 @@ export class WriteSyncService {
   }
 
   private async applyFrontmatterEdit(file: TFile, edit: FrontmatterEdit): Promise<string> {
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+    await this.app.fileManager.processFrontMatter(file, (frontmatter: FrontmatterData) => {
       edit.mutate(frontmatter);
     });
     return await this.app.vault.read(file);

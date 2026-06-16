@@ -294,7 +294,7 @@
 
 .vaultquery-floating-buttons {
 	position: absolute;
-	top: 4px; 
+	top: var(--size-2-2); 
 	inset-inline-end: calc(var(--size-2-2) + 30px + var(--size-2-1));
 	display: flex;
 	gap: var(--size-2-1);
@@ -303,7 +303,8 @@
 	z-index: 1; 
 }
 
-.vaultquery-container:hover .vaultquery-floating-buttons {
+.vaultquery-container:hover .vaultquery-floating-buttons,
+.vaultquery-floating-buttons.vaultquery-floating-buttons-active {
 	opacity: 1;
 }
 
@@ -334,7 +335,7 @@
 }
 
 .vaultquery-floating-button.vaultquery-refresh-spinning svg {
-	animation: spin 1s linear infinite;
+	animation: vaultquery-spin 1s linear infinite;
 }
 
 .vaultquery-floating-button.vaultquery-refresh-spinning {
@@ -342,9 +343,59 @@
 	opacity: 0.6;
 }
 
+/* Indeterminate progress bar shown across the top of the block during a refresh.
+   Mirrors the Places plugins' refresh-button behavior. */
+.vaultquery-refresh-progress-host {
+	position: relative;
+}
+
+.vaultquery-refresh-progress {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 2px;
+	overflow: hidden;
+	background: var(--background-modifier-border);
+	z-index: 1;
+}
+
+.vaultquery-refresh-progress::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 40%;
+	background: var(--interactive-accent);
+	animation: vaultquery-refresh-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes vaultquery-refresh-progress-slide {
+	from {
+		inset-inline-start: -40%;
+	}
+	to {
+		inset-inline-start: 100%;
+	}
+}
+
 .vaultquery-rendered-content {
 	font-size: var(--font-ui-medium);
 	line-height: var(--line-height-normal);
+}
+
+/* Current/proposed comparison cells in preview grids */
+.vaultquery-comparison-cell {
+	opacity: 0.8;
+}
+
+.vaultquery-comparison-changed-current {
+	font-style: italic;
+	opacity: 0.8;
+}
+
+.vaultquery-comparison-changed-proposed {
+	font-weight: 600;
 }
 
 /* Markdown cell styles for data-grid cells */
@@ -1548,7 +1599,7 @@
 	background-color: var(--background-modifier-hover);
 }
 
-@keyframes spin {
+@keyframes vaultquery-spin {
 	from { transform: rotate(0deg); }
 	to { transform: rotate(360deg); }
 }

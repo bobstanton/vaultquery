@@ -56,7 +56,7 @@ export class QueryRenderer {
 
     if (outputKind === 'template' && parsed.template) {
       SlickGridRenderer.cleanupContainer(container);
-      if (!context.settings?.enableJavaScriptRendering) {
+      if (!context.settings.enableJavaScriptRendering) {
         BaseRenderer.renderError(container, {
           title: 'JavaScript rendering disabled',
           message: 'Enable JavaScript rendering in VaultQuery settings before using template sections.'

@@ -30,7 +30,7 @@ export class SchemaCodeBlockProcessor {
   }
 
   private async renderSchema(container: HTMLElement): Promise<void> {
-    const schema = await this.plugin.api!.getSchemaInfo();
+    const schema = await this.plugin.api.getSchemaInfo();
     void MarkdownRenderer.render(this.app, schema, container, '', this.component);
   }
 }

@@ -12,6 +12,7 @@ import '../slickgrid-alpine-theme.css';
 import { logger as rootLogger } from '../utils/logger';
 
 declare const activeWindow: Window;
+declare const activeDocument: Document;
 
 const logger = rootLogger.scope('SlickGrid');
 
@@ -27,50 +28,68 @@ const slickGridBodyResizeListenerNames = new Set(['resizingHandler', 'resizeEndH
 const trackedSlickGridBodyResizeListeners: TrackedBodyResizeListener[] = [];
 
 // Patch addEventListener to use passive listeners for scroll-blocking events
-// This eliminates "[Violation] Added non-passive event listener" warnings from SlickGrid
-const patchPassiveEventListeners = (() => {
-  let patched = false;
-  return () => {
-    if (patched) return;
-    patched = true;
+// registered inside VaultQuery grids. This eliminates "[Violation] Added
+// non-passive event listener" warnings from SlickGrid without changing the
+// behavior of listeners registered by Obsidian core or other plugins.
+// The patch is reverted in SlickGridRenderer.cleanup() (plugin unload).
+let originalAddEventListener: EventTarget['addEventListener'] | null = null;
+let originalRemoveEventListener: EventTarget['removeEventListener'] | null = null;
 
-    const originalAddEventListener = Reflect.get(EventTarget.prototype, 'addEventListener') as EventTarget['addEventListener'];
-    const originalRemoveEventListener = Reflect.get(EventTarget.prototype, 'removeEventListener') as EventTarget['removeEventListener'];
-    const passiveEvents = new Set(['touchstart', 'touchmove', 'wheel', 'mousewheel']);
+function isInsideVaultQueryGrid(target: EventTarget): boolean {
+  return target instanceof Element && target.closest('.vaultquery-data-grid') !== null;
+}
 
-    EventTarget.prototype.addEventListener = function(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) {
-      if (passiveEvents.has(type)) {
-        if (typeof options === 'boolean') {
-          options = { capture: options, passive: true };
-        }
-        else if (typeof options === 'undefined') {
-          options = { passive: true };
-        }
-        else if (typeof options === 'object' && options.passive === undefined) {
-          options = { ...options, passive: true };
-        }
+function patchPassiveEventListeners(): void {
+  if (originalAddEventListener) return;
+
+  originalAddEventListener = Reflect.get(EventTarget.prototype, 'addEventListener');
+  originalRemoveEventListener = Reflect.get(EventTarget.prototype, 'removeEventListener');
+  const addEventListener = originalAddEventListener;
+  const removeEventListener = originalRemoveEventListener;
+  const passiveEvents = new Set(['touchstart', 'touchmove', 'wheel', 'mousewheel']);
+
+  EventTarget.prototype.addEventListener = function(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions) {
+    if (passiveEvents.has(type) && isInsideVaultQueryGrid(this)) {
+      if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
       }
-
-      if (listener && isSlickGridBodyResizeListener(this, type, listener)) {
-        trackedSlickGridBodyResizeListeners.push({
-          target: this,
-          type,
-          listener,
-          options,
-        });
+      else if (typeof options === 'undefined') {
+        options = { passive: true };
       }
-
-      return originalAddEventListener.call(this, type, listener, options);
-    };
-
-    EventTarget.prototype.removeEventListener = function(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) {
-      if (listener) {
-        removeTrackedSlickGridBodyResizeListener(this, type, listener);
+      else if (typeof options === 'object' && options.passive === undefined) {
+        options = { ...options, passive: true };
       }
-      return originalRemoveEventListener.call(this, type, listener, options);
-    };
+    }
+
+    if (listener && isSlickGridBodyResizeListener(this, type, listener)) {
+      trackedSlickGridBodyResizeListeners.push({
+        target: this,
+        type,
+        listener,
+        options,
+      });
+    }
+
+    return addEventListener.call(this, type, listener, options);
   };
-})();
+
+  EventTarget.prototype.removeEventListener = function(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions) {
+    if (listener) {
+      removeTrackedSlickGridBodyResizeListener(this, type, listener);
+    }
+    return removeEventListener.call(this, type, listener, options);
+  };
+}
+
+function unpatchPassiveEventListeners(): void {
+  if (!originalAddEventListener || !originalRemoveEventListener) return;
+
+  EventTarget.prototype.addEventListener = originalAddEventListener;
+  EventTarget.prototype.removeEventListener = originalRemoveEventListener;
+  originalAddEventListener = null;
+  originalRemoveEventListener = null;
+  trackedSlickGridBodyResizeListeners.length = 0;
+}
 
 function isSlickGridBodyResizeListener(target: EventTarget, type: string, listener: EventListenerOrEventListenerObject): boolean {
   if (!slickGridBodyResizeEventTypes.has(type)) {
@@ -112,6 +131,7 @@ interface GridRecord {
   detachedAt?: number;
   disposed?: boolean;
   detachLogged?: boolean;
+  mountFailures?: number;
 }
 
 interface GridHeightConfig {
@@ -128,6 +148,8 @@ export class SlickGridRenderer extends BaseRenderer {
   private static orphanRefreshElements = new WeakSet<HTMLElement>();
   private static columnWidthCache = new Map<string, Map<string, number>>();
 
+  private static readonly COLUMN_WIDTH_CACHE_LIMIT = 200;
+
   private static saveColumnWidths(queryHash: string, columns: Column[]): void {
     const widths = new Map<string, number>();
     for (const col of columns) {
@@ -135,7 +157,16 @@ export class SlickGridRenderer extends BaseRenderer {
         widths.set(String(col.id), col.width);
       }
     }
+
+    // Refresh insertion order so eviction below is least-recently-saved.
+    this.columnWidthCache.delete(queryHash);
     this.columnWidthCache.set(queryHash, widths);
+
+    while (this.columnWidthCache.size > this.COLUMN_WIDTH_CACHE_LIMIT) {
+      const oldestKey = this.columnWidthCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.columnWidthCache.delete(oldestKey);
+    }
   }
 
   private static getSavedColumnWidth(queryHash: string, columnId: string): number | undefined {
@@ -306,13 +337,11 @@ export class SlickGridRenderer extends BaseRenderer {
       this.setupEventHandlers(grid, record);
       logger.debug(`SlickGrid initialized ${record.id}: rows=${record.data.length}, columns=${record.columns.length}`);
 
+      // Single post-layout fixup: setColumns re-measures widths after layout
+      // and fonts settle, and refreshGrid resizes the canvas. (This used to be
+      // a rAF refresh plus a second 50ms pass - two extra full renders per
+      // mount on top of the constructor's own render.)
       const containerWindow = record.container.ownerDocument.defaultView || activeWindow;
-      containerWindow.requestAnimationFrame(() => {
-        if (this.records.get(record.id) === record && record.grid === grid && record.container.isConnected) {
-          this.refreshGrid(record);
-        }
-      });
-
       containerWindow.setTimeout(() => {
         if (this.records.get(record.id) !== record || record.grid !== grid || !record.container.isConnected) {
           return;
@@ -327,6 +356,14 @@ export class SlickGridRenderer extends BaseRenderer {
         title: 'Grid Error',
         message: `SlickGrid rendering failed: ${getErrorMessage(error)}`
       });
+
+      // Stop the periodic restore loop from retrying (and re-rendering this
+      // error) forever when mounting fails deterministically.
+      record.mountFailures = (record.mountFailures ?? 0) + 1;
+      if (record.mountFailures >= 3) {
+        logger.debug(`SlickGrid ${record.id} failed to mount ${record.mountFailures} times; giving up`);
+        this.cleanupRecord(record);
+      }
     }
   }
 
@@ -432,7 +469,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
     const restoreTimer = this.restoreTimers.get(gridId);
     if (restoreTimer !== undefined) {
-      activeWindow.clearTimeout(restoreTimer);
+      window.clearTimeout(restoreTimer);
       this.restoreTimers.delete(gridId);
     }
   }
@@ -457,6 +494,13 @@ export class SlickGridRenderer extends BaseRenderer {
   }
 
   static checkAndRestoreGrids(): void {
+    // This runs on a 2s interval and on scroll; skip the per-record checks and
+    // the document-wide orphan scans entirely when there is nothing to restore
+    // (no live grids and no refresh owners that could revive an orphan).
+    if (this.records.size === 0 && !QueryRefreshRegistry.hasEntries()) {
+      return;
+    }
+
     const now = Date.now();
 
     for (const [gridId, record] of Array.from(this.records.entries())) {
@@ -489,10 +533,16 @@ export class SlickGridRenderer extends BaseRenderer {
   }
 
   private static refreshOrphanedGridContainers(): void {
+    // Orphan recovery works by re-running the owning query; without refresh
+    // owners the querySelectorAll sweep below cannot accomplish anything.
+    if (!QueryRefreshRegistry.hasEntries()) {
+      return;
+    }
+
     for (const doc of this.getCandidateDocuments(activeWindow.document)) {
       const grids = Array.from(doc.querySelectorAll('.vaultquery-data-grid'));
       for (const grid of grids) {
-        if (!(grid instanceof HTMLElement) || !grid.isConnected) {
+        if (!grid.instanceOf(HTMLElement) || !grid.isConnected) {
           continue;
         }
 
@@ -549,8 +599,8 @@ export class SlickGridRenderer extends BaseRenderer {
     const documents = new Set<Document>();
     documents.add(primaryDocument);
     documents.add(activeWindow.document);
-    if (typeof document !== 'undefined') {
-      documents.add(document);
+    if (typeof activeDocument !== 'undefined') {
+      documents.add(activeDocument);
     }
     return documents;
   }
@@ -585,6 +635,7 @@ export class SlickGridRenderer extends BaseRenderer {
         }
         else if (key === 'content' && shouldRenderMarkdownContent) {
           column.cssClass = 'vaultquery-markdown-content-cell';
+          column.asyncPostRender = this.createMarkdownCellPostRenderer(context);
         }
 
         return column;
@@ -608,7 +659,7 @@ export class SlickGridRenderer extends BaseRenderer {
       defaultColumnWidth: 120,
       forceFitColumns: !allowHorizontalScroll,
       syncColumnCellResize: true,
-      enableAsyncPostRender: false,
+      enableAsyncPostRender: hasMarkdownContent,
       asyncEditorLoading: false,
       enableAddRow: false,
       editable: false,
@@ -746,9 +797,8 @@ export class SlickGridRenderer extends BaseRenderer {
   private static createPathFormatter(_openFile: (path: string) => void) {
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
       if (!value) return '';
-      const pathStr = String(value);
-      const escapedPath = escapeHTML(pathStr);
-      return `<a href="${escapedPath}" class="internal-link slick-path-link" data-path="${pathStr}">${pathStr}</a>`;
+      const escapedPath = escapeHTML(String(value));
+      return `<a href="${escapedPath}" class="internal-link slick-path-link" data-path="${escapedPath}">${escapedPath}</a>`;
     };
   }
 
@@ -768,38 +818,49 @@ export class SlickGridRenderer extends BaseRenderer {
     };
   }
 
-  private static createContentFormatter(context: RenderContext) {
+  private static sanitizeMarkdownCellContent(value: unknown): string {
+    const content = String(value || '');
+    return content.replace(/```vaultquery[^\n]*/g, '```sql');
+  }
+
+  private static createContentFormatter(_context: RenderContext) {
+    // Plain-text placeholder; in rendered-markdown mode the real rendering
+    // happens in the asyncPostRender callback, which can await
+    // MarkdownRenderer and append actual DOM nodes (the old approach
+    // serialized the container before async rendering finished).
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
-      const { app, pluginContext, settings } = context;
-      const content = String(value || '');
-      if (!content) return '';
-
-      const sanitizedContent = content.replace(/```vaultquery[^\n]*/g, '```sql');
-
-      if (settings?.contentRenderingMode === 'rendered-markdown' && pluginContext) {
-        try {
-          const container = context.container.ownerDocument.createElement('div');
-          container.className = 'vaultquery-markdown-cell';
-          void MarkdownRenderer.render(app, sanitizedContent, container, '', pluginContext);
-
-          const innerContent = this.serializeDOMContent(container);
-          if (innerContent) {
-            return `<div class="vaultquery-markdown-cell">${innerContent}</div>`;
-          }
-          return escapeHTML(sanitizedContent);
-        }
-        catch (error) {
-          logger.warn('Failed to render markdown', error);
-          return escapeHTML(sanitizedContent);
-        }
-      }
-
+      const sanitizedContent = this.sanitizeMarkdownCellContent(value);
+      if (!sanitizedContent) return '';
       return escapeHTML(sanitizedContent);
     };
   }
 
+  private static createMarkdownCellPostRenderer(context: RenderContext) {
+    return (domCellNode: HTMLElement, _row: number, dataContext: Record<string, unknown>, _columnDef: Column) => {
+      const { app, pluginContext } = context;
+      if (!pluginContext) return;
+
+      const sanitizedContent = this.sanitizeMarkdownCellContent(dataContext?.content);
+      if (!sanitizedContent) return;
+
+      const container = domCellNode.ownerDocument.createElement('div');
+      container.className = 'vaultquery-markdown-cell';
+
+      MarkdownRenderer.render(app, sanitizedContent, container, '', pluginContext)
+        .then(() => {
+          if (domCellNode.isConnected) {
+            domCellNode.empty();
+            domCellNode.appendChild(container);
+          }
+        })
+        .catch(error => {
+          logger.warn('Failed to render markdown cell', error);
+        });
+    };
+  }
+
   private static shouldRenderMarkdownContent(context: RenderContext): boolean {
-    return context.settings?.contentRenderingMode === 'rendered-markdown';
+    return context.settings.contentRenderingMode === 'rendered-markdown';
   }
 
   private static createCurrentFormatter() {
@@ -825,13 +886,13 @@ export class SlickGridRenderer extends BaseRenderer {
     const isChanged = dataContext?.[changedFieldName] === true;
 
     if (!isChanged) {
-      return `<span title="${escapedTitle}" style="opacity: 0.8;">${escapedValue}</span>`;
+      return `<span title="${escapedTitle}" class="vaultquery-comparison-cell">${escapedValue}</span>`;
     }
 
-    const changedStyle = variant === 'current'
-      ? 'font-style: italic; opacity: 0.8;'
-      : 'font-weight: 600;';
-    return `<span title="${escapedTitle}" style="${changedStyle}">${escapedValue}</span>`;
+    const changedClass = variant === 'current'
+      ? 'vaultquery-comparison-changed-current'
+      : 'vaultquery-comparison-changed-proposed';
+    return `<span title="${escapedTitle}" class="${changedClass}">${escapedValue}</span>`;
   }
 
   private static formatValueByFieldName(value: unknown, fieldName: string): string {
@@ -889,7 +950,15 @@ export class SlickGridRenderer extends BaseRenderer {
 
   private static sortGridData(grid: SlickGrid, args: SingleColumnSort | MultiColumnSort): void {
     const sortColumns = this.getSortColumns(args);
-    if (sortColumns.length === 0) {
+    const columns: Array<{ field: string; asc: boolean }> = [];
+    for (const sortColumn of sortColumns) {
+      const field = this.getSortField(sortColumn);
+      if (field !== null) {
+        columns.push({ field, asc: !!sortColumn.sortAsc });
+      }
+    }
+
+    if (columns.length === 0) {
       return;
     }
 
@@ -900,17 +969,20 @@ export class SlickGridRenderer extends BaseRenderer {
 
     const rows = data as Record<string, unknown>[];
 
-    const indexedRows = rows.map((item, index) => ({ item, index }));
-    indexedRows.sort((left, right) => {
-      for (const sortColumn of sortColumns) {
-        const field = this.getSortField(sortColumn);
-        if (!field) {
-          continue;
-        }
+    // Precompute sort keys once per cell (O(n) conversions) instead of parsing
+    // numbers/dates inside the comparator (O(n log n) conversions per side).
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const indexedRows = rows.map((item, index) => ({
+      item,
+      index,
+      keys: columns.map(column => this.buildSortKey(item[column.field])),
+    }));
 
-        const comparison = this.compareSortValues(left.item[field], right.item[field]);
+    indexedRows.sort((left, right) => {
+      for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
+        const comparison = this.compareSortKeys(left.keys[columnIndex], right.keys[columnIndex], collator);
         if (comparison !== 0) {
-          return sortColumn.sortAsc ? comparison : -comparison;
+          return columns[columnIndex].asc ? comparison : -comparison;
         }
       }
 
@@ -923,6 +995,36 @@ export class SlickGridRenderer extends BaseRenderer {
 
     grid.invalidateAllRows();
     grid.render();
+  }
+
+  private static buildSortKey(value: unknown): { empty: boolean; num: number | null; str: string } {
+    if (value === null || value === undefined || value === '') {
+      return { empty: true, num: null, str: '' };
+    }
+
+    return { empty: false, num: this.toSortableNumber(value), str: String(value) };
+  }
+
+  private static compareSortKeys(
+    left: { empty: boolean; num: number | null; str: string },
+    right: { empty: boolean; num: number | null; str: string },
+    collator: Intl.Collator
+  ): number {
+    if (left.empty && right.empty) {
+      return 0;
+    }
+    if (left.empty) {
+      return 1;
+    }
+    if (right.empty) {
+      return -1;
+    }
+
+    if (left.num !== null && right.num !== null) {
+      return left.num - right.num;
+    }
+
+    return collator.compare(left.str, right.str);
   }
 
   private static getSortColumns(args: SingleColumnSort | MultiColumnSort): ColumnSort[] {
@@ -940,32 +1042,6 @@ export class SlickGridRenderer extends BaseRenderer {
   private static getSortField(sortColumn: ColumnSort): string | null {
     const field = sortColumn.sortCol?.field ?? sortColumn.columnId;
     return typeof field === 'string' || typeof field === 'number' ? String(field) : null;
-  }
-
-  private static compareSortValues(left: unknown, right: unknown): number {
-    const leftEmpty = left === null || left === undefined || left === '';
-    const rightEmpty = right === null || right === undefined || right === '';
-
-    if (leftEmpty && rightEmpty) {
-      return 0;
-    }
-    if (leftEmpty) {
-      return 1;
-    }
-    if (rightEmpty) {
-      return -1;
-    }
-
-    const leftNumber = this.toSortableNumber(left);
-    const rightNumber = this.toSortableNumber(right);
-    if (leftNumber !== null && rightNumber !== null) {
-      return leftNumber - rightNumber;
-    }
-
-    return String(left).localeCompare(String(right), undefined, {
-      numeric: true,
-      sensitivity: 'base',
-    });
   }
 
   private static toSortableNumber(value: unknown): number | null {
@@ -1017,8 +1093,8 @@ export class SlickGridRenderer extends BaseRenderer {
     const documents = new Set<Document>();
     documents.add(record.container.ownerDocument);
     documents.add(activeWindow.document);
-    if (typeof document !== 'undefined') {
-      documents.add(document);
+    if (typeof activeDocument !== 'undefined') {
+      documents.add(activeDocument);
     }
 
     for (const doc of documents) {
@@ -1039,32 +1115,13 @@ export class SlickGridRenderer extends BaseRenderer {
     }
   }
 
-  private static serializeDOMContent(element: HTMLElement): string {
-    const children = Array.from(element.childNodes);
-    return children.map(node => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        return node.textContent || '';
-      }
-      else if (node.nodeType === Node.ELEMENT_NODE) {
-        const el = node as HTMLElement;
-        const tagName = el.tagName.toLowerCase();
-        const attributes = Array.from(el.attributes)
-          .map(attr => `${attr.name}="${escapeHTML(attr.value)}"`)
-          .join(' ');
-        const attrString = attributes ? ' ' + attributes : '';
-        const content = this.serializeDOMContent(el);
-        return `<${tagName}${attrString}>${content}</${tagName}>`;
-      }
-      return '';
-    }).join('');
-  }
-
   static cleanup(): void {
     for (const record of Array.from(this.records.values())) {
       this.cleanupRecord(record);
     }
     this.resizeTimers.clear();
     this.restoreTimers.clear();
+    unpatchPassiveEventListeners();
   }
 
 }

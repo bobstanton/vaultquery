@@ -15,7 +15,6 @@ import { extractSqlAliasMap } from '../utils/SQLParsingUtils';
 import type { ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem } from '../Providers/TableProviderTypes';
 
 const logger = rootLogger.scope('Completion');
-declare const activeWindow: Window;
 
 interface SuggestionItem {
   label: string;
@@ -831,10 +830,10 @@ function completionStarter(provider: VaultQueryCompletionProvider): Extension {
       }
 
       if (this.pendingStart !== null) {
-        activeWindow.clearTimeout(this.pendingStart);
+        window.clearTimeout(this.pendingStart);
       }
 
-      this.pendingStart = activeWindow.setTimeout(() => {
+      this.pendingStart = window.setTimeout(() => {
         this.pendingStart = null;
         if (completionStatus(update.view.state) === null) {
           startCompletion(update.view);
@@ -844,7 +843,7 @@ function completionStarter(provider: VaultQueryCompletionProvider): Extension {
 
     destroy(): void {
       if (this.pendingStart !== null) {
-        activeWindow.clearTimeout(this.pendingStart);
+        window.clearTimeout(this.pendingStart);
       }
     }
   });

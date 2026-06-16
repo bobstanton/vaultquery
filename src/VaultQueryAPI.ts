@@ -7,7 +7,7 @@ import { WriteSyncService } from './Services/WriteSyncService';
 import { TriggerFunctions, TriggerService } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
 import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
-import { containsBlockedSql, parseSQLObjectName, stripSqlComments } from './utils/SQLParsingUtils';
+import { containsBlockedSqlInStripped, parseSQLObjectName, stripSqlComments, stripSqlStringLiterals } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
 import type { PreviewResult } from './Services/PreviewService';
 import { TableProviderService } from './Providers/TableProviderService';
@@ -25,7 +25,6 @@ import type {
 } from './Providers/TableProviderTypes';
 
 const logger = rootLogger.scope('API');
-declare const activeWindow: Window;
 
 const PROVIDER_TABLE_RETRY_TIMEOUT_MS = 2_000;
 const PROVIDER_TABLE_RETRY_INTERVAL_MS = 100;
@@ -220,7 +219,7 @@ export interface IVaultQueryAPI {
   /**
    * Register or replace a JavaScript-backed SQL function.
    */
-  registerCustomFunction(name: string, source: string): void;
+  registerCustomFunction(name: string, source: string): Promise<void>;
 
   registerTableProvider(provider: VaultQueryTableProvider): Promise<TableProviderRegistration>;
   unregisterTableProvider(providerId: string): Promise<void>;
@@ -299,18 +298,29 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private tableProviderService: TableProviderService;
   private registeredCustomViews = new Map<string, string>();
 
-  private eventBus = new EventBus<VaultQueryEvents>([
-    'file-indexed',
-    'file-removed',
-    'vault-indexed',
-    'database-lost',
-    'database-restored',
-    'provider-tables-changed',
-  ]);
+  private eventBus: EventBus<VaultQueryEvents>;
 
   private triggerActionProcessing: Promise<void> | null = null;
 
-  private constructor(app: App, private settings: VaultQuerySettings, database: VaultDatabase | WorkerDatabase, indexingService: IndexingService, writeSyncService: WriteSyncService, triggerFunctions: TriggerFunctions) {
+  /**
+   * Per-statement analysis (comment/literal stripping + referenced tables),
+   * cached because block SQL strings repeat on every render and auto-refresh.
+   */
+  private static readonly SQL_ANALYSIS_CACHE_LIMIT = 200;
+  private sqlAnalysisCache = new Map<string, { stripped: string; referencedTables: Set<string> }>();
+
+  private constructor(app: App, private settings: VaultQuerySettings, database: VaultDatabase | WorkerDatabase, indexingService: IndexingService, writeSyncService: WriteSyncService, triggerFunctions: TriggerFunctions, eventBus?: EventBus<VaultQueryEvents>) {
+    // Reuse the previous instance's bus during database recovery so that
+    // third-party subscriptions (e.g. 'database-restored') survive the API
+    // being recreated.
+    this.eventBus = eventBus ?? new EventBus<VaultQueryEvents>([
+      'file-indexed',
+      'file-removed',
+      'vault-indexed',
+      'database-lost',
+      'database-restored',
+      'provider-tables-changed',
+    ]);
     this.app = app;
     this.database = database;
     this.indexingService = indexingService;
@@ -434,13 +444,13 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return `${app.vault.configDir}/plugins/vaultquery`;
   }
 
-  public static async create(app: App, settings: VaultQuerySettings): Promise<VaultQueryAPI> {
+  public static async create(app: App, settings: VaultQuerySettings, options: { eventBus?: EventBus<VaultQueryEvents> } = {}): Promise<VaultQueryAPI> {
     const useMemoryStorage = settings.databaseStorage === 'memory';
     const fileAdapter = useMemoryStorage ? null : VaultQueryAPI.createFileAdapter(app);
     const wasmAdapter = VaultQueryAPI.createFileAdapter(app);
     const pluginDir = VaultQueryAPI.getPluginDir(app);
 
-    const backgroundIndexing = settings.backgroundIndexing ?? false;
+    const backgroundIndexing = settings.backgroundIndexing;
 
     const triggerFunctions = new TriggerFunctions();
 
@@ -472,7 +482,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     const indexingService = new IndexingService(app, database, settings);
     const writeSyncService = new WriteSyncService(app, database, settings);
 
-    const api = new VaultQueryAPI(app, settings, database, indexingService, writeSyncService, triggerFunctions);
+    const api = new VaultQueryAPI(app, settings, database, indexingService, writeSyncService, triggerFunctions, options.eventBus);
     api.indexingWorker = indexingWorker;
 
     api.triggerService = new TriggerService({
@@ -647,8 +657,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return this.tableProviderService.getRegisteredProviders();
   }
 
-  public async unregisterTableProvider(providerId: string): Promise<void> {
-    await this.tableProviderService.unregisterProvider(providerId);
+  public unregisterTableProvider(providerId: string): Promise<void> {
+    this.tableProviderService.unregisterProvider(providerId);
+    return Promise.resolve();
   }
 
   public getTableProviderStatus(providerId?: string): Promise<TableProviderStatus[]> {
@@ -695,12 +706,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     };
   }
 
-  public registerCustomFunction(name: string, source: string): void {
+  public async registerCustomFunction(name: string, source: string): Promise<void> {
     if (!this.settings.enableJavaScriptFunctions) {
       throw new Error('JavaScript SQL functions are disabled in VaultQuery settings.');
     }
 
-    void this.database.registerCustomFunction(name, source);
+    await this.database.registerCustomFunction(name, source);
   }
 
   /**
@@ -1096,27 +1107,32 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }))
       .filter((row) => this.shouldIncludeAutocompleteRelation(row));
 
-    const columns: AutocompleteSchemaColumn[] = [];
-    for (const relation of relations) {
+    // Fire all PRAGMA lookups together: in worker mode each is a message
+    // round-trip, so sequential awaits serialize dozens of hops.
+    const pragmaResults = await Promise.all(relations.map(async (relation) => {
       try {
         const pragmaRows = await this.database.all(
           `PRAGMA table_info("${relation.name.replace(/"/g, '""')}")`
         ) as Array<{ name?: unknown; type?: unknown }>;
-
-        for (const row of pragmaRows) {
-          if (typeof row.name !== 'string' || !row.name) {
-            continue;
-          }
-
-          columns.push({
-            relation: relation.name,
-            name: row.name,
-            type: typeof row.type === 'string' ? row.type : '',
-          });
-        }
+        return { relationName: relation.name, pragmaRows };
       }
       catch {
-        continue;
+        return { relationName: relation.name, pragmaRows: [] as Array<{ name?: unknown; type?: unknown }> };
+      }
+    }));
+
+    const columns: AutocompleteSchemaColumn[] = [];
+    for (const { relationName, pragmaRows } of pragmaResults) {
+      for (const row of pragmaRows) {
+        if (typeof row.name !== 'string' || !row.name) {
+          continue;
+        }
+
+        columns.push({
+          relation: relationName,
+          name: row.name,
+          type: typeof row.type === 'string' ? row.type : '',
+        });
       }
     }
 
@@ -1201,7 +1217,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         return false;
       }
 
-      await new Promise<void>(resolve => activeWindow.setTimeout(resolve, PROVIDER_TABLE_RETRY_INTERVAL_MS));
+      await new Promise<void>(resolve => window.setTimeout(resolve, PROVIDER_TABLE_RETRY_INTERVAL_MS));
     }
 
     return false;
@@ -1231,8 +1247,39 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return errorMessage;
   }
 
+  private getSqlAnalysis(sql: string): { stripped: string; referencedTables: Set<string> } {
+    const cached = this.sqlAnalysisCache.get(sql);
+    if (cached) {
+      // Refresh insertion order so eviction below is least-recently-used.
+      this.sqlAnalysisCache.delete(sql);
+      this.sqlAnalysisCache.set(sql, cached);
+      return cached;
+    }
+
+    const stripped = stripSqlStringLiterals(stripSqlComments(sql));
+    const analysis = { stripped, referencedTables: VaultQueryAPI.extractReferencedTables(stripped) };
+
+    this.sqlAnalysisCache.set(sql, analysis);
+    while (this.sqlAnalysisCache.size > VaultQueryAPI.SQL_ANALYSIS_CACHE_LIMIT) {
+      const oldestKey = this.sqlAnalysisCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.sqlAnalysisCache.delete(oldestKey);
+    }
+
+    return analysis;
+  }
+
+  private static extractReferencedTables(strippedSql: string): Set<string> {
+    const tableMatches = strippedSql.match(/(?:FROM|JOIN)\s+(\w+)/gi);
+    if (!tableMatches) return new Set();
+
+    return tableMatches
+      .map(match => match.replace(/(?:FROM|JOIN)\s+/i, '').toLowerCase())
+      .reduce((set, name) => set.add(name), new Set<string>());
+  }
+
   private checkForUnindexedData(sql: string): string | null {
-    const tableNames = this.getReferencedTables(sql);
+    const tableNames = this.getSqlAnalysis(sql).referencedTables;
 
     const warnings = Object.entries(TABLE_FEATURE_CONFIG)
       .filter(([table, config]) =>
@@ -1242,15 +1289,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       );
 
     return warnings.length > 0 ? warnings.join('\n\n') : null;
-  }
-
-  private getReferencedTables(sql: string): Set<string> {
-    const tableMatches = sql.match(/(?:FROM|JOIN)\s+(\w+)/gi);
-    if (!tableMatches) return new Set();
-
-    return tableMatches
-      .map(match => match.replace(/(?:FROM|JOIN)\s+/i, '').toLowerCase())
-      .reduce((set, name) => set.add(name), new Set<string>());
   }
 
   public async previewQuery(sql: string, params: unknown[] = [], noteSource?: NoteSource): Promise<PreviewResult> {
@@ -1348,7 +1386,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private containsBlockedSQL(sql: string, allowWriteOperations: boolean = false): boolean {
-    return containsBlockedSql(sql, allowWriteOperations);
+    return containsBlockedSqlInStripped(this.getSqlAnalysis(sql).stripped, allowWriteOperations);
   }
 
 
@@ -1358,7 +1396,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public on(event: 'database-lost', callback: (event: DatabaseLostEvent) => void): EventRef;
   public on(event: 'database-restored', callback: (event: DatabaseRestoredEvent) => void): EventRef;
   public on(event: 'provider-tables-changed', callback: (event: ProviderTablesChangedEvent) => void): EventRef;
-  public on<EventName extends keyof VaultQueryEvents & string>(
+  public on<EventName extends keyof VaultQueryEvents>(
     event: EventName,
     callback: (event: VaultQueryEvents[EventName]) => void
   ): EventRef {
@@ -1367,6 +1405,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   public off(ref: EventRef): void {
     this.eventBus.off(ref);
+  }
+
+  /**
+   * Internal: used by DatabaseRecoveryManager to carry subscriptions over to
+   * the replacement API instance after database loss.
+   */
+  public getEventBus(): EventBus<VaultQueryEvents> {
+    return this.eventBus;
   }
 
   /**
@@ -1385,7 +1431,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.emit('database-restored', { timestamp: Date.now() });
   }
 
-  private emit<EventName extends keyof VaultQueryEvents & string>(
+  private emit<EventName extends keyof VaultQueryEvents>(
     event: EventName,
     data: VaultQueryEvents[EventName]
   ): void {

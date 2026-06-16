@@ -1,4 +1,5 @@
 import { loadWasmBinary, cacheWasmBinaryIfNeeded } from './WasmLoader';
+import { getDatabaseDir, getDatabasePath } from '../Settings/Settings';
 import type { WorkerResponse } from './worker-types';
 import type { IndexNoteData } from '../types/types.d.ts';
 import type { EnabledFeatures, TableStructure } from './DatabaseSchema';
@@ -8,11 +9,13 @@ import type { WasmSettings } from '../Settings/Settings';
 import { logger as rootLogger } from '../utils/logger';
 import { getErrorMessage } from '../utils/ErrorMessages';
 // @ts-expect-error - inline worker import
-import DatabaseWorker from './database.worker';
+import DatabaseWorkerImport from './database.worker';
 
 const logger = rootLogger.scope('WorkerDatabase');
 
-declare const activeWindow: Window;
+// The inline-worker import has no static type; give it a concrete constructor
+// type so its construction site is type-safe rather than `any`.
+const DatabaseWorker = DatabaseWorkerImport as { new (): Worker };
 
 interface DatabaseHealth {
   healthy: boolean;
@@ -58,6 +61,7 @@ export class WorkerDatabase {
   private fileAdapter: VaultFileAdapter | null;
   private databasePath: string;
   private configDir: string;
+  private dbLock: Promise<void> = Promise.resolve();
   public readonly useMemoryStorage: boolean;
   public readonly schema: WorkerSchemaProxy;
 
@@ -103,10 +107,21 @@ export class WorkerDatabase {
 
     this.worker.onerror = (error) => {
       logger.error('Worker error', error);
+
+      // A crashed worker will never answer; reject everything in flight so
+      // callers don't hang forever.
+      const message = error instanceof ErrorEvent && error.message
+        ? `Database worker error: ${error.message}`
+        : 'Database worker error';
+      const pending = Array.from(this.pendingWorkerCalls.values());
+      this.pendingWorkerCalls.clear();
+      for (const call of pending) {
+        call.reject(new Error(message));
+      }
     };
   }
 
-  private async callWorker<T = unknown>(message: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  private async callWorker<T = unknown>(message: Record<string, unknown>, timeoutMs?: number, transfer?: Transferable[]): Promise<T> {
     await this.ready;
 
     const id = this.nextId++;
@@ -116,7 +131,7 @@ export class WorkerDatabase {
       let timeout: number | null = null;
       const clearWorkerCallTimeout = (): void => {
         if (timeout !== null) {
-          activeWindow.clearTimeout(timeout);
+          window.clearTimeout(timeout);
           timeout = null;
         }
       };
@@ -133,18 +148,25 @@ export class WorkerDatabase {
       });
 
       if (timeoutMs !== undefined) {
-        timeout = activeWindow.setTimeout(() => {
+        timeout = window.setTimeout(() => {
           this.pendingWorkerCalls.delete(id);
           reject(new Error(`Worker call "${String(message.type)}" timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
 
-      this.worker.postMessage(workerMessage);
+      if (transfer && transfer.length > 0) {
+        this.worker.postMessage(workerMessage, transfer);
+      } else {
+        this.worker.postMessage(workerMessage);
+      }
     });
   }
 
   public static async create(configDir: string, fileAdapter: VaultFileAdapter | null = null, useMemoryStorage: boolean = true, databasePath?: string, pluginDir?: string, wasmAdapter?: VaultFileAdapter, wasmSettings?: WasmSettings): Promise<WorkerDatabase> {
-    const actualDatabasePath = databasePath || `${configDir}/vaultquery.db`;
+    // Must match VaultDatabase: after transferToMainThread the main-thread
+    // database persists via getDatabasePath, so the worker has to load/save
+    // the same file.
+    const actualDatabasePath = databasePath || getDatabasePath(configDir);
     const adapter = wasmAdapter || fileAdapter;
 
     const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
@@ -169,7 +191,8 @@ export class WorkerDatabase {
       try {
         if (await fileAdapter.exists(actualDatabasePath)) {
           const data = await fileAdapter.readBinary(actualDatabasePath);
-          await instance.callWorker({ type: 'import', data });
+          // Transfer ownership: the buffer is not used again on this side.
+          await instance.callWorker({ type: 'import', data }, undefined, [data]);
         }
       } catch (error) {
         logger.warn('Failed to load existing database', error);
@@ -190,7 +213,7 @@ export class WorkerDatabase {
 
     try {
       const data = await this.callWorker<ArrayBuffer>({ type: 'export' });
-      const databaseDir = this.configDir + '/vaultquery';
+      const databaseDir = getDatabaseDir(this.configDir);
 
       if (!(await this.fileAdapter.exists(databaseDir))) {
         await this.fileAdapter.mkdir(databaseDir);
@@ -219,18 +242,30 @@ export class WorkerDatabase {
   }
 
   public async indexNote(data: IndexNoteData): Promise<void> {
-    await this.callWorker({
-      type: 'indexNote',
-      data
-    });
+    // The worker opens its own transaction for this message; hold the lock so
+    // it can't interleave with a multi-message withTx() transaction.
+    const releaseLock = await this.acquireDbLock();
+    try {
+      await this.callWorker({
+        type: 'indexNote',
+        data
+      });
+    } finally {
+      releaseLock();
+    }
   }
 
   public async indexNotesBatch(notesData: IndexNoteData[], isInitialIndexing: boolean = false, skipDiskSave: boolean = false): Promise<void> {
-    await this.callWorker({
-      type: 'indexNotesBatch',
-      notesData,
-      isInitialIndexing
-    });
+    const releaseLock = await this.acquireDbLock();
+    try {
+      await this.callWorker({
+        type: 'indexNotesBatch',
+        notesData,
+        isInitialIndexing
+      });
+    } finally {
+      releaseLock();
+    }
 
     if (!skipDiskSave) {
       await this.saveToDisk();
@@ -291,20 +326,36 @@ export class WorkerDatabase {
     await this.callWorker({ type: 'registerUserTriggers' });
   }
 
-  public async checkHealth(timeoutMs: number = 2000): Promise<DatabaseHealth> {
+  public async checkHealth(timeoutMs: number = 10000): Promise<DatabaseHealth> {
     try {
       return await this.callWorker<DatabaseHealth>({ type: 'health' }, timeoutMs);
     }
     catch (error) {
       const message = getErrorMessage(error);
+      const timedOut = message.includes('timed out');
+      const pendingWorkerCallCount = this.pendingWorkerCalls.size;
+
+      if (timedOut && pendingWorkerCallCount > 0) {
+        return {
+          healthy: true,
+          diagnostics: {
+            timestamp: new Date().toISOString(),
+            mode: 'worker',
+            workerBusy: true,
+            healthCheckTimedOut: true,
+            pendingWorkerCallCount,
+          },
+        };
+      }
+
       return {
         healthy: false,
         error: message,
         diagnostics: {
           timestamp: new Date().toISOString(),
           mode: 'worker',
-          workerCallTimedOut: message.includes('timed out'),
-          pendingWorkerCallCount: this.pendingWorkerCalls.size,
+          workerCallTimedOut: timedOut,
+          pendingWorkerCallCount,
         },
       };
     }
@@ -329,12 +380,45 @@ export class WorkerDatabase {
     throw new Error('runWithPreparedStatement is not supported in worker mode - use run() instead');
   }
 
-  public acquireDbLock(): Promise<() => void> {
-    return Promise.resolve(() => {});
+  public async acquireDbLock(): Promise<() => void> {
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>(resolve => { releaseLock = resolve; });
+    const previousLock = this.dbLock;
+    this.dbLock = lockPromise;
+    await previousLock;
+    return releaseLock!;
   }
 
-  public withTx<T>(fn: () => T | Promise<T>, _opts?: { deferFK?: boolean }): Promise<T> {
-    return Promise.resolve(fn());
+  /**
+   * Run `fn` inside a real transaction on the worker database.
+   *
+   * The lock is required because the transaction spans multiple worker
+   * messages: without it, another caller (e.g. indexNote) could slip a BEGIN
+   * between ours and fail, or have its writes swept up in our rollback.
+   */
+  public async withTx<T>(fn: () => T | Promise<T>, _opts?: { deferFK?: boolean }): Promise<T> {
+    const releaseLock = await this.acquireDbLock();
+
+    try {
+      await this.callWorker({ type: 'run', sql: 'BEGIN TRANSACTION', params: [] });
+
+      try {
+        const result = await fn();
+        await this.callWorker({ type: 'run', sql: 'COMMIT', params: [] });
+        return result;
+      }
+      catch (error) {
+        try {
+          await this.callWorker({ type: 'run', sql: 'ROLLBACK', params: [] });
+        }
+        catch (rollbackError) {
+          logger.error('Worker transaction rollback failed', rollbackError);
+        }
+        throw error;
+      }
+    } finally {
+      releaseLock();
+    }
   }
 
 }

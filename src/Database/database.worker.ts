@@ -1,4 +1,4 @@
-import initSqlJs, { Database, Statement } from 'sql.js';
+import initSqlJs, { Database, Statement, type SqlJsStatic } from 'sql.js';
 import { WorkerSQLFunctions } from './WorkerSQLFunctions';
 import { getTablesOnlySQL, getIndexesForFeatures, EnabledFeatures, generateDynamicPropertiesView, generateNotePropertiesView, generateDynamicTableViews, TableStructure } from './DatabaseSchema';
 import { PRAGMA_STATEMENTS, SQL_QUERIES, getViewColumnsPragma, processTableStructureResults } from './SchemaQueries';
@@ -13,6 +13,7 @@ import type { WorkerRequest, WorkerResponse } from './worker-types';
 import type { IndexNoteData } from '../types/types.d.ts';
 import { hashString } from '../utils/StringUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
 import { type SqlResult } from './ChangeDetection';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
 import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
@@ -32,7 +33,7 @@ import {
 const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 
 let db: Database | null = null;
-let sqlJsModule: Awaited<ReturnType<typeof initSqlJs>> | null = null;
+let sqlJsModule: SqlJsStatic | null = null;
 let indexesCreated = false;
 let enabledFeatures: EnabledFeatures | null = null;
 const preparedStatements = new Map<string, Statement>();
@@ -43,8 +44,12 @@ const logger: IndexingLogger = {
   error: (message: string, ...data: unknown[]) => console.error(`[Worker] ${message}`, ...data),
 };
 
-function respond(response: WorkerResponse): void {
-  self.postMessage(response);
+function respond(response: WorkerResponse, transfer?: Transferable[]): void {
+  if (transfer && transfer.length > 0) {
+    self.postMessage(response, { transfer });
+  } else {
+    self.postMessage(response);
+  }
 }
 
 function handleError(id: number, error: unknown): void {
@@ -244,12 +249,7 @@ function replaceUserTriggers(path: string, userTriggers?: IndexNoteData['userTri
 
 function registerCustomFunction(name: string, source: string): void {
   if (!db) return;
-  // eslint-disable-next-line no-new-func -- user SQL function
-  const fn = new Function(`return (${source})`)();
-  if (typeof fn !== 'function') {
-    throw new Error(`Invalid function definition: expected a function, got ${typeof fn}`);
-  }
-  db.create_function(name, fn);
+  db.create_function(name, createUserSqlFunction(source));
 }
 
 function performIndexingOperations(data: IndexNoteData, skipDeletes: boolean): void {
@@ -385,16 +385,27 @@ function discoverTableStructures(): TableStructure[] {
   }
 }
 
+let lastTableStructuresHash: string | null = null;
+
 function rebuildTableViews(enableDynamicTableViews: boolean): void {
   if (!db || !enableDynamicTableViews) return;
 
   const structures = discoverTableStructures();
-  if (structures.length > 0) {
-    const sql = generateDynamicTableViews(structures);
-    if (sql) {
-      db.exec(sql);
-    }
+  if (structures.length === 0) {
+    return;
   }
+
+  // Skip the DROP/CREATE churn when the structures are unchanged.
+  const structuresHash = hashString(JSON.stringify(structures));
+  if (structuresHash === lastTableStructuresHash) {
+    return;
+  }
+
+  const sql = generateDynamicTableViews(structures);
+  if (sql) {
+    db.exec(sql);
+  }
+  lastTableStructuresHash = structuresHash;
 }
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -517,7 +528,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case 'export': {
         if (!db) throw new Error('Database not initialized');
         const data = db.export();
-        respond({ type: 'success', id: request.id, result: data.buffer });
+        // Transfer instead of structured-clone: the database can be tens of
+        // megabytes, and export() already returned a fresh buffer we own.
+        respond({ type: 'success', id: request.id, result: data.buffer }, [data.buffer]);
         break;
       }
 
@@ -533,6 +546,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
         db.close();
         db = new sqlJsModule.Database(new Uint8Array(request.data));
+        lastTableStructuresHash = null;
         runPragmaStatements();
         WorkerSQLFunctions.register(db);
 

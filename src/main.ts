@@ -50,7 +50,7 @@ export type {
   WaitForAPIOptions,
 } from './helpers';
 
-declare const activeWindow: Window;
+declare const activeDocument: Document;
 
 type PrismGrammar = Record<string, unknown>;
 interface PrismApi {
@@ -116,7 +116,7 @@ export default class VaultQueryPlugin extends Plugin {
   private unloadableProcessors: UnloadableProcessor[] = [];
 
   public async loadSettings() {
-    const savedData = await this.loadData() || {};
+    const savedData = (await this.loadData() as Partial<VaultQuerySettings> | null) ?? {};
 
     this.settings = mergeSettings(savedData);
 
@@ -369,21 +369,22 @@ export default class VaultQueryPlugin extends Plugin {
         }
       }
 
-      const eventRef = this.app.metadataCache.on('resolved', () => {
-        this.app.metadataCache.offref(eventRef);
-        resolve();
-      });
-
-      activeWindow.setTimeout(() => {
+      const timeout = window.setTimeout(() => {
         this.app.metadataCache.offref(eventRef);
         resolve();
       }, 5000);
+
+      const eventRef = this.app.metadataCache.on('resolved', () => {
+        window.clearTimeout(timeout);
+        this.app.metadataCache.offref(eventRef);
+        resolve();
+      });
     });
   }
 
   private scheduleStartupIndexing(): void {
     // Use a cancellable macrotask so Obsidian can finish layout work before indexing starts.
-    const timeout = activeWindow.setTimeout(async () => {
+    const timeout = window.setTimeout(async () => {
       if (!this.api) return;
 
       this.startUpdatingPendingCodeBlocks();
@@ -402,6 +403,10 @@ export default class VaultQueryPlugin extends Plugin {
 
       this.indexingStateManager.setupFileWatchers();
 
+      this.setupGridRestoration();
+      this.setupVisibilityHandler();
+      await this.databaseRecoveryManager.recordCurrentHealth();
+
       if (this.settings.indexingInterval === 'startup' || this.settings.indexingInterval === 'realtime') {
         await this.waitForMetadataCache();
         this.scheduleStartupIndexing();
@@ -409,10 +414,6 @@ export default class VaultQueryPlugin extends Plugin {
       else {
         await this.processPendingCodeBlocks();
       }
-
-      this.setupGridRestoration();
-      this.setupVisibilityHandler();
-      await this.databaseRecoveryManager.recordCurrentHealth();
     }
 
     catch (error) {
@@ -528,8 +529,8 @@ export default class VaultQueryPlugin extends Plugin {
   }
 
   private setupVisibilityHandler(): void {
-    this.lifecycle.addDomEvent(document, 'visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
+    this.lifecycle.addDomEvent(activeDocument, 'visibilitychange', () => {
+      if (activeDocument.visibilityState === 'visible') {
         void this.databaseRecoveryManager.handleResume();
       }
     });

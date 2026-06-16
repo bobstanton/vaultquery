@@ -23,7 +23,6 @@ import type {
 } from './TableProviderTypes';
 
 const logger = rootLogger.scope('ProviderTables');
-declare const activeWindow: Window;
 
 type ProviderDatabase = VaultDatabase | WorkerDatabase;
 type SqlParam = string | number | null;
@@ -43,14 +42,14 @@ interface RuntimeTableStatus {
   providerId: string;
   displayName: string;
   tableName: string;
-	physicalName: string;
-	definitionId?: string;
-	definitionBlockHash?: string;
-	rowCount: number;
-	dataAsOf?: number;
-	lastRefreshAt?: number;
-	expiresAt?: number;
-	lastError?: string;
+  physicalName: string;
+  definitionId?: string;
+  definitionBlockHash?: string;
+  rowCount: number;
+  dataAsOf?: number;
+  lastRefreshAt?: number;
+  expiresAt?: number;
+  lastError?: string;
   schemaHash: string;
   active: boolean;
 }
@@ -129,7 +128,7 @@ export class TableProviderService {
 
     const existing = this.providers.get(provider.id);
     if (existing) {
-      await this.unregisterProvider(existing.id);
+      this.unregisterProvider(existing.id);
     }
 
     const language = provider.definitionBlock.language;
@@ -375,7 +374,7 @@ export class TableProviderService {
       });
       const refreshQueries = this.onAllQueriesRefresh;
       if (refreshQueries) {
-        activeWindow.setTimeout(() => {
+        window.setTimeout(() => {
           void refreshQueries().catch(error => {
             logger.error('Query refresh after provider refresh failed', error);
           });
@@ -872,6 +871,8 @@ export class TableProviderService {
   }
 
   private renderProviderError(container: HTMLElement, title: string, error: unknown, onRefresh: () => Promise<void>): void {
+    container.addClass('vaultquery-container');
+    container.addClass('vaultquery-provider-definition-container');
     BaseRenderer.renderError(container, {
       title,
       message: getErrorMessage(error),
@@ -880,6 +881,7 @@ export class TableProviderService {
   }
 
   private addProviderRefreshButton(container: HTMLElement, onRefresh: () => Promise<void>): void {
+    container.querySelector('.vaultquery-floating-buttons')?.remove();
     const buttonContainer = container.createDiv('vaultquery-floating-buttons');
     BaseRenderer.addRefreshButton(buttonContainer, onRefresh);
   }
