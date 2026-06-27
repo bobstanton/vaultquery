@@ -1,9 +1,8 @@
 import { App, Component, MarkdownPostProcessorContext } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
-import { CalendarRenderer } from '../Renderers/CalendarRenderer';
 import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
-import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
+import { cleanupRenderedOutput } from '../Renderers/RendererCleanup';
 import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 
@@ -21,8 +20,7 @@ export abstract class BaseUserDefinedProcessor {
       return;
     }
 
-    SlickGridRenderer.cleanupContainer(el);
-    CalendarRenderer.cleanupContainer(el);
+    cleanupRenderedOutput(el);
     const container = el.createDiv({ cls: this.getContainerClass() });
 
     const ready = waitForIndexingWithProgress(
@@ -55,8 +53,7 @@ export abstract class BaseUserDefinedProcessor {
     const renderVersion = (this.renderVersions.get(container) ?? 0) + 1;
     this.renderVersions.set(container, renderVersion);
 
-    SlickGridRenderer.cleanupContainer(container);
-    CalendarRenderer.cleanupContainer(container);
+    cleanupRenderedOutput(container);
 
     const refresh = async () => {
       await this.renderWithRefresh(container, source, ctx);

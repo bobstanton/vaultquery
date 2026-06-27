@@ -31,6 +31,8 @@ const INLINE_BUTTON_SYNTAX: InlineSyntax<InlineButtonSpec> = {
   parseMatch: (match) => parseButtonParts(match[1], match[2], match[3]),
 };
 
+const INLINE_BUTTON_TEXT_PATTERN = /^vq(\.(?:[a-zA-Z_][\w-]*)?(?:\.[a-zA-Z_][\w-]*)*)?\[([^\]\n]+)\]\{(.+)\}$/s;
+
 function parseButtonParts(classesStr: string | undefined, label: string, sql: string): InlineButtonSpec {
   const hasExplicitDotSyntax = classesStr !== undefined && classesStr.startsWith('.');
   return {
@@ -39,6 +41,11 @@ function parseButtonParts(classesStr: string | undefined, label: string, sql: st
     customClasses: classesStr ? classesStr.split('.').filter(c => c.length > 0) : [],
     useDefaultStyle: !hasExplicitDotSyntax,
   };
+}
+
+function parseInlineButtonText(text: string): InlineButtonSpec | null {
+  const match = text.match(INLINE_BUTTON_TEXT_PATTERN);
+  return match ? parseButtonParts(match[1], match[2], match[3]) : null;
 }
 
 function getButtonClasses(spec: Pick<InlineButtonSpec, 'customClasses' | 'useDefaultStyle'>): string {
@@ -109,50 +116,53 @@ function showInlineButtonResult(result: InlineButtonResult): void {
   }
 }
 
+function createInlineButtonElement(owner: Document, plugin: VaultQueryPluginContext, spec: InlineButtonSpec, sourcePath: string, debounce = true): HTMLButtonElement {
+  const button = owner.createElement('button');
+  let lastClickTime = 0;
+
+  button.className = getButtonClasses(spec);
+  button.textContent = spec.label;
+  button.setAttribute('data-sql', spec.sql);
+  button.setAttribute('data-source-path', sourcePath);
+
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (debounce) {
+      const now = Date.now();
+      if (now - lastClickTime < plugin.settings.inlineButtonDebounceMs) {
+        return;
+      }
+      lastClickTime = now;
+    }
+
+    if (button.disabled) return;
+    setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, true);
+
+    void (async () => {
+      try {
+        showInlineButtonResult(await executeInlineButtonQuery(plugin, spec.sql, sourcePath));
+      }
+      catch (error) {
+        showQueryFailedNotice(error);
+        logger.error('Inline button query failed', error);
+      } finally {
+        setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, false);
+      }
+    })();
+  });
+
+  return button;
+}
+
 class InlineButtonWidget extends WidgetType {
   public constructor(private spec: InlineButtonSpec, private plugin: VaultQueryPluginContext, private sourcePath: string) {
     super();
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const button = view.dom.ownerDocument.createElement('button');
-    let lastClickTime = 0;
-
-    button.className = getButtonClasses(this.spec);
-    button.textContent = this.spec.label;
-    button.setAttribute('data-sql', this.spec.sql);
-
-    button.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const debounceMs = this.plugin.settings.inlineButtonDebounceMs;
-      const now = Date.now();
-      if (now - lastClickTime < debounceMs) {
-        return;
-      }
-      lastClickTime = now;
-
-      if (button.disabled) {
-        return;
-      }
-      setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, true);
-
-      void (async () => {
-        try {
-          showInlineButtonResult(await executeInlineButtonQuery(this.plugin, this.spec.sql, this.sourcePath));
-        }
-
-        catch (error) {
-          showQueryFailedNotice(error);
-          logger.error('Inline button query failed', error);
-        } finally {
-          setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, false);
-        }
-      })();
-    });
-
-    return button;
+    return createInlineButtonElement(view.dom.ownerDocument, this.plugin, this.spec, this.sourcePath);
   }
 
   eq(other: InlineButtonWidget): boolean {
@@ -182,8 +192,6 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPluginContext,
     return;
   }
 
-  const pattern = /^vq(\.(?:[a-zA-Z_][\w-]*)?(?:\.[a-zA-Z_][\w-]*)*)?\[([^\]\n]+)\]\{(.+)\}$/s;
-
   const codeElements = element.querySelectorAll('code');
 
   for (const codeEl of Array.from(codeElements)) {
@@ -192,37 +200,9 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPluginContext,
     const text = codeEl.textContent?.trim();
     if (!text) continue;
 
-    const match = text.match(pattern);
-    if (!match) continue;
+    const spec = parseInlineButtonText(text);
+    if (!spec) continue;
 
-    const spec = parseButtonParts(match[1], match[2], match[3]);
-
-    const button = element.ownerDocument.createElement('button');
-    button.className = getButtonClasses(spec);
-    button.textContent = spec.label;
-    button.setAttribute('data-sql', spec.sql);
-    button.setAttribute('data-source-path', sourcePath);
-
-    button.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (button.disabled) return;
-      setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, true);
-
-      void (async () => {
-        try {
-          showInlineButtonResult(await executeInlineButtonQuery(plugin, spec.sql, sourcePath));
-        }
-        catch (error) {
-          showQueryFailedNotice(error);
-          logger.error('Reading view inline button query failed', error);
-        } finally {
-          setButtonLoading(button, INLINE_BUTTON_LOADING_CLASS, false);
-        }
-      })();
-    });
-
-    codeEl.replaceWith(button);
+    codeEl.replaceWith(createInlineButtonElement(element.ownerDocument, plugin, spec, sourcePath, false));
   }
 }

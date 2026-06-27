@@ -247,12 +247,13 @@ export class SlickGridRenderer extends BaseRenderer {
       return;
     }
 
+    const containerWindow = record.container.ownerDocument.defaultView || activeWindow;
+
     const existingTimer = this.resizeTimers.get(record.id);
     if (existingTimer !== undefined) {
-      cancelAnimationFrame(existingTimer);
+      containerWindow.cancelAnimationFrame(existingTimer);
     }
 
-    const containerWindow = record.container.ownerDocument.defaultView || activeWindow;
     const rafId = containerWindow.requestAnimationFrame(() => {
       this.resizeTimers.delete(record.id);
       if (this.records.get(record.id) === record) {
@@ -463,7 +464,7 @@ export class SlickGridRenderer extends BaseRenderer {
   private static clearTimers(gridId: string): void {
     const resizeTimer = this.resizeTimers.get(gridId);
     if (resizeTimer !== undefined) {
-      cancelAnimationFrame(resizeTimer);
+      window.cancelAnimationFrame(resizeTimer);
       this.resizeTimers.delete(gridId);
     }
 

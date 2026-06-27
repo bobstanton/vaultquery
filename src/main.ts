@@ -1,10 +1,10 @@
 import { MarkdownPostProcessorContext, MarkdownView, Plugin, loadPrism, Notice } from 'obsidian';
-import { normalizeConsoleLogLevel, registerCopyDebugLogCommand } from 'obsidian-debug-logger';
+import { normalizeConsoleLogLevel } from 'obsidian-debug-logger';
 import { VaultQueryAPI, type EventRef } from './VaultQueryAPI';
 import { VaultQuerySettings, DEFAULT_SETTINGS, normalizeSettings } from './Settings/Settings';
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
-import { CalendarRenderer } from './Renderers/CalendarRenderer';
+import { cleanupRenderedOutput } from './Renderers/RendererCleanup';
 import { DatabaseRecoveryManager } from './Managers/DatabaseRecoveryManager';
 import { IndexingStateManager } from './Managers/IndexingStateManager';
 import { QueryCodeBlockProcessor } from './CodeBlockProcessors/QueryCodeBlockProcessor';
@@ -140,7 +140,7 @@ export default class VaultQueryPlugin extends Plugin {
   private scheduleSettingsReindex(delayMs: number = VaultQueryPlugin.SETTINGS_REINDEX_DEBOUNCE_MS): void {
     this.settingsReindexPending = true;
 
-    this.lifecycle.setTimeout(VaultQueryPlugin.TIMER_SETTINGS_REINDEX, () => {
+    this.lifecycle.scheduleTimeout(VaultQueryPlugin.TIMER_SETTINGS_REINDEX, () => {
       void this.runPendingSettingsReindex();
     }, delayMs);
   }
@@ -159,7 +159,9 @@ export default class VaultQueryPlugin extends Plugin {
     new Notice('VaultQuery: Rebuilding index for settings changes...', 4000);
 
     try {
+      this.startUpdatingPendingCodeBlocks();
       await this.api.forceReindexVault();
+      await this.processPendingCodeBlocks();
       new Notice('VaultQuery: Settings rebuild complete', 3000);
     }
     catch (error) {
@@ -314,10 +316,19 @@ export default class VaultQueryPlugin extends Plugin {
       this.invalidateCompletionSchemaCache = completion.invalidateSchemaCache;
       this.registerEditorExtension(completion.extension);
 
-      registerCopyDebugLogCommand(this, rootLogger, {
-        successMessage: entryCount => `VaultQuery: Debug log copied (${entryCount} entries)`,
-        failureMessage: () => 'VaultQuery: Failed to copy debug log',
-        notice: (message, timeout) => new Notice(message, timeout),
+      this.addCommand({
+        id: 'copy-debug-log',
+        name: 'Copy debug log to clipboard',
+        callback: async () => {
+          try {
+            const entryCount = await rootLogger.copyToClipboard();
+            new Notice(`VaultQuery: Debug log copied (${entryCount} entries)`, 3000);
+          }
+          catch (error) {
+            rootLogger.scope('DebugLog').error('Failed to copy debug log', error);
+            new Notice('VaultQuery: Failed to copy debug log', 5000);
+          }
+        },
       });
 
       await this.registerPrismLanguages();
@@ -384,13 +395,20 @@ export default class VaultQueryPlugin extends Plugin {
 
   private scheduleStartupIndexing(): void {
     // Use a cancellable macrotask so Obsidian can finish layout work before indexing starts.
-    const timeout = window.setTimeout(async () => {
-      if (!this.api) return;
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        if (!this.api) return;
 
-      this.startUpdatingPendingCodeBlocks();
-      await this.indexAllNotes();
-      await this.processPendingCodeBlocks();
-      this.indexingStateManager.clearStartupIndexingTimeout();
+        try {
+          await this.indexAllNotes();
+        }
+        catch (error) {
+          logger.lifecycle.error('Startup indexing failed', error);
+        }
+        finally {
+          this.indexingStateManager.clearStartupIndexingTimeout();
+        }
+      })();
     }, 0);
     this.indexingStateManager.setStartupIndexingTimeout(timeout);
   }
@@ -456,8 +474,7 @@ export default class VaultQueryPlugin extends Plugin {
 
     for (const block of blocks) {
       try {
-        SlickGridRenderer.cleanupContainer(block.el);
-        CalendarRenderer.cleanupContainer(block.el);
+        cleanupRenderedOutput(block.el);
         await processor.process(block.source, block.el, block.ctx);
       }
       catch (error) {
@@ -488,7 +505,7 @@ export default class VaultQueryPlugin extends Plugin {
   }
 
   private startUpdatingPendingCodeBlocks(): void {
-    this.lifecycle.setInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE, () => {
+    this.lifecycle.scheduleInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE, () => {
       if (!this.api) {
         return;
       }
@@ -500,7 +517,7 @@ export default class VaultQueryPlugin extends Plugin {
       }
 
       if (!indexingStatus.isIndexing) {
-        this.lifecycle.clearInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE);
+        this.lifecycle.cancelInterval(VaultQueryPlugin.TIMER_PROGRESS_UPDATE);
         void this.processPendingCodeBlocks();
       }
     }, 500);
@@ -508,7 +525,7 @@ export default class VaultQueryPlugin extends Plugin {
 
   private setupGridRestoration(): void {
     const scrollHandler = () => {
-      this.lifecycle.setTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE, () => {
+      this.lifecycle.scheduleTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE, () => {
         SlickGridRenderer.checkAndRestoreGrids();
       }, 150);
     };
@@ -518,14 +535,14 @@ export default class VaultQueryPlugin extends Plugin {
       this.lifecycle.addDomEvent(workspaceEl, 'scroll', scrollHandler, { capture: true, passive: true });
     }
 
-    this.lifecycle.setInterval(VaultQueryPlugin.TIMER_GRID_RESTORE, () => {
+    this.lifecycle.scheduleInterval(VaultQueryPlugin.TIMER_GRID_RESTORE, () => {
       SlickGridRenderer.checkAndRestoreGrids();
     }, 2000);
   }
 
   private cleanupGridRestoration(): void {
-    this.lifecycle.clearTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE);
-    this.lifecycle.clearInterval(VaultQueryPlugin.TIMER_GRID_RESTORE);
+    this.lifecycle.cancelTimeout(VaultQueryPlugin.TIMER_SCROLL_RESTORE);
+    this.lifecycle.cancelInterval(VaultQueryPlugin.TIMER_GRID_RESTORE);
   }
 
   private setupVisibilityHandler(): void {
@@ -619,10 +636,13 @@ export default class VaultQueryPlugin extends Plugin {
     const isFirstRun = indexedFiles.length === 0;
 
     if (isFirstRun) {
+      this.startUpdatingPendingCodeBlocks();
       await this.api.forceReindexVault();
     }
     else {
+      this.startUpdatingPendingCodeBlocks();
       await this.api.reindexVault();
     }
+    await this.processPendingCodeBlocks();
   }
 }

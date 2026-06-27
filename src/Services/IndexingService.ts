@@ -32,6 +32,7 @@ interface ProviderDefinitionBlockHandler {
 
 export class IndexingService {
   private performanceMonitor: PerformanceMonitor;
+  private static reindexSequence = 0;
 
   private indexingProgress: IndexingProgress = { current: 0, total: 0, currentFile: '' };
   private isIndexing = false;
@@ -112,6 +113,7 @@ export class IndexingService {
   }
 
   private async performReindex(force: boolean): Promise<void> {
+    const reindexId = ++IndexingService.reindexSequence;
     // Settings may have changed since construction (e.g. exclude patterns edited
     // in the settings tab, which schedules this reindex).
     this.updateExcludePatterns();
@@ -120,6 +122,12 @@ export class IndexingService {
 
     let filesIndexed = 0;
     let filesRemoved = 0;
+    logger.info('Vault reindex started', {
+      reindexId,
+      force,
+      initialIndexingComplete: this.initialIndexingComplete,
+      indexFrontmatter: this.settings.enabledFeatures.indexFrontmatter,
+    });
 
     try {
       let toIndex: TFile[];
@@ -141,14 +149,22 @@ export class IndexingService {
         }
 
         if (toIndex.length === 0) {
-          if (filesRemoved > 0) {
-            await this.rebuildDerivedDatabaseStructures();
+          if (filesRemoved > 0 || await this.isNotePropertiesBootstrapShape()) {
+            await this.rebuildDerivedDatabaseStructures(filesRemoved > 0 ? 'deleted-files' : 'bootstrap-note-properties');
           }
 
           this.setIndexingProgress(0, 0, 'Complete');
           this.performanceMonitor.finishOperation(0);
           await this.finalizeIndexing();
           this.eventEmitter?.emitVaultIndexed(0, filesRemoved, force);
+          logger.info('Vault reindex completed', {
+            reindexId,
+            force,
+            filesIndexed: 0,
+            filesRemoved,
+            initialIndexingComplete: this.initialIndexingComplete,
+            noChanges: true,
+          });
           return;
         }
       }
@@ -156,7 +172,7 @@ export class IndexingService {
       await this.processFilesInBatches(toIndex, force);
       filesIndexed = toIndex.length;
 
-      await this.rebuildDerivedDatabaseStructures();
+      await this.rebuildDerivedDatabaseStructures(force ? 'force-reindex' : 'indexed-files');
 
       this.setIndexingProgress(toIndex.length, toIndex.length, 'Complete');
 
@@ -164,6 +180,13 @@ export class IndexingService {
 
       await this.finalizeIndexing();
       this.eventEmitter?.emitVaultIndexed(filesIndexed, filesRemoved, force);
+      logger.info('Vault reindex completed', {
+        reindexId,
+        force,
+        filesIndexed,
+        filesRemoved,
+        initialIndexingComplete: this.initialIndexingComplete,
+      });
     } finally {
       this.setIndexingStatus(false);
     }
@@ -182,11 +205,24 @@ export class IndexingService {
     firstCallbacks.forEach(callback => callback());
   }
 
-  private async rebuildDerivedDatabaseStructures(): Promise<void> {
+  private async rebuildDerivedDatabaseStructures(reason: string): Promise<void> {
     await this.database.createIndexes(this.settings.enabledFeatures);
     await this.database.schema.rebuildPropertiesView();
     await this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
     await this.database.saveToDisk();
+    logger.debug('Derived database structures rebuilt', {
+      reason,
+      dynamicTableViews: this.settings.enableDynamicTableViews,
+    });
+  }
+
+  private async isNotePropertiesBootstrapShape(): Promise<boolean> {
+    if (!this.settings.enabledFeatures.indexFrontmatter) {
+      return false;
+    }
+
+    const columns = await this.database.schema.getViewColumns('note_properties');
+    return columns.includes('key') && columns.includes('value') && columns.includes('value_type');
   }
 
   /**

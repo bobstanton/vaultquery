@@ -79,6 +79,16 @@ export function parseSQLObjectName(sql: string, type: 'VIEW' | 'TRIGGER'): strin
   return match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? null;
 }
 
+export function parseDroppedSQLObjectName(sql: string, type: 'VIEW' | 'TRIGGER'): string | null {
+  const pattern = new RegExp(
+    `^\\s*DROP\\s+${type}\\s+(?:IF\\s+EXISTS\\s+)?(?:"([^"]+)"|'([^']+)'|\`([^\`]+)\`|\\[([^\\]]+)\\]|(\\w+))`,
+    'i'
+  );
+  const match = sql.match(pattern);
+  if (!match) return null;
+  return match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? null;
+}
+
 export function stripSqlComments(sql: string): string {
   let result = '';
 

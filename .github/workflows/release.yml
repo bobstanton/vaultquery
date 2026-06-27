@@ -1,57 +1,94 @@
-name: Plugin release
+name: Release Obsidian plugin
 
 on:
-    push:
-        tags:
-            - "*"
+  push:
+    tags:
+      - "*"
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-            id-token: write
-            attestations: write
-        steps:
-            - uses: actions/checkout@v6
-            - uses: actions/setup-node@v6
-              with:
-                node-version: 24
-            - name: Clone dependencies
-              run: |
-                  git clone https://github.com/bobstanton/md-to-obsidian-dom.git ../md-to-obsidian-dom
-                  cd ../md-to-obsidian-dom && npm install && npm run build
-                  git clone https://github.com/bobstanton/placeholder-resolver.git ../placeholder-resolver
-                  cd ../placeholder-resolver && npm install --omit=dev --ignore-scripts && npm install typescript && npx tsc
-                  git clone https://github.com/bobstanton/obsidian-debug-logger.git ../obsidian-debug-logger
-                  cd ../obsidian-debug-logger && npm install && npm run build
-                  git clone https://github.com/bobstanton/user-template-renderer.git ../user-template-renderer
-                  cd ../user-template-renderer && npm install && npm run build
-            - name: npm build
-              run: |
-                  npm ci
-                  npm run lint
-                  npm run typecheck
-                  npm run build --if-present
-            - name: Attest Release Assets
-              uses: actions/attest@v4
-              with:
-                  subject-path: |
-                      main.js
-                      manifest.json
-                      styles.css
-            - name: Generate Release Notes
-              run: |
-                  git log -1 --pretty=%B > release-notes.md
-            - name: Create Release
-              uses: softprops/action-gh-release@v3
-              with:
-                  body_path: release-notes.md
-                  files: |
-                      main.js
-                      manifest.json
-                      styles.css
-                  draft: false
-                  prerelease: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Prefer HTTPS for GitHub dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release version
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const tag = process.env.GITHUB_REF_NAME;
+          const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+
+          if (tag !== manifest.version) {
+            throw new Error(`Tag ${tag} must match manifest version ${manifest.version}`);
+          }
+
+          if (packageJson.version !== manifest.version) {
+            throw new Error(`package.json version ${packageJson.version} must match manifest version ${manifest.version}`);
+          }
+
+          if (versions[manifest.version] !== manifest.minAppVersion) {
+            throw new Error(`versions.json must map ${manifest.version} to ${manifest.minAppVersion}`);
+          }
+          NODE
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build plugin
+        run: npm run build --if-present
+
+      - name: Check release assets
+        run: |
+          test -f main.js
+          test -f manifest.json
+          test -f styles.css
+
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Generate release notes
+        run: git log -1 --pretty=%B > release-notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: |
+            main.js
+            manifest.json
+            styles.css
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

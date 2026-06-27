@@ -41,9 +41,6 @@ export class QueryRefreshRegistry {
   }
 
   static register(container: HTMLElement, entry: RefreshEntry): void {
-    // Opportunistically drop entries for DOM Obsidian has discarded, so the
-    // map (and the closures it holds over query results) doesn't grow for the
-    // lifetime of the session.
     for (const registeredContainer of Array.from(this.entries.keys())) {
       if (!registeredContainer.isConnected) {
         this.entries.delete(registeredContainer);

@@ -17,10 +17,17 @@ const logger = rootLogger.scope('WorkerDatabase');
 // type so its construction site is type-safe rather than `any`.
 const DatabaseWorker = DatabaseWorkerImport as { new (): Worker };
 
+const HEALTH_CHECK_RETRY_DELAY_MS = 250;
+const HEALTH_CHECK_RETRY_TIMEOUT_MS = 2_000;
+
 interface DatabaseHealth {
   healthy: boolean;
   error?: string;
   diagnostics: Record<string, unknown>;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
 class WorkerSchemaProxy implements ISchemaManager {
@@ -335,17 +342,36 @@ export class WorkerDatabase {
       const timedOut = message.includes('timed out');
       const pendingWorkerCallCount = this.pendingWorkerCalls.size;
 
-      if (timedOut && pendingWorkerCallCount > 0) {
-        return {
-          healthy: true,
-          diagnostics: {
-            timestamp: new Date().toISOString(),
-            mode: 'worker',
-            workerBusy: true,
-            healthCheckTimedOut: true,
-            pendingWorkerCallCount,
-          },
-        };
+      if (timedOut) {
+        await sleep(HEALTH_CHECK_RETRY_DELAY_MS);
+        try {
+          const retryHealth = await this.callWorker<DatabaseHealth>({ type: 'health' }, HEALTH_CHECK_RETRY_TIMEOUT_MS);
+          return {
+            ...retryHealth,
+            diagnostics: {
+              ...retryHealth.diagnostics,
+              previousHealthCheckTimedOut: true,
+              previousHealthCheckError: message,
+              pendingWorkerCallCountAtTimeout: pendingWorkerCallCount,
+            },
+          };
+        }
+        catch (retryError) {
+          const retryMessage = getErrorMessage(retryError);
+          return {
+            healthy: false,
+            error: retryMessage,
+            diagnostics: {
+              timestamp: new Date().toISOString(),
+              mode: 'worker',
+              workerCallTimedOut: retryMessage.includes('timed out'),
+              previousHealthCheckTimedOut: true,
+              previousHealthCheckError: message,
+              pendingWorkerCallCountAtTimeout: pendingWorkerCallCount,
+              pendingWorkerCallCount: this.pendingWorkerCalls.size,
+            },
+          };
+        }
       }
 
       return {

@@ -444,6 +444,10 @@
 	--vaultquery-calendar-today-bg: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
 }
 
+.vaultquery-calendar-root.vaultquery-calendar-initializing {
+	min-height: calc(var(--input-height) + var(--vaultquery-calendar-day-min-height));
+}
+
 .vaultquery-container.vaultquery-calendar-output {
 	padding-top: calc(var(--input-height) + var(--size-4-2));
 }

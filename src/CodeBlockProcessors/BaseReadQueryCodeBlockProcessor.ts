@@ -53,8 +53,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
         getApi: () => this.plugin.api,
         container,
         pendingBlocks: this.pendingBlocks,
-        blockInfo,
-        onReady: () => this.processQueryInContainer(container, parsed, ctx)
+        blockInfo
       });
 
       if (ready) {

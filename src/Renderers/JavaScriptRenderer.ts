@@ -1,5 +1,5 @@
 import { debounce } from 'obsidian';
-import { mergeHelpers, obsidianHelpers, escapeHtml } from 'placeholder-resolver';
+import { mergeHelpers, obsidianHelpers } from 'placeholder-resolver';
 import { renderUserHtmlTemplate } from 'user-template-renderer';
 import { BaseRenderer } from './BaseRenderer';
 import { logger as rootLogger } from '../utils/logger';
@@ -17,6 +17,15 @@ interface TemplateRenderContext {
 type RenderFn = (template: string, context: TemplateRenderContext, openFile: (path: string) => void) => void;
 const debouncedRenderers = new WeakMap<HTMLElement, RenderFn>();
 const DEBOUNCE_MS = 50;
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 function renderWikilinks(text: string): string {
   if (!text) return '';

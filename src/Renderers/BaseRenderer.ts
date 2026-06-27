@@ -38,7 +38,8 @@ export interface RenderContext {
   MarkdownRenderer?: typeof MarkdownRenderer;
   pluginContext?: Component;
   settings: VaultQuerySettings;
-  onRefresh?: () => Promise<void>;
+  /** `force: true` is passed by the manual refresh button to bypass skip-if-unchanged. */
+  onRefresh?: (force?: boolean) => Promise<void>;
   sourcePath?: string;
 }
 
@@ -184,12 +185,13 @@ export abstract class BaseRenderer {
     return formatIsoDateString(dateStr);
   }
 
-  static addRefreshButton(buttonContainer: HTMLElement, onRefresh: () => Promise<void>): void {
+  static addRefreshButton(buttonContainer: HTMLElement, onRefresh: (force?: boolean) => Promise<void>): void {
     this.createFloatingButton(buttonContainer, {
       ariaLabel: 'Refresh',
       icon: 'refresh-cw',
       spinnerClass: 'vaultquery-refresh-spinning',
-      onClick: onRefresh
+      // Manual refresh forces a redraw even when results are unchanged.
+      onClick: () => onRefresh(true)
     });
   }
 

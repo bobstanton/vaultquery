@@ -1,6 +1,6 @@
 {
 	"name": "vaultquery",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"description": "Query notes and frontmatter through a local SQLite index with output to table, chart or calendar.",
 	"main": "main.js",
 	"types": "index.d.ts",
@@ -20,8 +20,8 @@
 	},
 	"scripts": {
 		"rename": "node -e \"require('fs').rename('main.css', 'styles.css', () => { })\"",
-		"build-help-generator": "cd ../md-to-obsidian-dom && npm run build",
-		"generate-help": "node ../md-to-obsidian-dom/dist/bin/generate.js ./help-md ./src/generated-help --prefix vaultquery-help",
+		"build-help-generator": "npm --prefix node_modules/md-to-obsidian-dom run build",
+		"generate-help": "md-to-obsidian-dom ./help-md ./src/generated-help --prefix vaultquery-help",
 		"generate-api-types": "node scripts/generate-api-dts.mjs",
 		"generate": "npm run generate-help && npm run generate-api-types",
 		"dev": "npm run generate && node esbuild.config.mjs && npm run rename",
@@ -52,6 +52,7 @@
 		"esbuild-plugin-inline-worker": "^0.1.1",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.2.4",
+		"md-to-obsidian-dom": "git+https://github.com/bobstanton/md-to-obsidian-dom.git",
 		"obsidian": "latest",
 		"tslib": "2.8.1",
 		"typescript": "^6.0.3"
@@ -64,11 +65,11 @@
 		"chart.js": "^4.5.1",
 		"fnv-plus": "^1.3.1",
 		"markdown-table": "^3.0.4",
-		"obsidian-debug-logger": "file:../obsidian-debug-logger",
-		"placeholder-resolver": "file:../placeholder-resolver",
+		"obsidian-debug-logger": "git+https://github.com/bobstanton/obsidian-debug-logger.git",
+		"placeholder-resolver": "git+https://github.com/bobstanton/placeholder-resolver.git",
 		"slickgrid": "^5.18.3",
 		"sql.js": "^1.14.1",
-		"user-template-renderer": "file:../user-template-renderer"
+		"user-template-renderer": "git+https://github.com/bobstanton/user-template-renderer.git"
 	},
 	"overrides": {
 		"fast-uri": "3.1.2"

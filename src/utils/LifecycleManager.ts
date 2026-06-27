@@ -21,12 +21,12 @@ export class LifecycleManager {
   private timeouts = new Map<TimerKey, number>();
   private events: EventRegistration[] = [];
 
-  public setInterval(key: TimerKey, handler: () => void, delayMs: number): void {
-    this.clearInterval(key);
+  public scheduleInterval(key: TimerKey, handler: () => void, delayMs: number): void {
+    this.cancelInterval(key);
     this.intervals.set(key, window.setInterval(handler, delayMs));
   }
 
-  public clearInterval(key: TimerKey): void {
+  public cancelInterval(key: TimerKey): void {
     const interval = this.intervals.get(key);
     if (interval === undefined) {
       return;
@@ -36,15 +36,15 @@ export class LifecycleManager {
     this.intervals.delete(key);
   }
 
-  public setTimeout(key: TimerKey, handler: () => void, delayMs: number): void {
-    this.clearTimeout(key);
+  public scheduleTimeout(key: TimerKey, handler: () => void, delayMs: number): void {
+    this.cancelTimeout(key);
     this.timeouts.set(key, window.setTimeout(() => {
       this.timeouts.delete(key);
       handler();
     }, delayMs));
   }
 
-  public clearTimeout(key: TimerKey): void {
+  public cancelTimeout(key: TimerKey): void {
     const timeout = this.timeouts.get(key);
     if (timeout === undefined) {
       return;

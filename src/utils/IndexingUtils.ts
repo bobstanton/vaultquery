@@ -1,6 +1,9 @@
 import { MarkdownPostProcessorContext } from 'obsidian';
 import { VaultQueryAPI } from '../VaultQueryAPI';
 import type { IndexingProgress } from '../types';
+import { logger as rootLogger } from './logger';
+
+const logger = rootLogger.scope('Indexing');
 
 export const VAULTQUERY_DATABASE_PREPARING_MESSAGE = 'Preparing VaultQuery database...';
 
@@ -99,8 +102,6 @@ interface IndexingCheckOptions {
   container: HTMLElement;
   pendingBlocks: Set<PendingBlock>;
   blockInfo: PendingBlock;
-
-  onReady: () => Promise<void>;
 }
 
 export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, container: HTMLElement, onReady: () => void | Promise<void>): boolean {
@@ -115,19 +116,17 @@ export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, 
 
 export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingCheckResult {
   const { pendingBlocks, blockInfo } = options;
-  const result = waitForIndexingAndRender({
-    getApi: options.getApi,
-    container: options.container,
-    onReady: options.onReady,
-    clearContainerOnReady: true,
-    removeLoadingOnReady: false,
-  });
-
-  if (!result.ready) {
-    pendingBlocks.add(blockInfo);
+  const api = options.getApi();
+  if (api && !api.getIndexingStatus().isIndexing) {
+    return { ready: true };
   }
 
-  return result;
+  const loadingDiv = options.container.createDiv({ cls: 'vaultquery-loading' });
+  const progress = api?.getIndexingStatus().progress ?? { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE };
+  renderIndexingProgress(loadingDiv, progress);
+  pendingBlocks.add(blockInfo);
+
+  return { ready: false };
 }
 
 function waitForIndexingAndRender(options: {
@@ -153,7 +152,7 @@ function waitForIndexingAndRender(options: {
   else {
     renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE });
   }
-  const checkInterval = window.setInterval(async () => {
+  const checkInterval = window.setInterval(() => {
     if (!options.container.isConnected) {
       window.clearInterval(checkInterval);
       return;
@@ -174,7 +173,9 @@ function waitForIndexingAndRender(options: {
       else if (options.removeLoadingOnReady) {
         loadingDiv.remove();
       }
-      await options.onReady();
+      void options.onReady().catch((error: unknown) => {
+        logger.error('Indexing onReady callback failed', error);
+      });
     }
     else if (status.progress) {
       renderIndexingProgress(loadingDiv, status.progress);

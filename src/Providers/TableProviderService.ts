@@ -23,6 +23,7 @@ import type {
 } from './TableProviderTypes';
 
 const logger = rootLogger.scope('ProviderTables');
+const RECENT_REFRESH_SKIP_MS = 5000;
 
 type ProviderDatabase = VaultDatabase | WorkerDatabase;
 type SqlParam = string | number | null;
@@ -70,6 +71,7 @@ export class TableProviderService {
   private definitions = new Map<string, RuntimeRefreshDefinition>();
   private duplicateDefinitionKeys = new Set<string>();
   private tableStatus = new Map<string, RuntimeTableStatus>();
+  private recentRefreshes = new Map<string, { refreshedAt: number; blockHash: string }>();
   private renderedBlocks = new Map<HTMLElement, RenderedProviderBlock>();
   private registerBlockLanguage?: (language: string) => void;
   private refreshingStaleDefinitions = false;
@@ -365,6 +367,10 @@ export class TableProviderService {
       logger.debug(`Provider refresh returned: provider=${providerId}, definition=${definitionId}, tables=${Object.entries(result.tables).map(([tableName, tableRows]) => `${tableName}:${tableRows.rows.length}`).join(',')}`);
 
       await this.materializeRefreshResult(provider, runtime, result);
+      this.recentRefreshes.set(this.definitionDuplicateKey(providerId, definitionId), {
+        refreshedAt: Date.now(),
+        blockHash: runtime.blockHash,
+      });
       runtime.error = undefined;
       await this.rerenderProviderBlocks(providerId, definitionId);
       this.onProviderTablesChanged?.({
@@ -718,6 +724,12 @@ export class TableProviderService {
   }
 
   private shouldRefreshRuntimeDefinition(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, now: number): boolean {
+    const recent = this.recentRefreshes.get(this.definitionDuplicateKey(runtime.providerId, runtime.definition.id));
+    if (recent && recent.blockHash === runtime.blockHash && now - recent.refreshedAt < RECENT_REFRESH_SKIP_MS) {
+      logger.debug(`Indexed provider definition refresh skipped because it refreshed recently: provider=${runtime.providerId}, definition=${runtime.definition.id}, ageMs=${now - recent.refreshedAt}`);
+      return false;
+    }
+
     const requestedTables = runtime.definition.requestedTables ?? provider.tables.map(table => table.name);
     const tableByName = new Map(provider.tables.map(table => [table.name, table]));
 
@@ -726,10 +738,22 @@ export class TableProviderService {
       if (!table) continue;
 
       const status = this.tableStatus.get(this.statusKey(provider.id, runtime.definition.id, table.name));
-      if (!status?.lastRefreshAt) return true;
-      if (status.definitionBlockHash !== runtime.blockHash) return true;
-      if (status.expiresAt && status.expiresAt <= now) return true;
-      if (table.defaultStaleAfterMs && !status.expiresAt) return true;
+      if (!status?.lastRefreshAt) {
+        logger.debug(`Indexed provider definition refresh needed because status is missing: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}`);
+        return true;
+      }
+      if (status.definitionBlockHash !== runtime.blockHash) {
+        logger.debug(`Indexed provider definition refresh needed because block hash changed: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}, statusHash=${status.definitionBlockHash}, runtimeHash=${runtime.blockHash}`);
+        return true;
+      }
+      if (status.expiresAt && status.expiresAt <= now) {
+        logger.debug(`Indexed provider definition refresh needed because status expired: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}, expiresAt=${status.expiresAt}, now=${now}`);
+        return true;
+      }
+      if (table.defaultStaleAfterMs && !status.expiresAt) {
+        logger.debug(`Indexed provider definition refresh needed because table has stale policy without expiresAt: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}`);
+        return true;
+      }
     }
 
     return false;

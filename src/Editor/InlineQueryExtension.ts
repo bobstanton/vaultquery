@@ -15,6 +15,11 @@ const INLINE_QUERY_SYNTAX: InlineSyntax<string> = {
   parseMatch: (match) => match[1].trim(),
 };
 
+function parseInlineQueryText(text: string): string | null {
+  const match = text.match(/^vq\{([^`\n]+)\}$/);
+  return match?.[1].trim() || null;
+}
+
 function isReadOnlyQuery(sql: string): boolean {
   if (!/^\s*(SELECT|WITH)\b/i.test(sql)) {
     return false;
@@ -33,26 +38,30 @@ async function resolveInlineQuery(plugin: VaultQueryPluginContext, sql: string, 
   return scalarFromResults(results);
 }
 
+function createInlineQueryElement(owner: Document, plugin: VaultQueryPluginContext, sql: string, sourcePath: string, errorLabel: string): HTMLElement {
+  const span = createInlineSpan(owner, INLINE_QUERY_CLASS, sql);
+
+  void (async () => {
+    try {
+      const value = await resolveInlineQuery(plugin, sql, sourcePath);
+      setInlineSpanValue(span, INLINE_QUERY_CLASS, value);
+    }
+    catch (error) {
+      logger.error('Inline query failed', error);
+      setInlineSpanError(span, INLINE_QUERY_CLASS, error, errorLabel);
+    }
+  })();
+
+  return span;
+}
+
 class InlineQueryWidget extends WidgetType {
   public constructor(private sql: string, private plugin: VaultQueryPluginContext, private sourcePath: string) {
     super();
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const span = createInlineSpan(view.dom.ownerDocument, INLINE_QUERY_CLASS, this.sql);
-
-    void (async () => {
-      try {
-        const value = await resolveInlineQuery(this.plugin, this.sql, this.sourcePath);
-        setInlineSpanValue(span, INLINE_QUERY_CLASS, value);
-      }
-      catch (error) {
-        logger.error('Inline query failed', error);
-        setInlineSpanError(span, INLINE_QUERY_CLASS, error, 'Query error');
-      }
-    })();
-
-    return span;
+    return createInlineQueryElement(view.dom.ownerDocument, this.plugin, this.sql, this.sourcePath, 'Query error');
   }
 
   eq(other: InlineQueryWidget): boolean {
@@ -75,22 +84,11 @@ export function processReadingViewInlineQueries(plugin: VaultQueryPluginContext,
     if (isCodeElementInsidePre(codeEl)) continue;
 
     const text = codeEl.textContent?.trim();
-    if (!text?.startsWith('vq{') || !text.endsWith('}')) continue;
+    if (!text) continue;
 
-    const sql = text.substring(3, text.length - 1).trim();
-    const span = createInlineSpan(element.ownerDocument, INLINE_QUERY_CLASS, sql);
+    const sql = parseInlineQueryText(text);
+    if (!sql) continue;
 
-    codeEl.replaceWith(span);
-
-    void (async () => {
-      try {
-        const value = await resolveInlineQuery(plugin, sql, sourcePath);
-        setInlineSpanValue(span, INLINE_QUERY_CLASS, value);
-      }
-      catch (error) {
-        logger.error('Reading view inline query failed', error);
-        setInlineSpanError(span, INLINE_QUERY_CLASS, error, 'Query error');
-      }
-    })();
+    codeEl.replaceWith(createInlineQueryElement(element.ownerDocument, plugin, sql, sourcePath, 'Query error'));
   }
 }

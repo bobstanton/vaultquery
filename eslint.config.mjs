@@ -45,6 +45,7 @@ export default [
           "attributes": false,
         }
       }],
+      "@typescript-eslint/await-thenable": "error",
 
       // Security rules (critical for plugin approval)
       "@microsoft/sdl/no-inner-html": "error",

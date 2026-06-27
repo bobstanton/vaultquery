@@ -7,7 +7,7 @@ import { WriteSyncService } from './Services/WriteSyncService';
 import { TriggerFunctions, TriggerService } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
 import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
-import { containsBlockedSqlInStripped, parseSQLObjectName, stripSqlComments, stripSqlStringLiterals } from './utils/SQLParsingUtils';
+import { containsBlockedSqlInStripped, parseDroppedSQLObjectName, parseSQLObjectName, stripSqlComments, stripSqlStringLiterals } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
 import type { PreviewResult } from './Services/PreviewService';
 import { TableProviderService } from './Providers/TableProviderService';
@@ -518,6 +518,8 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       wasmSettings: this.settings.wasm
     });
 
+    await this.rebuildBootstrapNotePropertiesView(mainThreadDb);
+
     await this.indexingWorker.close();
     this.indexingWorker = null;
 
@@ -527,6 +529,18 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.writeSyncService.setDatabase(mainThreadDb);
 
     mainThreadDb.registerTriggerFunctions(this.triggerFunctions);
+  }
+
+  private async rebuildBootstrapNotePropertiesView(database: VaultDatabase): Promise<void> {
+    if (!this.settings.enabledFeatures.indexFrontmatter) {
+      return;
+    }
+
+    const columns = database.schema.getViewColumns('note_properties');
+    if (columns.includes('key') && columns.includes('value') && columns.includes('value_type')) {
+      database.schema.rebuildPropertiesView();
+      await database.saveToDisk();
+    }
   }
 
   public async reindexVault(): Promise<void> {
@@ -636,9 +650,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   private getDroppedCustomViewName(sql: string): string | null {
-    const statement = stripSqlComments(sql);
-    const match = statement.match(/^\s*DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:"([^"]+)"|'([^']+)'|`([^`]+)`|\[([^\]]+)\]|(\w+))/i);
-    return match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4] ?? match?.[5] ?? null;
+    return parseDroppedSQLObjectName(stripSqlComments(sql), 'VIEW');
   }
 
   public setProviderBlockLanguageRegistrar(registerBlockLanguage: (language: string) => void): void {

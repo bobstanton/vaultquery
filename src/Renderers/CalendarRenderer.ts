@@ -53,6 +53,8 @@ interface CalendarInstance {
   intersectionObserver?: IntersectionObserver;
   animationFrames: number[];
   timeouts: ReturnType<typeof setTimeout>[];
+  retryTimeout?: ReturnType<typeof setTimeout>;
+  sizeRetryCount: number;
   responsiveConfig: ResponsiveCalendarConfig;
   isMobileLayout: boolean | null;
   lastDesktopView: string | null;
@@ -108,6 +110,7 @@ export class CalendarRenderer {
   private static readonly MOBILE_TIME_GRID_WEEK_VIEW = 'vaultqueryMobileTimeGridWeek';
   private static readonly MOBILE_TIME_GRID_DAY_VIEW = 'vaultqueryMobileTimeGridDay';
   private static readonly MOBILE_BREAKPOINT_PX = 720;
+  private static readonly MAX_HIDDEN_SIZE_RETRIES = 20;
 
   static parseConfig(options?: Record<string, unknown>): CalendarConfig {
     const config: CalendarConfig = {};
@@ -176,7 +179,7 @@ export class CalendarRenderer {
     }
 
     const normalized = this.normalizeResults(results);
-    const root = container.createDiv({ cls: 'vaultquery-calendar-root' });
+    const root = container.createDiv({ cls: 'vaultquery-calendar-root vaultquery-calendar-initializing' });
     root.setCssProps({
       '--vaultquery-calendar-day-min-height': `${config.dayMinHeight ?? 120}px`,
     });
@@ -194,6 +197,8 @@ export class CalendarRenderer {
       calendar,
       animationFrames: [],
       timeouts: [],
+      retryTimeout: undefined,
+      sizeRetryCount: 0,
       responsiveConfig,
       isMobileLayout: null,
       lastDesktopView: null,
@@ -471,10 +476,25 @@ export class CalendarRenderer {
       instance.calendar.updateSize();
 
       if (root.offsetWidth === 0) {
+        if (instance.sizeRetryCount >= this.MAX_HIDDEN_SIZE_RETRIES) {
+          return;
+        }
+
+        if (instance.retryTimeout === undefined) {
+          instance.sizeRetryCount++;
+          instance.retryTimeout = win.setTimeout(() => {
+            instance.retryTimeout = undefined;
+            if (root.isConnected && this.instances.get(container) === instance) {
+              this.scheduleCalendarSizeUpdate(container, root, instance);
+            }
+          }, 500);
+        }
         return;
       }
 
+      instance.sizeRetryCount = 0;
       instance.calendar.updateSize();
+      root.removeClass('vaultquery-calendar-initializing');
     };
 
     const rafId = win.requestAnimationFrame(() => {
@@ -502,6 +522,11 @@ export class CalendarRenderer {
       win.clearTimeout(timeout);
     }
     instance.timeouts = [];
+
+    if (instance.retryTimeout !== undefined) {
+      win.clearTimeout(instance.retryTimeout);
+      instance.retryTimeout = undefined;
+    }
   }
 
   private static parseInitialView(value: string): CalendarConfig['initialView'] {

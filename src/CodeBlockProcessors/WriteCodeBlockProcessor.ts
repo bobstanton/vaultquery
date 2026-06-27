@@ -60,8 +60,7 @@ export class WriteCodeBlockProcessor {
         getApi: () => this.plugin.api,
         container,
         pendingBlocks: this.pendingBlocks,
-        blockInfo,
-        onReady: () => this.processWriteBlockInContainer(container, parsed, ctx.sourcePath)
+        blockInfo
       });
 
       if (ready) {

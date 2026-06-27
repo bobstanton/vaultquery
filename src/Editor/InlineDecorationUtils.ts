@@ -25,13 +25,22 @@ interface InlineExtensionOptions<T> {
 export function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, cursorPos: number): InlineMatch<T>[] {
   const matches: InlineMatch<T>[] = [];
   const text = state.doc.toString();
-  const codeBlockRanges = findCodeBlockRanges(text);
   const regex = new RegExp(syntax.regex.source, syntax.regex.flags.includes('g') ? syntax.regex.flags : `${syntax.regex.flags}g`);
+  const rawMatches: Array<{ match: RegExpExecArray; from: number; to: number }> = [];
 
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
     const from = match.index;
     const to = from + match[0].length;
+    rawMatches.push({ match, from, to });
+  }
+
+  if (rawMatches.length === 0) {
+    return matches;
+  }
+
+  const codeBlockRanges = findCodeBlockRanges(text);
+  for (const { match, from, to } of rawMatches) {
     if (isInsideCodeBlock(from, codeBlockRanges) || (cursorPos >= from && cursorPos <= to)) {
       continue;
     }

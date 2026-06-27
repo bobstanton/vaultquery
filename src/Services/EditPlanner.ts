@@ -1,10 +1,37 @@
-import { App, MetadataCache } from 'obsidian';
+import { App, MetadataCache, TFile, normalizePath } from 'obsidian';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { ContentLocationService, type Range } from './ContentLocationService';
 import { TaskEditPlanner, HeadingEditPlanner, ListItemEditPlanner, TableEditPlanner, type TaskRow, type HeadingRow, type ListItemRow, type TableCellRow, type ReplaceRangeEdit, type FrontmatterEdit, type Edit, type FrontmatterValue, type FrontmatterData, type PropertyRow, type EntityPlannerContext } from '../EditPlanner';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('EditPlanner');
+
+function isFrontmatterValue(value: unknown): value is FrontmatterValue {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value instanceof Date
+  ) {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.every(isFrontmatterValue);
+  }
+
+  if (typeof value !== 'object') {
+    return false;
+  }
+
+  return Object.values(value as Record<string, unknown>).every(isFrontmatterValue);
+}
+
+function isFrontmatterValueArray(value: unknown): value is FrontmatterValue[] {
+  return Array.isArray(value) && value.every(isFrontmatterValue);
+}
 
 export type {
   ReplaceRangeEdit,
@@ -111,10 +138,7 @@ export class EditPlanner {
           continue;
         }
 
-        // notes.content is indexed without frontmatter, so only replace the body.
-        // This matches vq_set_content semantics (TriggerService.setContent).
-        const frontmatterMatch = existingContent.match(/^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/);
-        const bodyStart = frontmatterMatch ? frontmatterMatch[0].length : 0;
+        const bodyStart = this.getBodyStartOffset(update.path, existingContent);
 
         edits.push({
           type: 'replaceRange',
@@ -194,6 +218,19 @@ export class EditPlanner {
     };
 
     return { edits, warnings, stats };
+  }
+
+  private getBodyStartOffset(path: string, content: string): number {
+    const file = this.deps.app.vault.getAbstractFileByPath(normalizePath(path));
+    if (file instanceof TFile) {
+      const frontmatterEnd = this.deps.metadataCache.getFileCache(file)?.frontmatterPosition?.end.offset;
+      if (frontmatterEnd != null) {
+        return frontmatterEnd;
+      }
+    }
+
+    const frontmatterMatch = content.match(/^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/);
+    return frontmatterMatch ? frontmatterMatch[0].length : 0;
   }
 
   private groupByPath(preview: EditPlannerPreviewResult): Map<string, PathGroups> {
@@ -283,7 +320,7 @@ export class EditPlanner {
       case 'array':
         try {
           const parsed: unknown = JSON.parse(value);
-          if (Array.isArray(parsed)) return parsed;
+          if (isFrontmatterValueArray(parsed)) return parsed;
         }
         catch (e) {
           logger.warn('Failed to parse array property value', value, e);
@@ -297,7 +334,7 @@ export class EditPlanner {
       case 'tags':
         try {
           const parsed: unknown = JSON.parse(value);
-          if (Array.isArray(parsed)) return parsed;
+          if (isFrontmatterValueArray(parsed)) return parsed;
         }
         catch (e) {
           logger.warn('Failed to parse tags/aliases property value', value, e);

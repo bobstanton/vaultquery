@@ -5,6 +5,7 @@ import { SlickGridRenderer } from './SlickGridRenderer';
 import { JavaScriptRenderer } from './JavaScriptRenderer';
 import { BaseRenderer } from './BaseRenderer';
 import { QueryRefreshRegistry, resolveAutoRefreshSetting } from './QueryRefreshRegistry';
+import { cleanupRenderedOutput } from './RendererCleanup';
 import type { ChartContext } from './ChartRenderer';
 import type { RenderContext } from './BaseRenderer';
 
@@ -12,10 +13,7 @@ export type { RenderContext };
 
 export class QueryRenderer {
   static resetContainer(container: HTMLElement): void {
-    CalendarRenderer.cleanupContainer(container);
-    SlickGridRenderer.cleanupContainer(container);
-    container.removeClass('vaultquery-calendar-output');
-    container.removeClass('vaultquery-template-output');
+    cleanupRenderedOutput(container);
   }
 
   static async render(context: RenderContext): Promise<void> {
@@ -25,8 +23,7 @@ export class QueryRenderer {
     container.removeClass('vaultquery-calendar-output');
 
     if (outputKind === 'chart') {
-      SlickGridRenderer.cleanupContainer(container);
-      this.registerNonGridRefresh(context);
+      this.prepareNonGridRender(context);
       const chartContext: ChartContext = {
         results: context.results,
         container,
@@ -39,15 +36,13 @@ export class QueryRenderer {
     }
 
     if (outputKind === 'markdown') {
-      SlickGridRenderer.cleanupContainer(container);
-      this.registerNonGridRefresh(context);
+      this.prepareNonGridRender(context);
       await MarkdownTableRenderer.render(context, MarkdownTableRenderer.parseConfig(parsed.output?.options));
       return;
     }
 
     if (outputKind === 'calendar') {
-      SlickGridRenderer.cleanupContainer(container);
-      this.registerNonGridRefresh(context);
+      this.prepareNonGridRender(context);
       CalendarRenderer.render(context, CalendarRenderer.parseConfig(parsed.output?.options));
       container.addClass('vaultquery-calendar-output');
       this.addFloatingButtons(container, context.results, onRefresh);
@@ -64,7 +59,7 @@ export class QueryRenderer {
         return;
       }
 
-      this.registerNonGridRefresh(context);
+      this.prepareNonGridRender(context);
       container.addClass('vaultquery-template-output');
 
       JavaScriptRenderer.render(
@@ -87,6 +82,11 @@ export class QueryRenderer {
     this.addFloatingButtons(container, context.results, onRefresh);
   }
 
+  private static prepareNonGridRender(context: RenderContext): void {
+    SlickGridRenderer.cleanupContainer(context.container);
+    this.registerNonGridRefresh(context);
+  }
+
   private static registerNonGridRefresh(context: RenderContext): void {
     if (!context.onRefresh) return;
     QueryRefreshRegistry.register(context.container, {
@@ -95,7 +95,7 @@ export class QueryRenderer {
     });
   }
 
-  private static addFloatingButtons(container: HTMLElement, results: Record<string, unknown>[] | undefined, onRefresh: (() => Promise<void>) | undefined): void {
+  private static addFloatingButtons(container: HTMLElement, results: Record<string, unknown>[] | undefined, onRefresh: ((force?: boolean) => Promise<void>) | undefined): void {
     const buttonContainer = container.createDiv('vaultquery-floating-buttons');
 
     if (results && results.length > 0) {
