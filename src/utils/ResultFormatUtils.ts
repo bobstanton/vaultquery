@@ -10,7 +10,24 @@ export function scalarFromResults(results: Record<string, unknown>[]): string {
   }
 
   const value = firstRow[firstColumn];
-  return value == null ? '' : String(value);
+  return formatUnknownValue(value);
+}
+
+export function formatUnknownValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString();
+  if (typeof value === 'symbol') return String(value);
+  if (typeof value === 'function') return '[Function]';
+
+  try {
+    const json = JSON.stringify(value);
+    return json ?? '';
+  }
+  catch {
+    return Object.prototype.toString.call(value);
+  }
 }
 
 export interface ResultColumnOptions {
@@ -71,7 +88,7 @@ export function formatResultsAsMarkdown(results: Record<string, unknown>[], opti
 
       const str = options.formatValues === true
         ? formatValueForMarkdown(value)
-        : String(value);
+        : formatUnknownValue(value);
 
       return str
         .replace(/\|/g, '\\|')
@@ -99,7 +116,7 @@ export function formatResultsAsDelimited(results: Record<string, unknown>[], del
 }
 
 function stringifyCell(value: unknown): string {
-  return value == null ? '' : String(value);
+  return formatUnknownValue(value);
 }
 
 function escapeDelimitedCell(value: unknown, delimiter: ',' | '\t'): string {
@@ -116,7 +133,7 @@ function escapeDelimitedCell(value: unknown, delimiter: ',' | '\t'): string {
 }
 
 function formatValueForMarkdown(value: unknown): string {
-  const strValue = String(value);
+  const strValue = formatUnknownValue(value);
 
   if (/^\d{13}$/.test(strValue)) {
     return formatTimestampValue(strValue);

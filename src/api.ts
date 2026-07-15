@@ -2,6 +2,7 @@ export {
   getVaultQueryAPI,
   registerVaultQueryTableProviders,
   waitForVaultQueryAPI,
+  VAULTQUERY_API_READY_EVENT,
 } from './helpers';
 
 export type {

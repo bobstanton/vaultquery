@@ -1,25 +1,13 @@
 type TimerKey = string;
 
-interface DomEventRegistration<K extends keyof DocumentEventMap = keyof DocumentEventMap> {
-  target: Document;
-  type: K;
-  listener: (event: DocumentEventMap[K]) => void;
-  options?: AddEventListenerOptions;
-}
-
-interface ElementEventRegistration<K extends keyof HTMLElementEventMap = keyof HTMLElementEventMap> {
-  target: HTMLElement;
-  type: K;
-  listener: (event: HTMLElementEventMap[K]) => void;
-  options?: AddEventListenerOptions;
-}
-
-type EventRegistration = DomEventRegistration | ElementEventRegistration;
-
+/**
+ * Keyed timers with reschedule-on-repeat semantics, which Obsidian's Component
+ * registration does not provide. DOM event listeners go through the platform's
+ * Plugin.registerDomEvent instead; only timers live here.
+ */
 export class LifecycleManager {
   private intervals = new Map<TimerKey, number>();
   private timeouts = new Map<TimerKey, number>();
-  private events: EventRegistration[] = [];
 
   public scheduleInterval(key: TimerKey, handler: () => void, delayMs: number): void {
     this.cancelInterval(key);
@@ -54,23 +42,6 @@ export class LifecycleManager {
     this.timeouts.delete(key);
   }
 
-  public addDomEvent<K extends keyof DocumentEventMap>(
-    target: Document,
-    type: K,
-    listener: (event: DocumentEventMap[K]) => void,
-    options?: AddEventListenerOptions
-  ): void;
-  public addDomEvent<K extends keyof HTMLElementEventMap>(
-    target: HTMLElement,
-    type: K,
-    listener: (event: HTMLElementEventMap[K]) => void,
-    options?: AddEventListenerOptions
-  ): void;
-  public addDomEvent(target: Document | HTMLElement, type: string, listener: EventListener, options?: AddEventListenerOptions): void {
-    target.addEventListener(type, listener, options);
-    this.events.push({ target, type, listener, options } as EventRegistration);
-  }
-
   public cleanup(): void {
     for (const interval of this.intervals.values()) {
       window.clearInterval(interval);
@@ -81,14 +52,5 @@ export class LifecycleManager {
       window.clearTimeout(timeout);
     }
     this.timeouts.clear();
-
-    for (const event of this.events) {
-      event.target.removeEventListener(
-        event.type,
-        event.listener as EventListener,
-        event.options
-      );
-    }
-    this.events = [];
   }
 }

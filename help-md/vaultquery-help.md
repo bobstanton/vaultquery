@@ -127,6 +127,61 @@ JOIN tags t ON n.path = t.path
 WHERE t.tag_name LIKE "%project%";
 ~~~
 
+## Notes linking to current note
+
+Requires **Index links**.
+
+~~~vaultquery
+SELECT path AS source_path, COUNT(*) AS link_count
+FROM links
+WHERE link_target_path = '{this.path}'
+GROUP BY path
+ORDER BY path;
+~~~
+
+## Broken wikilinks
+
+Requires **Index unresolved links**.
+
+~~~vaultquery
+SELECT path, link_target, link_count
+FROM unresolved_links
+ORDER BY path, link_target;
+~~~
+
+## Broken wikilinks with locations
+
+Requires **Index links**. Shows each unresolved link occurrence with its raw
+markup and position; `line_number` is NULL for links in frontmatter
+properties (see `frontmatter_key`).
+
+~~~vaultquery
+SELECT path, original, line_number, frontmatter_key
+FROM links
+WHERE link_target_path IS NULL
+ORDER BY path, line_number;
+~~~
+
+## Embedded files and notes
+
+Requires **Index embeds**.
+
+~~~vaultquery
+SELECT path, embed_target, embed_target_path, line_number
+FROM embeds
+ORDER BY path, line_number;
+~~~
+
+## Block references
+
+Requires **Index blocks**.
+
+~~~vaultquery
+SELECT path, block_id, line_number, section_type
+FROM blocks
+ORDER BY path, line_number;
+~~~
+
 ## Notes with properties
 
 Using the `notes_with_properties` view (pivots property rows to columns):

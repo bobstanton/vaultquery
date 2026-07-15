@@ -1,4 +1,5 @@
 import type { ParsedQuery } from '../types';
+import { stripTrailingSemicolon } from './SQLParsingUtils';
 
 interface ParsedQuerySections {
   sqlQuery: string;
@@ -14,10 +15,6 @@ export type { ParsedQuery };
 
 function findSectionStart(lines: string[], sectionName: 'template' | 'config'): number {
   return lines.findIndex(line => line.trim().toLowerCase() === `${sectionName}:`);
-}
-
-function stripTrailingSemicolon(query: string): string {
-  return query.replace(/;\s*$/, '').trim();
 }
 
 function parseInlineSection(content: string, sectionName: 'template' | 'config'): { before: string; after: string } | null {
@@ -55,7 +52,7 @@ export function splitQuerySections(source: string): ParsedQuerySections {
   const inlineTemplate = parseInlineSection(content, 'template');
   if (inlineTemplate) {
     return {
-      sqlQuery: stripTrailingSemicolon(inlineTemplate.before),
+      sqlQuery: stripTrailingSemicolon(inlineTemplate.before).trim(),
       templateConfigText: inlineTemplate.after,
       configSection: null
     };
@@ -64,7 +61,7 @@ export function splitQuerySections(source: string): ParsedQuerySections {
   const inlineConfig = parseInlineSection(content, 'config');
   if (inlineConfig) {
     return {
-      sqlQuery: stripTrailingSemicolon(inlineConfig.before),
+      sqlQuery: stripTrailingSemicolon(inlineConfig.before).trim(),
       templateConfigText: null,
       configSection: inlineConfig.after
     };
@@ -76,7 +73,7 @@ export function splitQuerySections(source: string): ParsedQuerySections {
 
   if (templateLineIndex !== -1) {
     return {
-      sqlQuery: stripTrailingSemicolon(lines.slice(0, templateLineIndex).join('\n').trim()),
+      sqlQuery: stripTrailingSemicolon(lines.slice(0, templateLineIndex).join('\n').trim()).trim(),
       templateConfigText: lines.slice(templateLineIndex + 1).join('\n').trim(),
       configSection: null
     };
@@ -84,7 +81,7 @@ export function splitQuerySections(source: string): ParsedQuerySections {
 
   if (configLineIndex !== -1) {
     return {
-      sqlQuery: stripTrailingSemicolon(lines.slice(0, configLineIndex).join('\n').trim()),
+      sqlQuery: stripTrailingSemicolon(lines.slice(0, configLineIndex).join('\n').trim()).trim(),
       templateConfigText: null,
       configSection: lines.slice(configLineIndex + 1).join('\n').trim()
     };

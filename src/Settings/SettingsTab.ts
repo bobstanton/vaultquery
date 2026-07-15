@@ -1,4 +1,5 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { IndexingStatsModal } from '../Modals/IndexingStatsModal';
 import type { ContentRenderingMode, WasmSource } from './Settings';
@@ -15,16 +16,44 @@ export class VaultQuerySettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  public getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{
+      name: 'VaultQuery settings',
+      aliases: [
+        'Indexing mode', 'Maximum file size', 'Database storage',
+        'Metadata-only indexing', 'Index frontmatter', 'Index headings',
+        'Index links', 'Index unresolved links', 'Index embeds', 'Index blocks',
+        'Index tags', 'Index list items', 'Content-dependent indexing',
+        'Index note content', 'Index tables', 'Dynamic table views', 'Index tasks',
+        'Exclude patterns', 'Write operations', 'Inline buttons',
+        'Inline button debounce', 'File deletion', 'Background query execution',
+        'JavaScript SQL functions', 'JavaScript rendering', 'Triggers',
+        'Obsidian CLI', 'CLI write operations', 'Third-party provider tables',
+        'Result display', 'Content column display', 'Auto-refresh grids',
+        'View preview limit', 'SQL.js WASM source', 'Cache WASM locally',
+        'Custom WASM path', 'Index on background thread', 'Console log level',
+        'Rebuild index', 'View performance stats'
+      ],
+      render: (setting) => {
+        setting.settingEl.empty();
+        this.renderSettings(setting.settingEl);
+      }
+    }];
+  }
+
   public display(): void {
     const { containerEl } = this;
     containerEl.empty();
     this.renderSettings();
   }
 
-  /**
-   * Re-render settings while preserving scroll position
-   */
   private refreshDisplay(): void {
+    const declarativeUpdate: unknown = Reflect.get(this, 'update');
+    if (typeof declarativeUpdate === 'function') {
+      Reflect.apply(declarativeUpdate, this, []);
+      return;
+    }
+
     const { containerEl } = this;
     const scrollTop = containerEl.scrollTop;
     containerEl.empty();
@@ -32,8 +61,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
     containerEl.scrollTop = scrollTop;
   }
 
-  private renderSettings(): void {
-    const { containerEl } = this;
+  private renderSettings(containerEl: HTMLElement = this.containerEl): void {
 
     new Setting(containerEl)
       .setName('Indexing mode')
@@ -45,15 +73,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.indexingInterval)
         .onChange((value: string) => {
           this.plugin.settings.indexingInterval = value as 'realtime' | 'manual' | 'startup';
-
-          if (value !== 'realtime') {
-            this.plugin.settings.allowWriteOperations = false;
-            this.plugin.settings.allowDeleteNotes = false;
-            this.plugin.settings.enableTriggers = false;
-            this.plugin.settings.enableInlineButtons = false;
-            this.plugin.settings.enableCliWriteOperations = false;
-          }
-
           void this.plugin.saveSettings();
           this.refreshDisplay();
         }));
@@ -120,6 +139,36 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('Index unresolved links')
+      .setDesc('Index links Obsidian cannot resolve to a note.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enabledFeatures.indexUnresolvedLinks)
+        .onChange((value) => {
+          this.plugin.settings.enabledFeatures.indexUnresolvedLinks = value;
+          void this.plugin.saveSettings({ requiresFullReindex: true });
+        }));
+
+    new Setting(containerEl)
+      .setName('Index embeds')
+      .setDesc('Index embedded links such as images, PDFs, and embedded notes.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enabledFeatures.indexEmbeds)
+        .onChange((value) => {
+          this.plugin.settings.enabledFeatures.indexEmbeds = value;
+          void this.plugin.saveSettings({ requiresFullReindex: true });
+        }));
+
+    new Setting(containerEl)
+      .setName('Index blocks')
+      .setDesc('Index Obsidian block IDs as queryable rows.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enabledFeatures.indexBlocks)
+        .onChange((value) => {
+          this.plugin.settings.enabledFeatures.indexBlocks = value;
+          void this.plugin.saveSettings({ requiresFullReindex: true });
+        }));
+
+    new Setting(containerEl)
       .setName('Index tags')
       .setDesc('Index hashtags found in notes.')
       .addToggle(toggle => toggle
@@ -154,12 +203,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           .setValue(contentEnabled)
           .onChange((value) => {
             this.plugin.settings.enabledFeatures.indexContent = value;
-            // When disabling content indexing, also disable dependent features
-            if (!value) {
-              this.plugin.settings.enabledFeatures.indexTables = false;
-              this.plugin.settings.enabledFeatures.indexTasks = false;
-              this.plugin.settings.enableDynamicTableViews = false;
-            }
             void this.plugin.saveSettings({ requiresFullReindex: true });
             this.refreshDisplay();
           });
@@ -231,14 +274,16 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             void this.plugin.saveSettings({ requiresFullReindex: true });
           });
         })
-        .addButton(button => button
-          .setButtonText('Remove')
-          .setWarning()
-          .onClick(() => {
-            this.plugin.settings.excludePatterns.splice(index, 1);
-            void this.plugin.saveSettings({ requiresFullReindex: true });
-            this.refreshDisplay();
-          }));
+        .addButton(button => {
+          button.buttonEl.addClass('mod-warning');
+          button
+            .setButtonText('Remove')
+            .onClick(() => {
+              this.plugin.settings.excludePatterns.splice(index, 1);
+              void this.plugin.saveSettings({ requiresFullReindex: true });
+              this.refreshDisplay();
+            });
+        });
     });
 
     new Setting(containerEl)
@@ -268,13 +313,6 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setDisabled(!isRealtimeIndexing)
         .onChange((value) => {
           this.plugin.settings.allowWriteOperations = value;
-          // When disabling write operations, also disable dependent features
-          if (!value) {
-            this.plugin.settings.enableInlineButtons = false;
-            this.plugin.settings.allowDeleteNotes = false;
-            this.plugin.settings.enableTriggers = false;
-            this.plugin.settings.enableCliWriteOperations = false;
-          }
           void this.plugin.saveSettings();
           this.refreshDisplay();
         })
@@ -318,6 +356,17 @@ export class VaultQuerySettingTab extends PluginSettingTab {
         .setDisabled(!isRealtimeIndexing || !writeEnabled)
         .onChange((value) => {
           this.plugin.settings.allowDeleteNotes = value;
+          void this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Background query execution')
+      .setDesc('Serve read queries from a worker mirror of the index so large queries do not freeze the UI. Takes effect after restart.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.workerQueries)
+        .onChange((value) => {
+          this.plugin.settings.workerQueries = value;
           void this.plugin.saveSettings();
         })
       );

@@ -1,5 +1,6 @@
 import { Component } from 'obsidian';
-import { BaseRenderer, type RenderContext } from './BaseRenderer';
+import { BaseRenderer } from './BaseRenderer';
+import type { RenderContext } from './BaseRenderer';
 
 interface MarkdownTableConfig {
   columns?: string[];
@@ -38,9 +39,8 @@ export class MarkdownTableRenderer extends BaseRenderer {
   static async render(context: RenderContext, config: MarkdownTableConfig = {}): Promise<void> {
     const { container, results, onRefresh, app, sourcePath } = context;
 
-    const fragment = container.ownerDocument.createDocumentFragment();
-    const tempContainer = container.ownerDocument.createElement('div');
-    fragment.appendChild(tempContainer);
+    const tempContainer = container.createDiv();
+    tempContainer.detach();
 
     if (!results.length) {
       tempContainer.createDiv({

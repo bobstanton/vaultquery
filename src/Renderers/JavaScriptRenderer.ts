@@ -4,6 +4,7 @@ import { renderUserHtmlTemplate } from 'user-template-renderer';
 import { BaseRenderer } from './BaseRenderer';
 import { logger as rootLogger } from '../utils/logger';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { escapeHTML } from '../utils/StringUtils';
 
 const logger = rootLogger.scope('JavaScriptRenderer');
 
@@ -18,15 +19,6 @@ type RenderFn = (template: string, context: TemplateRenderContext, openFile: (pa
 const debouncedRenderers = new WeakMap<HTMLElement, RenderFn>();
 const DEBOUNCE_MS = 50;
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
 function renderWikilinks(text: string): string {
   if (!text) return '';
 
@@ -37,19 +29,19 @@ function renderWikilinks(text: string): string {
 
   while ((match = wikilinkRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      result.push(escapeHtml(text.slice(lastIndex, match.index)));
+      result.push(escapeHTML(text.slice(lastIndex, match.index)));
     }
 
     const target = match[1];
     const displayText = match[2] || target;
     const escapedPath = target.replace(/"/g, '&quot;');
-    result.push(`<a href="${escapedPath}" class="internal-link" data-path="${escapedPath}">${escapeHtml(displayText)}</a>`);
+    result.push(`<a href="${escapedPath}" class="internal-link" data-path="${escapedPath}">${escapeHTML(displayText)}</a>`);
 
     lastIndex = wikilinkRegex.lastIndex;
   }
 
   if (lastIndex < text.length) {
-    result.push(escapeHtml(text.slice(lastIndex)));
+    result.push(escapeHTML(text.slice(lastIndex)));
   }
 
   return result.join('');

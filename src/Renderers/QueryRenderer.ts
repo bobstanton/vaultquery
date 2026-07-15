@@ -12,6 +12,12 @@ import type { RenderContext } from './BaseRenderer';
 export type { RenderContext };
 
 export class QueryRenderer {
+  private static floatingControls = new WeakMap<HTMLElement, {
+    buttonContainer: HTMLElement;
+    results: Record<string, unknown>[];
+    onRefresh?: (force?: boolean) => Promise<void>;
+  }>();
+
   static resetContainer(container: HTMLElement): void {
     cleanupRenderedOutput(container);
   }
@@ -96,14 +102,30 @@ export class QueryRenderer {
   }
 
   private static addFloatingButtons(container: HTMLElement, results: Record<string, unknown>[] | undefined, onRefresh: ((force?: boolean) => Promise<void>) | undefined): void {
+    const existing = this.floatingControls.get(container);
+    if (existing?.buttonContainer.isConnected && existing.buttonContainer.parentElement === container) {
+      existing.results = results ?? [];
+      existing.onRefresh = onRefresh;
+      return;
+    }
+
+    for (const child of Array.from(container.children)) {
+      if (child.classList.contains('vaultquery-floating-buttons')) {
+        child.remove();
+      }
+    }
     const buttonContainer = container.createDiv('vaultquery-floating-buttons');
+    const state = { buttonContainer, results: results ?? [], onRefresh };
+    this.floatingControls.set(container, state);
 
     if (results && results.length > 0) {
-      BaseRenderer.addCopyAsMarkdownButton(buttonContainer, results);
+      BaseRenderer.addCopyAsMarkdownButton(buttonContainer, () => state.results);
     }
 
     if (onRefresh) {
-      BaseRenderer.addRefreshButton(buttonContainer, onRefresh);
+      BaseRenderer.addRefreshButton(buttonContainer, async force => {
+        await state.onRefresh?.(force);
+      });
     }
   }
 

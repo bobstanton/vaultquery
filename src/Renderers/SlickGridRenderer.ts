@@ -6,7 +6,7 @@ import { QueryRefreshRegistry, resolveAutoRefreshSetting } from './QueryRefreshR
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { generateUniqueId, escapeHTML, hashString } from '../utils/StringUtils';
 import { parseCssDimension } from '../utils/ConfigParsingUtils';
-import { formatIsoDateString, formatTimestampValue } from '../utils/ResultFormatUtils';
+import { formatIsoDateString, formatTimestampValue, formatUnknownValue } from '../utils/ResultFormatUtils';
 import type { RenderContext } from './BaseRenderer';
 import '../slickgrid-alpine-theme.css';
 import { logger as rootLogger } from '../utils/logger';
@@ -126,7 +126,7 @@ interface GridRecord {
   data: Record<string, unknown>[];
   columns: Column[];
   options: GridOption;
-  context: RenderContext;
+  openFile: RenderContext['openFile'];
   queryHash?: string;
   detachedAt?: number;
   disposed?: boolean;
@@ -141,7 +141,7 @@ interface GridHeightConfig {
 }
 
 export class SlickGridRenderer extends BaseRenderer {
-  private static readonly DETACHED_RECORD_TTL_MS = 30 * 60 * 1000;
+  private static readonly DETACHED_RECORD_TTL_MS = 5 * 60 * 1000;
   private static records = new Map<string, GridRecord>();
   private static resizeTimers = new Map<string, number>();
   private static restoreTimers = new Map<string, number>();
@@ -179,19 +179,41 @@ export class SlickGridRenderer extends BaseRenderer {
 
     const { results, container } = context;
 
-    this.cleanupContainer(container);
-
-    if (context.onRefresh) {
-      QueryRefreshRegistry.register(container, {
-        onRefresh: context.onRefresh,
-        autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed),
-      });
-    }
-
-    if (!results || !Array.isArray(results) || results.length === 0) {
+    if (results.length === 0) {
+      this.cleanupContainer(container);
+      this.registerRefresh(context);
       container.createDiv({ cls: 'vaultquery-empty', text: 'No results found' });
       return;
     }
+
+    const queryHash = context.parsed?.query ? hashString(context.parsed.query) : undefined;
+    const existingRecord = this.findCompatibleRecord(container, results[0], queryHash);
+    if (existingRecord?.grid) {
+      this.registerRefresh(context);
+      const prepareStartedAt = performance.now();
+      existingRecord.data = this.prepareData(results);
+      existingRecord.openFile = context.openFile;
+      const prepareMs = performance.now() - prepareStartedAt;
+      const updateStartedAt = performance.now();
+      existingRecord.grid.setData(existingRecord.data, false);
+      existingRecord.grid.updateRowCount();
+      const activeSort = existingRecord.grid.getSortColumns();
+      if (activeSort.length > 0) {
+        this.sortGridData(existingRecord.grid, {
+          grid: existingRecord.grid,
+          multiColumnSort: true,
+          sortCols: activeSort,
+        });
+      } else {
+        existingRecord.grid.invalidateAllRows();
+        existingRecord.grid.render();
+      }
+      logger.debug(`SlickGrid updated in place ${existingRecord.id}: rows=${existingRecord.data.length}, columns=${existingRecord.columns.length}, prepareMs=${Math.round(prepareMs)}, updateMs=${Math.round(performance.now() - updateStartedAt)}`);
+      return;
+    }
+
+    this.cleanupContainer(container);
+    this.registerRefresh(context);
 
     const gridContainer: HTMLElement = container.createDiv({ cls: 'vaultquery-data-grid' });
     this.applyHeightConfig(gridContainer, this.parseHeightConfig(context.parsed.output?.options));
@@ -201,7 +223,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
     gridContainer.dataset.gridId = gridId;
 
-    const queryHash = context.parsed?.query ? hashString(context.parsed.query) : undefined;
+    const prepareStartedAt = performance.now();
     const columns = this.createColumns(results[0], context, queryHash);
     const data = this.prepareData(results);
     const preferredTotalWidth = columns.reduce((sum, col) => sum + (col.width || col.minWidth || 120), 0);
@@ -209,6 +231,7 @@ export class SlickGridRenderer extends BaseRenderer {
     const shouldAllowScroll = preferredTotalWidth > currentContainerWidth;
     const hasMarkdownContent = this.shouldRenderMarkdownContent(context) && 'content' in results[0];
     const options = this.createGridOptions(shouldAllowScroll, hasMarkdownContent);
+    const prepareMs = performance.now() - prepareStartedAt;
 
     const record: GridRecord = {
       id: gridId,
@@ -216,12 +239,33 @@ export class SlickGridRenderer extends BaseRenderer {
       data,
       columns,
       options,
-      context,
+      openFile: context.openFile,
       queryHash,
     };
 
     this.records.set(gridId, record);
+    logger.debug(`SlickGrid prepared ${gridId}: rows=${data.length}, columns=${columns.length}, prepareMs=${Math.round(prepareMs)}`);
     this.scheduleGridEnsure(record, 'initial render');
+  }
+
+  private static registerRefresh(context: RenderContext): void {
+    if (!context.onRefresh) return;
+    QueryRefreshRegistry.register(context.container, {
+      onRefresh: context.onRefresh,
+      autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed),
+    });
+  }
+
+  private static findCompatibleRecord(container: HTMLElement, firstResult: Record<string, unknown>, queryHash: string | undefined): GridRecord | undefined {
+    const resultColumns = Object.keys(firstResult).filter(key => !key.startsWith('_'));
+    for (const record of this.records.values()) {
+      if (record.disposed || record.queryHash !== queryHash || record.container.parentElement !== container) continue;
+      const existingColumns = record.columns.map(column => String(column.id));
+      if (existingColumns.length === resultColumns.length && existingColumns.every((column, index) => column === resultColumns[index])) {
+        return record;
+      }
+    }
+    return undefined;
   }
 
   private static refreshGrid(record: GridRecord): void {
@@ -312,6 +356,7 @@ export class SlickGridRenderer extends BaseRenderer {
     }
 
     try {
+      const mountStartedAt = performance.now();
       if (record.grid) {
         logger.debug(`Recreating SlickGrid ${record.id}: ${reason}`);
         this.destroyMountedGrid(record);
@@ -336,12 +381,10 @@ export class SlickGridRenderer extends BaseRenderer {
 
       this.attachContainerObservers(record);
       this.setupEventHandlers(grid, record);
-      logger.debug(`SlickGrid initialized ${record.id}: rows=${record.data.length}, columns=${record.columns.length}`);
+      logger.debug(`SlickGrid initialized ${record.id}: rows=${record.data.length}, columns=${record.columns.length}, mountMs=${Math.round(performance.now() - mountStartedAt)}`);
 
       // Single post-layout fixup: setColumns re-measures widths after layout
-      // and fonts settle, and refreshGrid resizes the canvas. (This used to be
-      // a rAF refresh plus a second 50ms pass - two extra full renders per
-      // mount on top of the constructor's own render.)
+      // and fonts settle, and refreshGrid resizes the canvas.
       const containerWindow = record.container.ownerDocument.defaultView || activeWindow;
       containerWindow.setTimeout(() => {
         if (this.records.get(record.id) !== record || record.grid !== grid || !record.container.isConnected) {
@@ -527,7 +570,10 @@ export class SlickGridRenderer extends BaseRenderer {
 
       record.detachedAt = undefined;
       record.detachLogged = undefined;
-      this.ensureGridMounted(record, 'periodic restore check');
+
+      if (!record.grid || (this.hasUsableGridDimensions(record) && !this.hasUsableGridDom(record))) {
+        this.ensureGridMounted(record, 'periodic restore check');
+      }
     }
 
     this.refreshOrphanedGridContainers();
@@ -798,7 +844,7 @@ export class SlickGridRenderer extends BaseRenderer {
   private static createPathFormatter(_openFile: (path: string) => void) {
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
       if (!value) return '';
-      const escapedPath = escapeHTML(String(value));
+      const escapedPath = escapeHTML(formatUnknownValue(value));
       return `<a href="${escapedPath}" class="internal-link slick-path-link" data-path="${escapedPath}">${escapedPath}</a>`;
     };
   }
@@ -815,20 +861,19 @@ export class SlickGridRenderer extends BaseRenderer {
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
       if (!value) return '';
 
-      return formatIsoDateString(String(value));
+      return formatIsoDateString(formatUnknownValue(value));
     };
   }
 
   private static sanitizeMarkdownCellContent(value: unknown): string {
-    const content = String(value || '');
+    const content = formatUnknownValue(value);
     return content.replace(/```vaultquery[^\n]*/g, '```sql');
   }
 
   private static createContentFormatter(_context: RenderContext) {
     // Plain-text placeholder; in rendered-markdown mode the real rendering
     // happens in the asyncPostRender callback, which can await
-    // MarkdownRenderer and append actual DOM nodes (the old approach
-    // serialized the container before async rendering finished).
+    // MarkdownRenderer and append actual DOM nodes.
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
       const sanitizedContent = this.sanitizeMarkdownCellContent(value);
       if (!sanitizedContent) return '';
@@ -844,7 +889,8 @@ export class SlickGridRenderer extends BaseRenderer {
       const sanitizedContent = this.sanitizeMarkdownCellContent(dataContext?.content);
       if (!sanitizedContent) return;
 
-      const container = domCellNode.ownerDocument.createElement('div');
+      const container = domCellNode.createDiv();
+      container.detach();
       container.className = 'vaultquery-markdown-cell';
 
       MarkdownRenderer.render(app, sanitizedContent, container, '', pluginContext)
@@ -878,7 +924,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
   private static formatComparisonCell(value: unknown, columnDef: Column, dataContext: Record<string, unknown>, variant: 'current' | 'proposed'): string {
     const suffix = variant === 'current' ? ' (current)' : ' (proposed)';
-    const columnName = typeof columnDef.name === 'string' ? columnDef.name : String(columnDef.name || '');
+    const columnName = typeof columnDef.name === 'string' ? columnDef.name : formatUnknownValue(columnDef.name);
     const baseFieldName = columnName.replace(suffix, '');
     const changedFieldName = `_${baseFieldName}_changed`;
     const formattedValue = this.formatValueByFieldName(value, baseFieldName);
@@ -907,10 +953,10 @@ export class SlickGridRenderer extends BaseRenderer {
 
     const dateFields = ['due_date', 'scheduled_date', 'start_date', 'created_date', 'done_date', 'cancelled_date'];
     if (dateFields.includes(fieldName)) {
-      return formatIsoDateString(String(value));
+      return formatIsoDateString(formatUnknownValue(value));
     }
 
-    return String(value);
+    return formatUnknownValue(value);
   }
 
   private static setupEventHandlers(grid: SlickGrid, record: GridRecord): void {
@@ -922,7 +968,6 @@ export class SlickGridRenderer extends BaseRenderer {
       const target = e.target as HTMLElement;
 
       if (target.classList.contains('slick-scrollbar') ||
-        target.closest('.slick-viewport::-webkit-scrollbar') ||
         target.closest('.slick-header') ||
         target.classList.contains('slick-resizable-handle')) {
         return;
@@ -933,7 +978,7 @@ export class SlickGridRenderer extends BaseRenderer {
         e.stopPropagation();
         const path = target.getAttribute('data-path');
         if (path) {
-          record.context.openFile(path);
+          record.openFile(path);
         }
       }
     });
@@ -1003,7 +1048,7 @@ export class SlickGridRenderer extends BaseRenderer {
       return { empty: true, num: null, str: '' };
     }
 
-    return { empty: false, num: this.toSortableNumber(value), str: String(value) };
+    return { empty: false, num: this.toSortableNumber(value), str: formatUnknownValue(value) };
   }
 
   private static compareSortKeys(
@@ -1091,12 +1136,7 @@ export class SlickGridRenderer extends BaseRenderer {
   }
 
   private static cancelActiveColumnResize(record: GridRecord): void {
-    const documents = new Set<Document>();
-    documents.add(record.container.ownerDocument);
-    documents.add(activeWindow.document);
-    if (typeof activeDocument !== 'undefined') {
-      documents.add(activeDocument);
-    }
+    const documents = this.getCandidateDocuments(record.container.ownerDocument);
 
     for (const doc of documents) {
       const body = doc.body;

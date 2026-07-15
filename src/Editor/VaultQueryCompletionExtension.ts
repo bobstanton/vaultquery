@@ -1,15 +1,12 @@
-import {
-  autocompletion,
-  completionStatus,
-  startCompletion,
-  type Completion,
-  type CompletionContext,
-  type CompletionResult,
-} from '@codemirror/autocomplete';
-import { EditorState, Prec, type Extension } from '@codemirror/state';
-import { ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import { autocompletion, completionStatus, startCompletion } from '@codemirror/autocomplete';
+import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import { EditorState, Prec } from '@codemirror/state';
+import type { Extension } from '@codemirror/state';
+import { ViewPlugin } from '@codemirror/view';
+import type { ViewUpdate } from '@codemirror/view';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { PROVIDER_DEFINITION_LANGUAGES } from '../Constants/EditorConstants';
+import { SQL_COMPLETION_KEYWORD_PHRASES, SQL_FUNCTION_TOKENS } from '../Constants/SqlCatalog';
 import { logger as rootLogger } from '../utils/logger';
 import { extractSqlAliasMap } from '../utils/SQLParsingUtils';
 import type { ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem } from '../Providers/TableProviderTypes';
@@ -66,18 +63,13 @@ const SQL_LANGUAGES = new Set([
   'vaultquery-trigger',
 ]);
 
-const SQL_KEYWORDS: SuggestionItem[] = [
-  'SELECT', 'FROM', 'WHERE', 'ORDER BY', 'GROUP BY', 'LIMIT',
-  'INSERT INTO', 'UPDATE', 'DELETE FROM', 'CREATE VIEW', 'CREATE TRIGGER',
-  'WITH',
-].map((label) => ({ label, apply: label, detail: 'SQL keyword', type: 'keyword' }));
+const SQL_KEYWORDS: SuggestionItem[] = SQL_COMPLETION_KEYWORD_PHRASES
+  .map((label) => ({ label, apply: label, detail: 'SQL keyword', type: 'keyword' }));
 
-const SQL_FUNCTIONS: SuggestionItem[] = [
-  'COUNT()', 'SUM()', 'AVG()', 'MIN()', 'MAX()', 'COALESCE()', 'NULLIF()',
-  'SUBSTR()', 'LENGTH()', 'UPPER()', 'LOWER()', 'TRIM()', 'REPLACE()',
-  'ABS()', 'ROUND()', 'DATE()', 'TIME()', 'DATETIME()', 'STRFTIME()',
-  'JSON_EXTRACT()', 'JSON_OBJECT()', 'JSON_ARRAY()', 'GROUP_CONCAT()',
-].map((label) => ({ label, apply: label, detail: 'SQL function', type: 'function' }));
+const SQL_FUNCTIONS: SuggestionItem[] = Array.from(SQL_FUNCTION_TOKENS)
+  .sort((left, right) => left.localeCompare(right))
+  .map((name) => `${name.toUpperCase()}()`)
+  .map((label) => ({ label, apply: label, detail: 'SQL function', type: 'function' }));
 
 const PLACEHOLDER_VALUES: SuggestionItem[] = [
   ['{this.path}', 'Current note path'],
@@ -158,9 +150,17 @@ const CALENDAR_INITIAL_DATE_VALUES = [
   { label: 'first', apply: 'first', detail: 'Earliest event date', type: 'enum' },
   { label: 'last', apply: 'last', detail: 'Latest event date', type: 'enum' },
 ];
+const YAML_VALUE_SUGGESTIONS: Record<string, SuggestionItem[]> = {
+  type: CHART_TYPE_VALUES,
+  initialview: CALENDAR_VIEW_VALUES,
+  initialdate: CALENDAR_INITIAL_DATE_VALUES,
+  weeknumbers: BOOLEAN_VALUES,
+  expandrows: BOOLEAN_VALUES,
+  skipblankperiods: BOOLEAN_VALUES,
+};
 const SCHEMA_CACHE_TTL_MS = 30_000;
 
-class VaultQueryCompletionProvider {
+export class VaultQueryCompletionProvider {
   private schemaCache: SchemaCache = {
     loadedAt: 0,
     relations: [],
@@ -256,7 +256,7 @@ class VaultQueryCompletionProvider {
     return getSqlCompletionContext(state, fence, pos, explicit);
   }
 
-  private async getCompletionItems(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
+  public async getCompletionItems(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
     switch (context.mode) {
       case 'yamlKey':
         return this.getYamlKeys(context.fence.language);
@@ -303,24 +303,11 @@ class VaultQueryCompletionProvider {
       return providerValues.map(toSuggestionItemForValue);
     }
 
-    switch (normalizedKey) {
-      case 'type':
-        return CHART_TYPE_VALUES;
-      case 'initialview':
-        return CALENDAR_VIEW_VALUES;
-      case 'initialdate':
-        return CALENDAR_INITIAL_DATE_VALUES;
-      case 'weeknumbers':
-      case 'expandrows':
-      case 'skipblankperiods':
-        return BOOLEAN_VALUES;
-      default:
-        return [];
-    }
+    return YAML_VALUE_SUGGESTIONS[normalizedKey] ?? [];
   }
 
   private async getSqlSuggestions(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
-    const sqlSource = getSqlSourceBeforeCursor(state, context.fence, context.to);
+    const sqlSource = getSqlSourceForFence(state, context.fence);
     const beforeCursor = getLinePrefix(state, context.to);
     const sqlContext = getSqlSuggestionContext(beforeCursor);
     const schema = await this.getSchemaCache();
@@ -438,7 +425,7 @@ class VaultQueryCompletionProvider {
   public hasYamlValueSuggestions(language: string, key: string): boolean {
     const normalizedKey = key.toLowerCase();
     return Boolean(this.getProviderDefinitionCompletions(language)?.values?.[normalizedKey]?.length)
-      || ['type', 'initialview', 'weeknumbers', 'expandrows'].includes(normalizedKey);
+      || normalizedKey in YAML_VALUE_SUGGESTIONS;
   }
 
   private getProviderDefinitionCompletions(language: string): ProviderDefinitionCompletionConfig | null {
@@ -455,7 +442,7 @@ class VaultQueryCompletionProvider {
   }
 }
 
-function getActiveFence(state: EditorState, pos: number): ActiveFence | null {
+export function getActiveFence(state: EditorState, pos: number): ActiveFence | null {
   const line = state.doc.lineAt(pos);
 
   for (let lineNumber = line.number; lineNumber >= 1; lineNumber--) {
@@ -590,7 +577,7 @@ function getLinePrefix(state: EditorState, pos: number): string {
   return line.text.slice(0, pos - line.from);
 }
 
-function findSqlCompletionStart(text: string): number {
+export function findSqlCompletionStart(text: string): number {
   if (text.length === 0) {
     return 0;
   }
@@ -617,7 +604,7 @@ function findSqlCompletionStart(text: string): number {
   return index;
 }
 
-function getSqlSuggestionContext(beforeCursor: string): SqlSuggestionContext {
+export function getSqlSuggestionContext(beforeCursor: string): SqlSuggestionContext {
   if (/\b(from|join|update|into|table|view)\s+["`[\w.]*$/iu.test(beforeCursor)) {
     return 'relation';
   }
@@ -633,19 +620,17 @@ function getSqlSuggestionContext(beforeCursor: string): SqlSuggestionContext {
   return 'generic';
 }
 
-function getSqlSourceBeforeCursor(state: EditorState, fence: ActiveFence, pos: number): string {
-  const cursorLine = state.doc.lineAt(pos);
+function getSqlSourceForFence(state: EditorState, fence: ActiveFence): string {
   const lines: string[] = [];
   let inConfig = false;
   let inTemplate = false;
 
-  for (let lineNumber = fence.startLine + 1; lineNumber <= cursorLine.number; lineNumber++) {
-    let text = state.doc.line(lineNumber).text;
-    if (lineNumber === cursorLine.number) {
-      text = text.slice(0, pos - cursorLine.from);
-    }
-
+  for (let lineNumber = fence.startLine + 1; lineNumber <= Math.min(fence.endLine, state.doc.lines); lineNumber++) {
+    const text = state.doc.line(lineNumber).text;
     const trimmed = text.trim();
+    if (trimmed.startsWith('```')) {
+      continue;
+    }
     if (trimmed === 'config:') {
       inConfig = true;
       continue;
@@ -730,7 +715,7 @@ function isInConfigSection(state: EditorState, fence: ActiveFence, lineNumber: n
       foundConfig = true;
       continue;
     }
-    if ((trimmed === 'template:' || trimmed.startsWith('template:')) && line <= lineNumber) {
+    if (trimmed.startsWith('template:')) {
       return false;
     }
   }
@@ -746,7 +731,7 @@ function skipWhitespace(line: string, start: number): number {
   return index;
 }
 
-function isInsideQuotedString(text: string): boolean {
+export function isInsideQuotedString(text: string): boolean {
   let singleQuotes = 0;
   let doubleQuotes = 0;
 

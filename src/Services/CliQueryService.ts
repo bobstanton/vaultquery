@@ -2,6 +2,7 @@ import type { CliData, CliFlags } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { detectDmlOperationInSql, splitSqlStatements } from '../utils/SQLParsingUtils';
 import { formatResultsAsDelimited, formatResultsAsMarkdown, scalarFromResults } from '../utils/ResultFormatUtils';
+import { logger as rootLogger } from '../utils/logger';
 
 type QueryFormat = 'json' | 'csv' | 'tsv' | 'md' | 'scalar';
 interface CliStatementClassification {
@@ -22,6 +23,13 @@ const QUERY_FLAGS: CliFlags = {
   format: {
     value: '<json|csv|tsv|md|scalar>',
     description: 'Output format for SELECT/WITH queries. Default: json'
+  }
+};
+
+const DEBUG_LOG_FLAGS: CliFlags = {
+  clear: {
+    value: '<true|false>',
+    description: 'Clear the in-memory debug log after exporting it'
   }
 };
 
@@ -110,11 +118,26 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
   return formatResults(results, format);
 }
 
+function runCliDebugLog(params: CliData): string {
+  const output = rootLogger.formatForExport();
+  if (params.clear === 'true' || params.clear === '1') {
+    rootLogger.clear();
+  }
+  return output;
+}
+
 export function registerVaultQueryCliHandlers(plugin: VaultQueryPluginContext): void {
   plugin.registerCliHandler(
     'vaultquery:query',
     'Run a VaultQuery SQL query',
     QUERY_FLAGS,
     params => runCliQuery(plugin, params)
+  );
+
+  plugin.registerCliHandler(
+    'vaultquery:debug-log',
+    'Print the VaultQuery debug log',
+    DEBUG_LOG_FLAGS,
+    params => runCliDebugLog(params)
   );
 }

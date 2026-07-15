@@ -11,6 +11,7 @@ import { createVaultQueryCodeBlockContainer } from './ProcessorUtils';
 import type { PendingBlock } from '../utils/IndexingUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import type { PreviewRenderContext } from '../Renderers/PreviewGridRenderer';
+import { previewRowCount, previewTotalRowCount } from '../Services/PreviewService';
 import type { PreviewResult } from '../Services/PreviewService';
 import { logger as rootLogger } from '../utils/logger';
 
@@ -139,28 +140,22 @@ export class WriteCodeBlockProcessor {
       loading.remove();
 
       const errorMsg = getErrorMessage(error);
-      const isSyntaxError = errorMsg.includes('syntax error') ||
-                            errorMsg.includes('incomplete input') ||
-                            errorMsg.includes('no such column') ||
-                            errorMsg.includes('no such table');
-
-      if (isSyntaxError) {
-        BaseRenderer.renderError(writeContainer, {
-          title: 'Query Error',
-          message: errorMsg
-        });
-        return;
-      }
+      const isSqlMistake = errorMsg.includes('syntax error') ||
+                           errorMsg.includes('incomplete input') ||
+                           errorMsg.includes('no such column') ||
+                           errorMsg.includes('no such table');
 
       BaseRenderer.renderError(writeContainer, {
-        title: 'Preview Error',
+        title: isSqlMistake ? 'Query Error' : 'Preview Error',
         message: errorMsg
       });
 
-      const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-      BaseRenderer.addRefreshButton(buttonContainer, async () => {
-        await this.refreshWritePreview(writeContainer, parsed, sourcePath);
-      });
+      if (!isSqlMistake) {
+        const buttonContainer = container.createDiv('vaultquery-floating-buttons');
+        BaseRenderer.addRefreshButton(buttonContainer, async () => {
+          await this.refreshWritePreview(writeContainer, parsed, sourcePath);
+        });
+      }
     }
   }
 
@@ -199,13 +194,12 @@ export class WriteCodeBlockProcessor {
       let operationSummary = '';
 
       if (freshPreviewResult.op === 'multi' && freshPreviewResult.multiResults) {
-        affectedRows = freshPreviewResult.multiResults.reduce((total, result) =>
-          total + Math.max(result.before.length, result.after.length), 0);
+        affectedRows = previewTotalRowCount(freshPreviewResult.multiResults);
 
         const operationCounts = new Map<string, number>();
         freshPreviewResult.multiResults.forEach(result => {
           const key = `${result.op}s on ${result.table}`;
-          const rows = Math.max(result.before.length, result.after.length);
+          const rows = previewRowCount(result);
           operationCounts.set(key, (operationCounts.get(key) || 0) + rows);
         });
 
@@ -214,7 +208,7 @@ export class WriteCodeBlockProcessor {
         operationSummary = `Multi-statement operation: ${summaries.join(', ')}.`;
       }
       else {
-        affectedRows = Math.max(freshPreviewResult.before.length, freshPreviewResult.after.length);
+        affectedRows = previewRowCount(freshPreviewResult);
         operationSummary = `${freshPreviewResult.op.toUpperCase()} operation completed on table "${freshPreviewResult.table}".`;
       }
 
@@ -228,12 +222,13 @@ export class WriteCodeBlockProcessor {
     }
 
     catch (error: unknown) {
-      logger.error('Apply preview failed', error);
+      const message = `Failed to apply changes: ${getErrorMessage(error)}`;
+      logger.error('Apply preview failed', message, error);
 
       SlickGridRenderer.cleanupContainer(previewContainer);
       BaseRenderer.renderError(previewContainer, {
         title: 'Apply failed',
-        message: `Failed to apply changes: ${getErrorMessage(error)}`
+        message
       });
     }
     finally {

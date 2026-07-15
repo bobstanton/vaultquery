@@ -1,9 +1,9 @@
-import { ContentLocationService, type TaskRow, type HeadingRow, type ListItemRow, type TableCellRow, type Range, type InsertionPoint } from '../Services/ContentLocationService';
+import { ContentLocationService } from '../Services/ContentLocationService';
+import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range, InsertionPoint } from '../Services/ContentLocationService';
 
 export type { TaskRow, HeadingRow, ListItemRow, TableCellRow };
 
 export type FrontmatterValue = string | number | boolean | null | undefined | Date | FrontmatterValue[] | { [key: string]: FrontmatterValue };
-export type FrontmatterData = { [key: string]: FrontmatterValue };
 
 export type ReplaceRangeEdit = {
   type: "replaceRange";
@@ -12,25 +12,6 @@ export type ReplaceRangeEdit = {
   text: string;
   reason?: string;
 };
-
-export type FrontmatterEdit = {
-  type: "frontmatter";
-  path: string;
-  mutate: (fm: FrontmatterData) => void;
-  reason?: string;
-};
-
-type CreateFileEdit = { type: "createFile"; path: string; text: string; reason?: string };
-type DeleteFileEdit = { type: "deleteFile"; path: string; reason?: string };
-
-export type Edit = ReplaceRangeEdit | FrontmatterEdit | CreateFileEdit | DeleteFileEdit;
-
-export interface PropertyRow {
-  path: string;
-  key: string;
-  value: string | null;
-  type: string | null;
-}
 
 export interface TableRowGroup {
   path: string;
@@ -163,9 +144,6 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
   return { edits, warnings };
 }
 
-/**
- * Get block ID suffix for content that may have existing block references
- */
 export function getBlockIdSuffix(blockId?: string | null, existing?: string): string {
   if (blockId) {
     return ` ^${blockId}`;

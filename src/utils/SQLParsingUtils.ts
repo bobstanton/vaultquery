@@ -1,4 +1,4 @@
-import { extractMarkdownCodeFences } from './MarkdownFenceUtils';
+import { scanMarkdownCodeFences } from './MarkdownFenceUtils';
 
 interface SqlScanState {
   inSingleQuote: boolean;
@@ -199,7 +199,7 @@ export function extractAllCodeBlocks(content: string): ExtractedCodeBlocks {
     triggers: []
   };
 
-  for (const block of extractMarkdownCodeFences(content)) {
+  for (const block of scanMarkdownCodeFences(content)) {
     const match = /^vaultquery-(view|function|trigger)$/.exec(block.language);
     if (!match) continue;
 

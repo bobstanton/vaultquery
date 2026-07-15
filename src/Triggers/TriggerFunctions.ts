@@ -1,6 +1,7 @@
 import type { Database } from 'sql.js';
 import { CustomSQLFunctions } from '../Database/CustomSQLFunctions';
 import { logger as rootLogger } from '../utils/logger';
+import { formatUnknownValue } from '../utils/ResultFormatUtils';
 
 declare const activeWindow: Window;
 
@@ -22,7 +23,7 @@ export interface DeleteHeadingParams { path: string; lineNumber: number }
 export interface UpdateListItemParams { path: string; lineNumber: number; itemText: string }
 export interface AddListItemParams { path: string; text: string; afterLine: number }
 export interface DeleteListItemParams { path: string; lineNumber: number }
-export interface AddTableRowParams { path: string; tableIndex: number; valuesJson: string }
+export interface AddTableRowParams { path: string; tableIndex: number; values: Record<string, string> }
 export interface SetTableCellParams { path: string; tableIndex: number; rowIndex: number; columnName: string; value: string }
 export interface DeleteTableRowParams { path: string; tableIndex: number; rowIndex: number }
 export interface CreateNoteParams { path: string; content: string }
@@ -66,6 +67,21 @@ export type PendingAction =
  * Manages trigger action functions (vq_*) that queue actions for later execution.
  * These functions are registered with SQLite and called from user-defined triggers.
  */
+/**
+ * Every trigger action function register() creates. KEEP IN SYNC with
+ * register() below - the query mirror registers no-op stubs under these names
+ * so trigger DDL fires identically off-thread (SQL effects replicate; file
+ * actions stay main-thread). A missing stub disables the mirror loudly.
+ */
+export const TRIGGER_FUNCTION_NAMES = [
+  'vq_set_property', 'vq_remove_property', 'vq_notify', 'vq_log', 'vq_rename_note',
+  'vq_set_content', 'vq_replace_content', 'vq_sync_content', 'vq_debounce', 'vq_defer',
+  'vq_complete_task', 'vq_uncomplete_task', 'vq_set_task_status', 'vq_set_task_text', 'vq_add_task', 'vq_delete_task',
+  'vq_set_heading_text', 'vq_set_heading_level', 'vq_add_heading', 'vq_delete_heading',
+  'vq_set_list_item_text', 'vq_add_list_item', 'vq_delete_list_item',
+  'vq_add_table_row', 'vq_set_table_cell', 'vq_delete_table_row', 'vq_create_note',
+] as const;
+
 export class TriggerFunctions {
   private pendingActions: PendingAction[] = [];
   private isProcessingTriggers = false;
@@ -137,7 +153,7 @@ export class TriggerFunctions {
     db.create_function('vq_set_property', (path: unknown, key: unknown, value: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_property', [path, key], [{ name: 'path', type: 'string' }, { name: 'key', type: 'string' }], values => ({
         type: 'set_property',
-        params: { path: values.path as string, key: values.key as string, value: value == null ? '' : String(value) }
+        params: { path: values.path as string, key: values.key as string, value: formatUnknownValue(value) }
       })))
     );
 
@@ -153,7 +169,7 @@ export class TriggerFunctions {
     db.create_function('vq_notify', (message: unknown) =>
       this.guarded(() => ({
         type: 'notify',
-        params: { message: message == null ? '' : String(message) }
+        params: { message: formatUnknownValue(message) }
       }), true)
     );
 
@@ -172,14 +188,14 @@ export class TriggerFunctions {
     db.create_function('vq_set_content', (path: unknown, content: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_content', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'set_content',
-        params: { path: values.path as string, content: content == null ? '' : String(content) }
+        params: { path: values.path as string, content: formatUnknownValue(content) }
       })))
     );
 
     db.create_function('vq_replace_content', (path: unknown, search: unknown, replacement: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_replace_content', [path, search], [{ name: 'path', type: 'string' }, { name: 'search', type: 'string' }], values => ({
         type: 'replace_content',
-        params: { path: values.path as string, search: values.search as string, replacement: replacement == null ? '' : String(replacement) }
+        params: { path: values.path as string, search: values.search as string, replacement: formatUnknownValue(replacement) }
       })))
     );
 
@@ -288,14 +304,14 @@ export class TriggerFunctions {
     db.create_function('vq_set_task_text', (path: unknown, lineNumber: unknown, text: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_task_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
         type: 'update_task',
-        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: null, taskText: text == null ? '' : String(text) }
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, status: null, taskText: formatUnknownValue(text) }
       })))
     );
 
     db.create_function('vq_add_task', (path: unknown, text: unknown, afterLine: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_add_task', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'add_task',
-        params: { path: values.path as string, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
+        params: { path: values.path as string, text: formatUnknownValue(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
       })))
     );
 
@@ -309,7 +325,7 @@ export class TriggerFunctions {
     db.create_function('vq_set_heading_text', (path: unknown, lineNumber: unknown, text: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_heading_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
         type: 'update_heading',
-        params: { path: values.path as string, lineNumber: values.lineNumber as number, level: null, headingText: text == null ? '' : String(text) }
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, level: null, headingText: formatUnknownValue(text) }
       })))
     );
 
@@ -326,7 +342,7 @@ export class TriggerFunctions {
         params: {
           path: values.path as string,
           level: Math.max(1, Math.min(6, values.level as number)),
-          text: text == null ? '' : String(text),
+          text: formatUnknownValue(text),
           afterLine: typeof afterLine === 'number' ? afterLine : 0
         }
       })))
@@ -342,14 +358,14 @@ export class TriggerFunctions {
     db.create_function('vq_set_list_item_text', (path: unknown, lineNumber: unknown, text: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_list_item_text', [path, lineNumber], [{ name: 'path', type: 'string' }, { name: 'lineNumber', type: 'number' }], values => ({
         type: 'update_list_item',
-        params: { path: values.path as string, lineNumber: values.lineNumber as number, itemText: text == null ? '' : String(text) }
+        params: { path: values.path as string, lineNumber: values.lineNumber as number, itemText: formatUnknownValue(text) }
       })))
     );
 
     db.create_function('vq_add_list_item', (path: unknown, text: unknown, afterLine: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_add_list_item', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'add_list_item',
-        params: { path: values.path as string, text: text == null ? '' : String(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
+        params: { path: values.path as string, text: formatUnknownValue(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
       })))
     );
 
@@ -362,21 +378,19 @@ export class TriggerFunctions {
 
     db.create_function('vq_add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_add_table_row', [path, tableIndex, valuesJson], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'valuesJson', type: 'string' }], values => {
-        let parsedValues: Record<string, string>;
-        try {
-          parsedValues = JSON.parse(values.valuesJson as string) as Record<string, string>;
-        } catch (e) {
-          logger.warn('vq_add_table_row: invalid JSON', { valuesJson, error: e });
+        const parsedValues = parseStringRecord(values.valuesJson as string);
+        if (!parsedValues) {
+          logger.warn('vq_add_table_row: JSON must be an object with string values', { valuesJson });
           return null;
         }
-        return { type: 'add_table_row', params: { path: values.path as string, tableIndex: values.tableIndex as number, valuesJson: JSON.stringify(parsedValues) } };
+        return { type: 'add_table_row', params: { path: values.path as string, tableIndex: values.tableIndex as number, values: parsedValues } };
       }))
     );
 
     db.create_function('vq_set_table_cell', (path: unknown, tableIndex: unknown, rowIndex: unknown, columnName: unknown, value: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_set_table_cell', [path, tableIndex, rowIndex, columnName], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'rowIndex', type: 'number' }, { name: 'columnName', type: 'string' }], values => ({
         type: 'set_table_cell',
-        params: { path: values.path as string, tableIndex: values.tableIndex as number, rowIndex: values.rowIndex as number, columnName: values.columnName as string, value: value == null ? '' : String(value) }
+        params: { path: values.path as string, tableIndex: values.tableIndex as number, rowIndex: values.rowIndex as number, columnName: values.columnName as string, value: formatUnknownValue(value) }
       })))
     );
 
@@ -391,7 +405,7 @@ export class TriggerFunctions {
     db.create_function('vq_create_note', (path: unknown, content: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_create_note', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'create_note',
-        params: { path: values.path as string, content: content == null ? '' : String(content) }
+        params: { path: values.path as string, content: formatUnknownValue(content) }
       })))
     );
 
@@ -401,10 +415,14 @@ export class TriggerFunctions {
   /**
    * Register sync handlers that allow schema triggers to queue file modifications.
    * Used by INSERT INTO table_rows (etc.) to sync changes to markdown files.
+   *
+   * None of these handlers check isProcessingTriggers: cascading triggers
+   * (a trigger whose file write fires further triggers) must still be able
+   * to queue while a pass is running.
    */
   private registerSyncHandlers(): void {
     CustomSQLFunctions.registerSyncHandler('add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) => {
-      // - During previewDML: Block all (EditPlanner handles sync)
+      // - During previewDML: Block all (WriteSyncService handles sync)
       // - During applyDML: Block only DIRECT target (handled by WriteSyncService),
       //   but ALLOW cascade (different table indices) to queue
 
@@ -420,36 +438,36 @@ export class TriggerFunctions {
         if (this.isDirectApplyTarget(path, tableIndex)) {
           return 0;
         }
-        // This is a CASCADE operation - allow it to queue!
       }
 
-      try {
-        JSON.parse(valuesJson);
-      } catch {
+      const values = parseStringRecord(valuesJson);
+      if (!values) {
         return 0;
       }
       this.queueAction({
         type: 'add_table_row',
-        params: { path, tableIndex, valuesJson }
+        params: { path, tableIndex, values }
       });
       return 1;
     });
 
-    // NOTE: DO NOT check isProcessingTriggers here - allow cascading triggers
     CustomSQLFunctions.registerSyncHandler('update_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown, valuesJson: unknown) => {
       if (this.isPreviewMode) return 0;
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number' || typeof valuesJson !== 'string') {
         return 0;
       }
+      const values = parseStringRecord(valuesJson);
+      if (!values) {
+        return 0;
+      }
       // The schema trigger already handled the database side
       this.queueAction({
         type: 'add_table_row',
-        params: { path, tableIndex, valuesJson }
+        params: { path, tableIndex, values }
       });
       return 1;
     });
 
-    // NOTE: DO NOT check isProcessingTriggers here - allow cascading triggers
     CustomSQLFunctions.registerSyncHandler('delete_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown) => {
       if (this.isPreviewMode) return 0;
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number') {
@@ -524,10 +542,7 @@ export class TriggerFunctions {
     const pathsWithLineActions = new Set<string>();
     for (const action of actions) {
       if (this.getActionPriority(action) === 1 && 'path' in action.params) {
-        const path = action.params.path;
-        if (typeof path === 'string') {
-          pathsWithLineActions.add(path);
-        }
+        pathsWithLineActions.add(action.params.path);
       }
     }
 
@@ -641,9 +656,13 @@ export class TriggerFunctions {
     this.pendingActions = [];
   }
 
-  public queueSetProperty(path: string, key: string, value: string): void {
+  private queueUnlessProcessing(action: PendingAction): void {
     if (this.isProcessingTriggers) return;
-    this.pendingActions.push({
+    this.pendingActions.push(action);
+  }
+
+  public queueSetProperty(path: string, key: string, value: string): void {
+    this.queueUnlessProcessing({
       type: 'set_property',
       params: { path, key, value }
     });
@@ -660,24 +679,21 @@ export class TriggerFunctions {
   }
 
   public queueUpdateTask(path: string, lineNumber: number, status: string, taskText: string): void {
-    if (this.isProcessingTriggers) return;
-    this.pendingActions.push({
+    this.queueUnlessProcessing({
       type: 'update_task',
       params: { path, lineNumber, status, taskText }
     });
   }
 
   public queueUpdateHeading(path: string, lineNumber: number, level: number, headingText: string): void {
-    if (this.isProcessingTriggers) return;
-    this.pendingActions.push({
+    this.queueUnlessProcessing({
       type: 'update_heading',
       params: { path, lineNumber, level, headingText }
     });
   }
 
   public queueUpdateListItem(path: string, lineNumber: number, itemText: string): void {
-    if (this.isProcessingTriggers) return;
-    this.pendingActions.push({
+    this.queueUnlessProcessing({
       type: 'update_list_item',
       params: { path, lineNumber, itemText }
     });
@@ -697,5 +713,22 @@ export class TriggerFunctions {
     }
     this.deferTimers.clear();
     this.deferredActionsByKey.clear();
+  }
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every(entry => typeof entry === 'string');
+}
+
+function parseStringRecord(json: string): Record<string, string> | null {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return isStringRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }

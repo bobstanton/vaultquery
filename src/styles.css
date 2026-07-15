@@ -19,14 +19,15 @@
 }
 
 /* Shared table style for all VaultQuery-owned HTML tables.
- * Keep aliases here so one visual system covers renderer, status, stats, and preview tables. */
+ * Keep aliases here so one visual system covers renderer,
+status,
+stats,
+and preview tables. */
 .vaultquery-table,
 .vaultquery-markdown-table,
 .vaultquery-schema table,
-:where(.vaultquery-markdown-rendered table),
 .vaultquery-help-table-wrapper table,
-:where(.performance-stats-table),
-:where(.vaultquery-view-preview-table) {
+:where(.performance-stats-table) {
 	--vaultquery-table-row-height: 32px;
 	--vaultquery-table-header-height: 32px;
 	--vaultquery-table-cell-padding-y: 0;
@@ -52,10 +53,8 @@
 .vaultquery-table th,
 .vaultquery-markdown-table th,
 .vaultquery-schema table th,
-:where(.vaultquery-markdown-rendered table) th,
 .vaultquery-help-table-wrapper table th,
-:where(.performance-stats-table) th,
-:where(.vaultquery-view-preview-table) th {
+:where(.performance-stats-table) th {
 	background-color: var(--vaultquery-table-header-background);
 	color: var(--text-normal);
 	font-family: var(--font-interface);
@@ -80,38 +79,28 @@
 .vaultquery-schema table thead,
 .vaultquery-schema table thead tr,
 .vaultquery-schema table thead th,
-.vaultquery-markdown-rendered table thead,
-.vaultquery-markdown-rendered table thead tr,
-.vaultquery-markdown-rendered table thead th,
 .vaultquery-help-table-wrapper table thead,
 .vaultquery-help-table-wrapper table thead tr,
 .vaultquery-help-table-wrapper table thead th,
 .performance-stats-table thead,
 .performance-stats-table thead tr,
-.performance-stats-table thead th,
-.vaultquery-view-preview-table thead,
-.vaultquery-view-preview-table thead tr,
-.vaultquery-view-preview-table thead th {
+.performance-stats-table thead th {
 	background-color: var(--vaultquery-table-header-background);
 }
 
 .vaultquery-table th:last-child,
 .vaultquery-markdown-table th:last-child,
 .vaultquery-schema table th:last-child,
-:where(.vaultquery-markdown-rendered table) th:last-child,
 .vaultquery-help-table-wrapper table th:last-child,
-:where(.performance-stats-table) th:last-child,
-:where(.vaultquery-view-preview-table) th:last-child {
+:where(.performance-stats-table) th:last-child {
 	border-right: none;
 }
 
 .vaultquery-table td,
 .vaultquery-markdown-table td,
 .vaultquery-schema table td,
-:where(.vaultquery-markdown-rendered table) td,
 .vaultquery-help-table-wrapper table td,
-:where(.performance-stats-table) td,
-:where(.vaultquery-view-preview-table) td {
+:where(.performance-stats-table) td {
 	color: var(--text-normal);
 	font-family: var(--font-text);
 	font-size: var(--font-ui-medium);
@@ -128,50 +117,30 @@
 .vaultquery-table td:last-child,
 .vaultquery-markdown-table td:last-child,
 .vaultquery-schema table td:last-child,
-:where(.vaultquery-markdown-rendered table) td:last-child,
 .vaultquery-help-table-wrapper table td:last-child,
-:where(.performance-stats-table) td:last-child,
-:where(.vaultquery-view-preview-table) td:last-child {
+:where(.performance-stats-table) td:last-child {
 	border-right: none;
 }
 
 .vaultquery-table tr:last-child td,
 .vaultquery-markdown-table tr:last-child td,
 .vaultquery-schema table tr:last-child td,
-:where(.vaultquery-markdown-rendered table) tr:last-child td,
 .vaultquery-help-table-wrapper table tr:last-child td,
-:where(.performance-stats-table) tr:last-child td,
-:where(.vaultquery-view-preview-table) tr:last-child td {
+:where(.performance-stats-table) tr:last-child td {
 	border-bottom: none;
 }
 
 .vaultquery-table tbody tr:hover td,
 .vaultquery-markdown-table tbody tr:hover td,
 .vaultquery-schema table tbody tr:hover td,
-.vaultquery-markdown-rendered table tbody tr:hover td,
 .vaultquery-help-table-wrapper table tbody tr:hover td,
-.performance-stats-table tbody tr:hover td,
-.vaultquery-view-preview-table tbody tr:hover td {
+.performance-stats-table tbody tr:hover td {
 	background-color: var(--vaultquery-table-row-hover-background);
 }
 
 .vaultquery-container + .vaultquery-preview-container,
 .vaultquery-container .vaultquery-preview-container {
 	margin-top: 0; 
-}
-
-.vaultquery-info {
-	margin: 0;
-	padding: var(--size-4-3);
-	font-size: var(--font-ui-medium);
-	color: var(--text-muted);
-	background-color: var(--background-primary);
-	border-top: 1px solid var(--background-modifier-border);
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-count {
-	font-weight: var(--font-weight-medium);
 }
 
 .vaultquery-error {
@@ -377,11 +346,6 @@
 	to {
 		inset-inline-start: 100%;
 	}
-}
-
-.vaultquery-rendered-content {
-	font-size: var(--font-ui-medium);
-	line-height: var(--line-height-normal);
 }
 
 /* Current/proposed comparison cells in preview grids */
@@ -977,64 +941,6 @@
 	padding-right: var(--size-4-1);
 }
 
-.vaultquery-rendered-content p {
-	margin: var(--size-4-1) 0;
-}
-
-.vaultquery-rendered-content h1,
-.vaultquery-rendered-content h2,
-.vaultquery-rendered-content h3,
-.vaultquery-rendered-content h4,
-.vaultquery-rendered-content h5,
-.vaultquery-rendered-content h6 {
-	margin: var(--size-4-2) 0 var(--size-4-1) 0;
-	font-size: var(--font-ui-medium);
-	font-weight: var(--font-weight-semibold);
-}
-
-.vaultquery-rendered-content ul,
-.vaultquery-rendered-content ol {
-	margin: var(--size-4-1) 0;
-	padding-left: var(--size-4-6);
-}
-
-.vaultquery-rendered-content li {
-	margin: var(--size-4-1) 0;
-}
-
-.vaultquery-rendered-content code {
-	background-color: var(--code-background);
-	padding: var(--size-4-1) var(--size-4-1);
-	border-radius: var(--radius-s);
-	font-size: var(--font-ui-medium);
-}
-
-.vaultquery-rendered-content blockquote {
-	border-left: var(--size-4-1) solid var(--text-accent);
-	padding-left: var(--size-4-2);
-	margin: var(--size-4-1) 0;
-	color: var(--text-muted);
-}
-
-.vaultquery-rendered-content a.internal-link {
-	color: var(--link-color);
-	text-decoration: none;
-}
-
-.vaultquery-rendered-content a.internal-link:hover {
-	color: var(--link-color-hover);
-	text-decoration: underline;
-}
-
-.vaultquery-stale-warning {
-	background-color: var(--background-secondary);
-	border-left: 2px solid var(--text-warning);
-	padding: var(--size-4-2) var(--size-4-3);
-	margin: 0 0 var(--size-4-2) 0;
-	font-size: var(--font-ui-small);
-	color: var(--text-muted);
-}
-
 .vaultquery-write-warning {
 	background-color: var(--background-primary);
 	border-left: 2px solid var(--text-error);
@@ -1044,42 +950,9 @@
 	margin: 0;
 }
 
-.vaultquery-write-preview {
-	margin: var(--size-4-4) 0;
-	padding: var(--size-4-3);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-write-preview h4 {
-	margin: 0 0 var(--size-4-2) 0;
-	color: var(--text-normal);
-	font-weight: var(--font-weight-medium);
-}
-
-.vaultquery-write-preview h5 {
-	margin: var(--size-4-2) 0 var(--size-4-2) 0;
-	color: var(--text-muted);
-	font-weight: var(--font-weight-medium);
-	font-size: var(--font-ui-medium);
-}
-
 .vaultquery-write-warning h3 {
 	margin: 0 0 var(--size-4-2) 0;
 	color: var(--text-error);
-}
-
-.vaultquery-write-details {
-	margin-bottom: var(--size-4-4);
-	padding: var(--size-4-2);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-s);
-}
-
-.vaultquery-write-details p {
-	margin: var(--size-4-1) 0;
-	font-weight: var(--font-weight-medium);
 }
 
 .vaultquery-write-query {
@@ -1108,53 +981,6 @@
 	color: var(--code-normal);
 }
 
-.vaultquery-write-estimate {
-	margin: var(--size-4-2);
-	padding: var(--size-4-3);
-	background-color: var(--background-modifier-hover);
-	border-radius: var(--radius-s);
-	border-left: 4px solid var(--text-accent);
-}
-
-.vaultquery-write-estimate p {
-	margin: 0;
-	font-weight: var(--font-weight-semibold);
-	color: var(--text-accent);
-}
-
-.vaultquery-write-buttons {
-	display: flex;
-	justify-content: flex-end;
-	align-items: center;
-	margin: var(--size-4-2);
-}
-
-.vaultquery-write-buttons button {
-	margin-right: var(--size-4-2);
-}
-
-.vaultquery-write-buttons button:last-child {
-	margin-right: 0;
-}
-
-.vaultquery-write-status {
-	margin: var(--size-4-2);
-	padding: var(--size-4-4);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
-	text-align: center;
-}
-
-.vaultquery-write-status h3 {
-	margin: 0 0 var(--size-4-4) 0;
-	color: var(--text-accent);
-}
-
-.vaultquery-write-status p {
-	margin: var(--size-4-2) 0;
-}
-
 .vaultquery-success {
 	color: var(--text-normal);
 	padding: var(--size-4-3);
@@ -1177,64 +1003,6 @@
 	color: var(--text-normal);
 }
 
-.vaultquery-error-list {
-	margin: var(--size-4-2) 0;
-	padding-left: var(--size-4-4);
-	list-style-type: disc;
-}
-
-.vaultquery-error-list li {
-	margin: var(--size-4-1) 0;
-	color: var(--text-error);
-	font-size: var(--font-ui-medium);
-}
-
-.vaultquery-write-result-header {
-	margin-bottom: var(--size-4-4);
-}
-
-.vaultquery-write-result-header h3 {
-	margin: 0;
-	font-size: var(--font-ui-large);
-	font-weight: var(--font-weight-semibold);
-}
-
-.vaultquery-write-changes {
-	margin: var(--size-4-2) 0;
-}
-
-.vaultquery-write-changes h4 {
-	margin: var(--size-4-2) 0;
-	color: var(--text-normal);
-	font-weight: var(--font-weight-medium);
-}
-
-.vaultquery-before-after-section {
-	margin: var(--size-4-3) 0;
-}
-
-.vaultquery-before-after-section h5 {
-	margin: var(--size-4-2) 0 var(--size-4-1) 0;
-	color: var(--text-accent);
-	font-weight: var(--font-weight-medium);
-	font-size: var(--font-ui-medium);
-	padding-bottom: var(--size-4-1);
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-write-errors {
-	margin-top: var(--size-4-4);
-	padding: var(--size-4-3);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-s);
-	border-left: 4px solid var(--text-error);
-}
-
-.vaultquery-write-errors h4 {
-	margin: 0 0 var(--size-4-2) 0;
-	color: var(--text-error);
-}
-
 /* Help documentation styles */
 .vaultquery-help {
 	padding: 0;
@@ -1251,68 +1019,10 @@
 	font-weight: var(--font-weight-medium);
 }
 
-.vaultquery-help-section {
-	margin: 0;
-	padding: var(--size-4-3);
-	background-color: var(--background-primary);
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-help-example {
-	margin-bottom: var(--size-4-3);
-	padding: var(--size-4-2);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-s);
-	border: 1px solid var(--background-modifier-border);
-}
-
-.vaultquery-help-example h4 {
-	color: var(--text-accent);
-	margin: 0 0 var(--size-4-2) 0;
-	font-size: var(--font-ui-medium);
-	font-weight: var(--font-weight-medium);
-}
-
-.vaultquery-help-example pre {
-	background-color: var(--background-primary-alt);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-s);
-	padding: var(--size-4-3);
-	overflow-x: auto;
-	margin: var(--size-4-2) 0;
-}
-
-.vaultquery-help-example code {
-	font-family: var(--font-monospace);
-	font-size: var(--font-ui-smaller);
-	color: var(--text-normal);
-}
-
 .vaultquery-help-loading {
 	color: var(--text-muted);
 	font-style: italic;
 	padding: var(--size-4-2);
-}
-
-.vaultquery-help-footer {
-	margin: 0;
-	padding: var(--size-4-3);
-	background-color: var(--background-secondary);
-	border-top: 1px solid var(--background-modifier-border);
-	color: var(--text-muted);
-	text-align: center;
-	font-size: var(--font-ui-smaller);
-	font-style: italic;
-}
-
-.vaultquery-help-hint {
-	margin-top: var(--size-4-2);
-	padding: var(--size-4-2);
-	background-color: var(--background-modifier-form-field);
-	border-radius: var(--radius-s);
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
-	font-style: italic;
 }
 
 .vaultquery-error-container {
@@ -1340,50 +1050,6 @@
 	font-size: var(--font-ui-medium);
 	color: var(--text-normal);
 	font-family: var(--font-interface);
-}
-
-.vaultquery-markdown-output {
-	padding: var(--size-4-4);
-	background-color: var(--background-secondary);
-	border-radius: var(--radius-m);
-	border: 1px solid var(--background-modifier-border);
-	position: relative; 
-}
-
-.vaultquery-markdown-output h4 {
-	margin: 0 0 var(--size-4-3) 0;
-	color: var(--text-normal);
-	font-weight: var(--font-weight-medium);
-}
-
-.vaultquery-markdown-rendered {
-	margin-bottom: var(--size-4-3);
-	overflow-x: auto;
-	-webkit-overflow-scrolling: touch;
-}
-
-.vaultquery-markdown-rendered table {
-	width: max-content;
-	min-width: 100%;
-	margin: 0;
-}
-
-.vaultquery-markdown-rendered p {
-	margin: 0;
-}
-
-.vaultquery-markdown-buttons {
-	display: flex;
-	justify-content: flex-end;
-	align-items: center;
-}
-
-.vaultquery-markdown-buttons button {
-	margin-left: var(--size-4-2);
-}
-
-.vaultquery-markdown-buttons button:first-child {
-	margin-left: 0;
 }
 
 .performance-stats-section {
@@ -1480,116 +1146,6 @@
 	border-left: 3px solid var(--interactive-accent);
 }
 
-.vaultquery-preview-table {
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-s);
-	overflow: hidden;
-	margin: 0;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-.vaultquery-preview-actions {
-	padding: var(--size-4-3);
-	background-color: var(--background-secondary);
-	border-top: 1px solid var(--background-modifier-border);
-	display: flex;
-	justify-content: flex-end;
-	gap: var(--size-4-3);
-	margin: 0;
-}
-
-.vaultquery-modal-overlay,
-:where(.vaultquery-preview-overlay) {
-	position: fixed;
-	top: 0;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	background-color: rgba(0, 0, 0, 0.5);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	z-index: 1000;
-}
-
-.vaultquery-preview-overlay {
-	padding: var(--size-4-4);
-}
-
-.vaultquery-modal-content,
-.vaultquery-preview-modal {
-	background-color: var(--background-primary);
-	border-radius: var(--radius-l);
-	max-width: 90vw;
-	max-height: 90vh;
-	overflow: hidden;
-	box-shadow: var(--shadow-l);
-	display: flex;
-	flex-direction: column;
-}
-
-:where(.vaultquery-modal-content) {
-	padding: var(--size-4-4);
-	max-width: 400px;
-	margin: var(--size-4-4);
-}
-
-.vaultquery-preview-modal-header {
-	padding: var(--size-4-4);
-	border-bottom: 1px solid var(--background-modifier-border);
-	background-color: var(--background-secondary);
-}
-
-.vaultquery-preview-modal-content {
-	flex: 1;
-	overflow: auto;
-	padding: var(--size-4-4);
-}
-
-.vaultquery-preview-modal-footer,
-.vaultquery-modal-buttons {
-	padding: var(--size-4-4);
-	border-top: 1px solid var(--background-modifier-border);
-	background-color: var(--background-secondary);
-	display: flex;
-	justify-content: flex-end;
-	gap: var(--size-4-2);
-}
-
-.vaultquery-file-link {
-	color: var(--link-color);
-	text-decoration: none;
-	cursor: pointer;
-	transition: color 0.2s ease;
-}
-
-.vaultquery-file-link:hover {
-	color: var(--link-color-hover);
-	text-decoration: underline;
-}
-
-.vaultquery-expand-btn {
-	background: none;
-	border: none;
-	cursor: pointer;
-	padding: var(--size-2-2);
-	border-radius: var(--radius-s);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.2s ease;
-	color: var(--text-muted);
-}
-
-.vaultquery-expand-btn:hover {
-	background-color: var(--background-modifier-hover);
-	color: var(--text-normal);
-}
-
-.vaultquery-expand-icon {
-	transition: transform 0.2s ease;
-}
-
 .vaultquery-stats-time-error {
 	color: var(--text-error);
 	font-weight: var(--font-weight-bold);
@@ -1613,10 +1169,6 @@
 	width: 100%;
 }
 
-.vaultquery-icon-expanded {
-	transform: rotate(90deg);
-}
-
 .vaultquery-operation-details {
     margin: var(--size-4-2) 0;
     border: 1px solid var(--background-modifier-border);
@@ -1637,15 +1189,6 @@
     margin: 0;
     border-radius: 0 0 var(--radius-s) var(--radius-s);
     overflow: hidden;
-}
-
-.vaultquery-current-value {
-    font-style: italic;
-    opacity: 0.8;
-}
-
-.vaultquery-proposed-value {
-    font-weight: var(--font-weight-medium);
 }
 
 .vaultquery-preview-buttons {
@@ -1731,40 +1274,10 @@
     display: inline;
 }
 
-.vaultquery-inline-query-loading {
-    color: var(--text-muted);
-}
-
-.vaultquery-inline-query-error {
-    color: var(--text-error);
-    cursor: help;
-}
-
 @keyframes vaultquery-inline-spin {
     to {
         transform: rotate(360deg);
     }
-}
-
-.vaultquery-view-header {
-    display: flex;
-    align-items: center;
-    gap: var(--size-4-2);
-}
-
-.vaultquery-view-success {
-    color: var(--text-success);
-}
-
-.vaultquery-view-empty {
-    font-style: italic;
-}
-
-:where(.vaultquery-view-preview-table td) {
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .vaultquery-stats-description {

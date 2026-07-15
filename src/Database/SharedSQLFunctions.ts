@@ -1,4 +1,7 @@
 import { Database } from 'sql.js';
+import { processEscapeSequences } from '../utils/StringUtils';
+
+type MarkdownLinkGenerator = (path: string, subpath: string, alias: string | null) => string | null;
 
 export class SharedSQLFunctions {
   protected static registerRegexFunctions(db: Database): void {
@@ -19,11 +22,7 @@ export class SharedSQLFunctions {
       if (text == null) return null;
       if (pattern == null) return text;
       try {
-        const processedReplacement = (replacement ?? '')
-          .replace(/\\n/g, '\n')
-          .replace(/\\t/g, '\t')
-          .replace(/\\r/g, '\r')
-          .replace(/\\\\/g, '\\');
+        const processedReplacement = processEscapeSequences(replacement ?? '');
         return text.replace(new RegExp(pattern, 'g'), processedReplacement);
       }
 
@@ -33,9 +32,13 @@ export class SharedSQLFunctions {
     });
   }
 
-  protected static registerLinkFunctions(db: Database): void {
+  protected static registerLinkFunctions(db: Database, generateMarkdownLink?: MarkdownLinkGenerator): void {
     const makeLink = (path: string, anchor: string, display: string | null): string | null => {
       if (path == null) return null;
+      if (generateMarkdownLink) {
+        const generated = generateMarkdownLink(path, anchor, display);
+        if (generated) return generated;
+      }
       return display != null ? `[[${path}${anchor}|${display}]]` : `[[${path}${anchor}]]`;
     };
     const headingAnchor = (heading: string | null): string => heading != null ? `#${heading}` : '';

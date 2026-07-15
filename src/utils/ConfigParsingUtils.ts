@@ -1,3 +1,5 @@
+import { escapeRegex } from './StringUtils';
+
 export interface DimensionParseOptions {
   allowNumber?: boolean;
   allowAuto?: boolean;
@@ -61,7 +63,7 @@ export function parseCssDimension(value: unknown, options: DimensionParseOptions
   }
 
   const units = options.units ?? DEFAULT_DIMENSION_UNITS;
-  const unitPattern = units.map(escapeRegExp).join('|');
+  const unitPattern = units.map(escapeRegex).join('|');
   return new RegExp(`^\\d+(\\.\\d+)?(${unitPattern})$`, 'i').test(trimmed)
     ? trimmed
     : undefined;
@@ -69,8 +71,4 @@ export function parseCssDimension(value: unknown, options: DimensionParseOptions
 
 export function parseCssDimensionOrNull(value: unknown, options: DimensionParseOptions = {}): string | number | null {
   return parseCssDimension(value, options) ?? null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

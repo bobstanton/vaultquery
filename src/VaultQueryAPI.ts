@@ -4,25 +4,23 @@ import { WorkerDatabase } from './Database/WorkerDatabaseService';
 import { VaultQuerySettings, EnabledFeatures } from './Settings/Settings';
 import { IndexingService } from './Services/IndexingService';
 import { WriteSyncService } from './Services/WriteSyncService';
-import { TriggerFunctions, TriggerService } from './Triggers';
+import { TriggerFunctions, TriggerService, TRIGGER_FUNCTION_NAMES } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
 import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
+import { quoteIdentifier } from './utils/SqlIdentifierUtils';
 import { containsBlockedSqlInStripped, parseDroppedSQLObjectName, parseSQLObjectName, stripSqlComments, stripSqlStringLiterals } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
 import type { PreviewResult } from './Services/PreviewService';
 import { TableProviderService } from './Providers/TableProviderService';
 import { QueryRefreshRegistry } from './Renderers/QueryRefreshRegistry';
 import { getIndexedFilesFromDatabase } from './Database/IndexedFiles';
+import { mergeDeclaredProviderTables } from './utils/AutocompleteSchemaUtils';
 import { CustomSQLFunctions } from './Database/CustomSQLFunctions';
-import { EventBus, type EventRef } from './utils/EventBus';
+import { EventBus } from './utils/EventBus';
+import type { EventRef } from './utils/EventBus';
 import { logger as rootLogger } from './utils/logger';
-import type {
-  TableProviderRegistration,
-  TableProviderStatus,
-  ProviderDefinitionCompletionConfig,
-  ProviderTablesChangedEvent,
-  VaultQueryTableProvider,
-} from './Providers/TableProviderTypes';
+import { formatUnknownValue } from './utils/ResultFormatUtils';
+import type { TableProviderRegistration, TableProviderStatus, ProviderDefinitionCompletionConfig, ProviderTablesChangedEvent, VaultQueryTableProvider } from './Providers/TableProviderTypes';
 
 const logger = rootLogger.scope('API');
 
@@ -76,7 +74,10 @@ const TABLE_FEATURE_CONFIG: Record<string, {
   'headings': { setting: 'indexHeadings', featureName: 'Heading indexing', settingLabel: 'Index headings' },
   'headings_view': { setting: 'indexHeadings', featureName: 'Heading indexing', settingLabel: 'Index headings' },
   'links': { setting: 'indexLinks', featureName: 'Link indexing', settingLabel: 'Index links' },
+  'unresolved_links': { setting: 'indexUnresolvedLinks', featureName: 'Unresolved link indexing', settingLabel: 'Index unresolved links' },
+  'embeds': { setting: 'indexEmbeds', featureName: 'Embed indexing', settingLabel: 'Index embeds' },
   'tags': { setting: 'indexTags', featureName: 'Tag indexing', settingLabel: 'Index tags' },
+  'blocks': { setting: 'indexBlocks', featureName: 'Block indexing', settingLabel: 'Index blocks' },
   'list_items': { setting: 'indexListItems', featureName: 'List item indexing', settingLabel: 'Index list items' },
   'list_items_view': { setting: 'indexListItems', featureName: 'List item indexing', settingLabel: 'Index list items' }
 };
@@ -110,6 +111,10 @@ export interface IVaultQueryAPI {
    */
   query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]>;
 
+  isQueryMirrorActive?(): boolean;
+
+  getQueryMirrorStatus?(): { active: boolean; reason?: string };
+
   /**
    * Reindex files that have changed since the last run.
    */
@@ -140,6 +145,12 @@ export interface IVaultQueryAPI {
    * the full vault, not a partially built startup index.
    */
   waitForIndexing(timeoutMs?: number): Promise<void>;
+
+  getIndexGeneration(): number;
+
+  isIndexSettled(): boolean;
+
+  whenIndexSettled(timeoutMs?: number): Promise<void>;
 
   /**
    * Check whether the database is currently usable.
@@ -211,7 +222,10 @@ export interface IVaultQueryAPI {
       tasks: boolean;
       headings: boolean;
       links: boolean;
+      unresolvedLinks: boolean;
+      embeds: boolean;
       tags: boolean;
+      blocks: boolean;
       listItems: boolean;
     };
   };
@@ -287,6 +301,11 @@ interface VaultQueryEvents {
 
 export type { EventRef };
 
+export interface IndexPipelineStateProvider {
+  hasPendingFileModifications(): boolean;
+  waitForIndexingComplete(maxWaitMs?: number): Promise<void>;
+}
+
 export class VaultQueryAPI implements IVaultQueryAPI {
   private app: App;
   private database: VaultDatabase | WorkerDatabase;
@@ -295,12 +314,19 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private triggerFunctions: TriggerFunctions;
   private triggerService: TriggerService | null = null;
   private indexingWorker: WorkerDatabase | null = null;
+  private queryMirror: WorkerDatabase | null = null;
+  private providerMirrorSync: Promise<void> | null = null;
+  private providerRefreshWave: Promise<void> | null = null;
+  private queryMirrorStatus = 'pending - mirror adopts after initial indexing completes';
   private tableProviderService: TableProviderService;
   private registeredCustomViews = new Map<string, string>();
 
   private eventBus: EventBus<VaultQueryEvents>;
 
   private triggerActionProcessing: Promise<void> | null = null;
+
+  private indexGeneration = 0;
+  private pipelineStateProvider: IndexPipelineStateProvider | null = null;
 
   /**
    * Per-statement analysis (comment/literal stripping + referenced tables),
@@ -328,6 +354,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.triggerFunctions = triggerFunctions;
     this.tableProviderService = new TableProviderService(database, this.settings.enableThirdPartyProviderTables);
     this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll({ force: true }));
+    this.tableProviderService.setOnRefreshWaveComplete(async tables => {
+      await this.queueProviderTableMirrorSync(tables);
+      // The initial refresh wave performs one refresh after its readiness
+      // promise is cleared, so dependent queries do not wait on themselves.
+      if (!this.providerRefreshWave) {
+        await QueryRefreshRegistry.refreshAll({ force: true });
+      }
+    });
     this.tableProviderService.setOnProviderTablesChanged(event => {
       this.emit('provider-tables-changed', event);
     });
@@ -342,12 +376,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         this.emit('file-removed', { path });
       },
       emitVaultIndexed: (filesIndexed: number, filesRemoved: number, isForced: boolean) => {
-        this.emit('vault-indexed', { filesIndexed, filesRemoved, isForced });
         if (this.settings.enableThirdPartyProviderTables) {
-          void this.tableProviderService.refreshStaleDefinitions().catch(error => {
-            logger.error('Provider TTL refresh failed after indexing', error);
-          });
+          this.startInitialProviderRefreshWave();
         }
+        this.emit('vault-indexed', { filesIndexed, filesRemoved, isForced });
       },
       // Transfer database from worker to main thread BEFORE vault-indexed event fires
       // so third-party plugins registering views/functions get the main thread database
@@ -362,6 +394,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         // Register user-defined SQLite triggers after indexing completes (if enabled)
         if (this.settings.enableTriggers) {
           this.registerUserTriggers();
+          await this.syncMirrorTriggers();
         }
       }
     });
@@ -422,12 +455,38 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private async registerCustomViews(): Promise<void> {
     for (const [viewName, sql] of this.registeredCustomViews) {
       try {
-        await this.database.run(`DROP VIEW IF EXISTS "${viewName.replace(/"/g, '""')}"`);
+        await this.database.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
         await this.database.run(sql);
       }
       catch (error) {
         logger.error(`Failed to register custom view "${viewName}"`, error);
       }
+    }
+  }
+
+  private startInitialProviderRefreshWave(): void {
+    if (this.providerRefreshWave) return;
+    const refreshExistingQueries = QueryRefreshRegistry.hasEntries();
+    const wave = this.tableProviderService.refreshStaleDefinitions();
+    this.providerRefreshWave = wave;
+    void wave
+      .catch(error => logger.error('Provider TTL refresh failed after indexing', error))
+      .finally(() => {
+        if (this.providerRefreshWave === wave) {
+          this.providerRefreshWave = null;
+        }
+        if (refreshExistingQueries) {
+          void QueryRefreshRegistry.refreshAll({ force: true });
+        }
+      });
+  }
+
+  public async waitForInitialQueryReadiness(): Promise<void> {
+    if (this.providerRefreshWave) {
+      await this.providerRefreshWave;
+    }
+    if (this.providerMirrorSync) {
+      await this.providerMirrorSync;
     }
   }
 
@@ -520,7 +579,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     await this.rebuildBootstrapNotePropertiesView(mainThreadDb);
 
-    await this.indexingWorker.close();
+    const finishedWorker = this.indexingWorker;
     this.indexingWorker = null;
 
     this.database = mainThreadDb;
@@ -529,6 +588,224 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.writeSyncService.setDatabase(mainThreadDb);
 
     mainThreadDb.registerTriggerFunctions(this.triggerFunctions);
+
+    await this.adoptQueryMirror(finishedWorker, mainThreadDb);
+  }
+
+  /**
+   * A 25k-note SELECT blocks the UI for over a second when run on the main
+   * thread, hence the mirror. The built-in resolve_link() is main-thread-only
+   * (Obsidian API); queries using it error on the mirror and fall back.
+   */
+  private async adoptQueryMirror(worker: WorkerDatabase, mainThreadDb: VaultDatabase): Promise<void> {
+    if (!this.settings.workerQueries) {
+      this.queryMirrorStatus = 'disabled by the Background query execution setting';
+      await worker.close();
+      return;
+    }
+
+
+    try {
+      // Provider tables refresh against the main database only; serving their
+      // disk-loaded rows from the mirror would be silently stale. Dropping them
+      // makes provider queries error on the mirror and fall back to main.
+      for (const tableName of this.tableProviderService.getRegisteredTableNames()) {
+        await worker.run(`DROP TABLE IF EXISTS ${quoteIdentifier(tableName)}`);
+      }
+      if (this.settings.enabledFeatures.indexFrontmatter) {
+        await worker.schema.rebuildPropertiesView();
+      }
+      if (this.settings.enableTriggers) {
+        // No-op stubs for the trigger action functions: mirror-side trigger DDL
+        // fires with identical SQL effects while file-writing actions run on the
+        // main thread only (their file changes flow back via index forwarding).
+        for (const name of TRIGGER_FUNCTION_NAMES) {
+          await worker.registerCustomFunction(name, '() => 0');
+        }
+      }
+
+      this.queryMirror = worker;
+      this.queryMirrorStatus = 'active';
+      this.attachMirrorForwarding(mainThreadDb);
+      logger.info('Query mirror active - read queries run off the main thread');
+    } catch (error) {
+      logger.warn('Query mirror setup failed - queries stay on the main thread', error);
+      this.queryMirrorStatus = `setup failed: ${getErrorMessage(error)}`;
+      this.queryMirror = null;
+      await worker.close().catch(() => undefined);
+    }
+  }
+
+  private attachMirrorForwarding(mainThreadDb: VaultDatabase): void {
+    // Missing tables/views are expected (provider tables live main-side only);
+    // a missing FUNCTION on a forwarded write means a trigger stub is absent and
+    // the write was rejected - that is silent staleness, so it disables the mirror.
+    const EXPECTED_DIVERGENCE = /no such (table|column|view)/i;
+    const forward = (work: () => Promise<unknown>): (() => Promise<void>) | void => {
+      if (!this.queryMirror) return;
+      return async () => work().then(() => undefined).catch(error => {
+        const message = getErrorMessage(error);
+        if (EXPECTED_DIVERGENCE.test(message)) return;
+        this.disableQueryMirror(`write forwarding failed: ${message}`);
+      });
+    };
+    const mentionsProviderTable = (sql: string): boolean => {
+      const lowered = sql.toLowerCase();
+      return this.tableProviderService.getRegisteredTableNames().some(name => lowered.includes(name.toLowerCase()));
+    };
+
+    const originalIndexNote = mainThreadDb.indexNote.bind(mainThreadDb);
+    mainThreadDb.indexNote = async (data) => {
+      const result = await originalIndexNote(data);
+      const forwarded = forward(() => this.queryMirror!.indexNote(data));
+      // Note reindexes can drop mirror trigger DDL (the worker indexing path
+      // stores but never activates triggers), so re-sync from main is required.
+      if (forwarded) void forwarded().then(() => this.syncMirrorTriggers());
+      return result;
+    };
+
+    const originalIndexBatch = mainThreadDb.indexNotesBatch.bind(mainThreadDb);
+    mainThreadDb.indexNotesBatch = async (notesData, isInitialIndexing, skipDiskSave) => {
+      const result = await originalIndexBatch(notesData, isInitialIndexing, skipDiskSave);
+      const forwarded = forward(() => this.queryMirror!.indexNotesBatch(notesData, isInitialIndexing ?? false, true));
+      if (forwarded) void forwarded().then(() => this.syncMirrorTriggers());
+      return result;
+    };
+
+    const originalRun = mainThreadDb.run.bind(mainThreadDb);
+    mainThreadDb.run = async (sql, params) => {
+      const result = await originalRun(sql, params);
+      if (!mentionsProviderTable(sql)) {
+        const forwarded = forward(() => this.queryMirror!.run(sql, params));
+        // execute() callers commonly query a newly-created view immediately;
+        // do not return until the mirror has applied the same schema change.
+        if (forwarded) await forwarded();
+      }
+      return result;
+    };
+  }
+
+  public isQueryMirrorActive(): boolean {
+    return this.queryMirror !== null;
+  }
+
+  public getQueryMirrorStatus(): { active: boolean; reason?: string } {
+    return this.queryMirror !== null ? { active: true } : { active: false, reason: this.queryMirrorStatus };
+  }
+
+  private async syncMirrorTriggers(): Promise<void> {
+    const mirror = this.queryMirror;
+    if (!mirror || !this.settings.enableTriggers) return;
+    try {
+      const mirrorTriggers = await mirror.all(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '_vq_user_%'`);
+      for (const row of mirrorTriggers) {
+        await mirror.run(`DROP TRIGGER IF EXISTS ${quoteIdentifier(String(row.name))}`);
+      }
+      const mainTriggers = await this.database.all(`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE '_vq_user_%'`);
+      for (const row of mainTriggers) {
+        if (typeof row.sql === 'string' && row.sql) {
+          await mirror.run(row.sql);
+        }
+      }
+    } catch (error) {
+      this.disableQueryMirror(`trigger sync failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async queueProviderTableMirrorSync(tableNames: string[]): Promise<void> {
+    const previous = this.providerMirrorSync ?? Promise.resolve();
+    const sync = previous.catch(() => undefined).then(() => this.syncProviderTablesToQueryMirror(tableNames));
+    this.providerMirrorSync = sync;
+    try {
+      await sync;
+    } finally {
+      if (this.providerMirrorSync === sync) {
+        this.providerMirrorSync = null;
+      }
+    }
+  }
+
+  private async syncProviderTablesToQueryMirror(tableNames: string[]): Promise<void> {
+    const mirror = this.queryMirror;
+    if (!mirror || tableNames.length === 0) return;
+
+    const registered = new Set(this.tableProviderService.getRegisteredTableNames());
+    const tables = Array.from(new Set(tableNames)).filter(tableName => registered.has(tableName));
+    if (tables.length === 0) return;
+
+    const startedAt = performance.now();
+    let rowCount = 0;
+    try {
+      await mirror.withTx(async () => {
+        for (const tableName of tables) {
+          const quotedTable = quoteIdentifier(tableName);
+          const schemaRows = await this.database.all(
+            `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? AND sql IS NOT NULL`,
+            [tableName]
+          );
+          const createSql = schemaRows[0]?.sql;
+          if (typeof createSql !== 'string' || !createSql) {
+            throw new Error(`Provider table schema is missing: ${tableName}`);
+          }
+
+          const indexRows = await this.database.all(
+            `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL ORDER BY name`,
+            [tableName]
+          );
+          const rows = await this.database.all(`SELECT * FROM ${quotedTable}`);
+
+          await mirror.run(`DROP TABLE IF EXISTS ${quotedTable}`);
+          await mirror.run(createSql);
+
+          if (rows.length > 0) {
+            const columns = Object.keys(rows[0]);
+            const quotedColumns = columns.map(quoteIdentifier).join(', ');
+            for (let offset = 0; offset < rows.length; offset += 100) {
+              const batch = rows.slice(offset, offset + 100);
+              const placeholders = batch.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+              const params: Array<string | number | null> = batch.flatMap(row => columns.map((column): string | number | null => {
+                const value = row[column];
+                if (value === null) return null;
+                if (typeof value === 'string' || typeof value === 'number') return value;
+                throw new Error(`Unsupported provider mirror value in ${tableName}.${column}`);
+              }));
+              await mirror.run(`INSERT INTO ${quotedTable} (${quotedColumns}) VALUES ${placeholders}`, params);
+            }
+          }
+
+          for (const indexRow of indexRows) {
+            if (typeof indexRow.sql === 'string' && indexRow.sql) {
+              await mirror.run(indexRow.sql);
+            }
+          }
+          rowCount += rows.length;
+        }
+      });
+      await this.syncCustomViewsToQueryMirror(mirror);
+      logger.debug('Provider query mirror synchronized', {
+        tables,
+        rows: rowCount,
+        syncMs: Math.round(performance.now() - startedAt),
+      });
+    } catch (error) {
+      this.disableQueryMirror(`provider table sync failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async syncCustomViewsToQueryMirror(mirror: WorkerDatabase): Promise<void> {
+    for (const [viewName, sql] of this.registeredCustomViews) {
+      await mirror.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
+      await mirror.run(sql);
+    }
+  }
+
+  private disableQueryMirror(reason: string): void {
+    const mirror = this.queryMirror;
+    if (!mirror) return;
+    this.queryMirror = null;
+    this.queryMirrorStatus = `disabled: ${reason}`;
+    logger.warn(`Query mirror disabled - ${reason}; queries run on the main thread`);
+    void mirror.close().catch(() => undefined);
   }
 
   private async rebuildBootstrapNotePropertiesView(database: VaultDatabase): Promise<void> {
@@ -544,10 +821,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   public async reindexVault(): Promise<void> {
+    // Full reindexes can rewrite schema and bulk data on the main database;
+    // per-note forwarding cannot keep the mirror coherent through that.
+    this.disableQueryMirror('full vault reindex');
     return this.indexingService.reindexVault();
   }
 
   public async forceReindexVault(): Promise<void> {
+    this.disableQueryMirror('forced full vault reindex');
     return this.indexingService.forceReindexVault();
   }
 
@@ -565,6 +846,26 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   public async waitForIndexing(timeoutMs?: number): Promise<void> {
     return this.indexingService.waitForIndexing(timeoutMs);
+  }
+
+  public getIndexGeneration(): number {
+    return this.indexGeneration;
+  }
+
+  public isIndexSettled(): boolean {
+    return !this.indexingService.getIndexingStatus().isIndexing
+      && !(this.pipelineStateProvider?.hasPendingFileModifications() ?? false);
+  }
+
+  public async whenIndexSettled(timeoutMs: number = 5000): Promise<void> {
+    if (this.pipelineStateProvider) {
+      return this.pipelineStateProvider.waitForIndexingComplete(timeoutMs);
+    }
+    return this.indexingService.waitForIndexing(timeoutMs);
+  }
+
+  public setPipelineStateProvider(provider: IndexPipelineStateProvider): void {
+    this.pipelineStateProvider = provider;
   }
 
   public setIndexingStatus(isIndexing: boolean, promise?: Promise<void>): void {
@@ -697,7 +998,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       tasks: boolean;
       headings: boolean;
       links: boolean;
+      unresolvedLinks: boolean;
+      embeds: boolean;
       tags: boolean;
+      blocks: boolean;
       listItems: boolean;
     };
   } {
@@ -712,7 +1016,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         tasks: this.settings.enabledFeatures.indexTasks,
         headings: this.settings.enabledFeatures.indexHeadings,
         links: this.settings.enabledFeatures.indexLinks,
+        unresolvedLinks: this.settings.enabledFeatures.indexUnresolvedLinks,
+        embeds: this.settings.enabledFeatures.indexEmbeds,
         tags: this.settings.enabledFeatures.indexTags,
+        blocks: this.settings.enabledFeatures.indexBlocks,
         listItems: this.settings.enabledFeatures.indexListItems,
       },
     };
@@ -796,7 +1103,41 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     // Don't wait for indexing - queries can run with partial data
     // Users see results immediately and can refresh after indexing completes
 
+    if (this.providerMirrorSync) {
+      await this.providerMirrorSync;
+    }
+    if (this.providerRefreshWave && this.queryDependsOnProviderReadiness(sql)) {
+      await this.providerRefreshWave;
+    }
+
+    if (this.queryMirror) {
+      try {
+        return await this.queryMirror.all(sql) as QueryResult[];
+      } catch (error) {
+        const message = getErrorMessage(error);
+        // Missing tables/functions/columns are EXPECTED on the mirror (provider
+        // tables, post-boot views/functions live on the main database only).
+        if (/no such (table|function|column|view)/i.test(message)) {
+          logger.debug('Query mirror cannot serve this query - falling back to main thread', { message });
+        } else {
+          this.disableQueryMirror(`query failed: ${message}`);
+        }
+      }
+    }
+
     return await this.executeQuerySafely(() => this.database.all(sql)) as QueryResult[];
+  }
+
+  private queryDependsOnProviderReadiness(sql: string): boolean {
+    const referencedTables = this.getSqlAnalysis(sql).referencedTables;
+    const dependencies = new Set([
+      ...this.tableProviderService.getRegisteredTableNames(),
+      ...this.registeredCustomViews.keys(),
+    ].map(name => name.toLowerCase()));
+    for (const tableName of referencedTables) {
+      if (dependencies.has(tableName.toLowerCase())) return true;
+    }
+    return false;
   }
 
 
@@ -826,6 +1167,11 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (this.triggerService) {
         this.triggerService.destroy();
       }
+      if (this.queryMirror) {
+        const mirror = this.queryMirror;
+        this.queryMirror = null;
+        await mirror.close().catch(() => undefined);
+      }
       await this.database.close();
     }
     finally {
@@ -835,7 +1181,8 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   /**
    * Check if the database is still healthy.
-   * Returns health status and diagnostic info.
+   * Synchronous, so in worker mode it cannot actually probe the database;
+   * it reports healthy and defers to checkDatabaseHealthAsync() for a real check.
    */
   public checkDatabaseHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
     if (this.database instanceof VaultDatabase) {
@@ -853,11 +1200,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   public async checkDatabaseHealthAsync(): Promise<DatabaseHealth> {
-    if (this.database instanceof VaultDatabase) {
-      return this.database.checkHealth();
-    }
-
-    return await this.database.checkHealth();
+    return this.database.checkHealth();
   }
 
   public async getSchemaInfo(): Promise<string> {
@@ -995,6 +1338,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
         { name: 'tag_name', type: 'TEXT', description: 'Tag name (with # prefix)' },
         { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
+        { name: 'insert_position', type: 'TEXT', description: 'Position hint for INSERT: new_line, line_start, or line_end' },
       ]));
     }
 
@@ -1004,9 +1348,46 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
         { name: 'link_text', type: 'TEXT', description: 'Display text' },
         { name: 'link_target', type: 'TEXT', description: 'Target path or URL' },
-        { name: 'link_target_path', type: 'TEXT', description: 'Resolved target file path' },
-        { name: 'link_type', type: 'TEXT', description: 'internal or external' },
+        { name: 'link_target_path', type: 'TEXT', description: 'Resolved target file path (NULL when unresolved)' },
+        { name: 'link_type', type: 'TEXT', description: 'internal, external, or frontmatter' },
+        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based; NULL for frontmatter links)' },
+        { name: 'insert_position', type: 'TEXT', description: 'Position hint for INSERT: new_line, line_start, or line_end' },
+        { name: 'original', type: 'TEXT', description: 'Raw link markup as written (e.g. [[Target|alias]])' },
+        { name: 'start_offset', type: 'INTEGER', description: 'Character offset where link starts (NULL for frontmatter links)' },
+        { name: 'end_offset', type: 'INTEGER', description: 'Character offset where link ends (NULL for frontmatter links)' },
+        { name: 'frontmatter_key', type: 'TEXT', description: 'Frontmatter property holding the link (NULL for body links)' },
+      ]));
+    }
+
+    if (this.settings.enabledFeatures.indexUnresolvedLinks) {
+      sections.push(makeTable('unresolved_links', [
+        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
+        { name: 'path', type: 'TEXT', description: 'Source file path' },
+        { name: 'link_target', type: 'TEXT', description: 'Unresolved target text' },
+        { name: 'link_count', type: 'INTEGER', description: 'Number of unresolved links to target in path' },
+      ]));
+    }
+
+    if (this.settings.enabledFeatures.indexEmbeds) {
+      sections.push(makeTable('embeds', [
+        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
+        { name: 'path', type: 'TEXT', description: 'Source file path' },
+        { name: 'embed_text', type: 'TEXT', description: 'Display text' },
+        { name: 'embed_target', type: 'TEXT', description: 'Embed target' },
+        { name: 'embed_target_path', type: 'TEXT', description: 'Resolved target file path' },
         { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
+      ]));
+    }
+
+    if (this.settings.enabledFeatures.indexBlocks) {
+      sections.push(makeTable('blocks', [
+        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
+        { name: 'path', type: 'TEXT', description: 'File path' },
+        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
+        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
+        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
+        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
+        { name: 'section_type', type: 'TEXT', description: 'Containing Obsidian section type' },
       ]));
     }
 
@@ -1093,7 +1474,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (!this.settings.enabledFeatures.indexTasks) disabledFeatures.push('tasks');
     if (!this.settings.enabledFeatures.indexHeadings) disabledFeatures.push('headings');
     if (!this.settings.enabledFeatures.indexLinks) disabledFeatures.push('links');
+    if (!this.settings.enabledFeatures.indexUnresolvedLinks) disabledFeatures.push('unresolved_links');
+    if (!this.settings.enabledFeatures.indexEmbeds) disabledFeatures.push('embeds');
     if (!this.settings.enabledFeatures.indexTags) disabledFeatures.push('tags');
+    if (!this.settings.enabledFeatures.indexBlocks) disabledFeatures.push('blocks');
     if (!this.settings.enabledFeatures.indexListItems) disabledFeatures.push('list_items');
     if (disabledFeatures.length > 0) {
       sections.push(`\n> [!note] Disabled Tables\n> ${disabledFeatures.join(', ')} - enable in Settings → VaultQuery\n`);
@@ -1124,7 +1508,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     const pragmaResults = await Promise.all(relations.map(async (relation) => {
       try {
         const pragmaRows = await this.database.all(
-          `PRAGMA table_info("${relation.name.replace(/"/g, '""')}")`
+          `PRAGMA table_info(${quoteIdentifier(relation.name)})`
         ) as Array<{ name?: unknown; type?: unknown }>;
         return { relationName: relation.name, pragmaRows };
       }
@@ -1162,7 +1546,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       functions = [];
     }
 
-    return { relations, columns, functions };
+    // Provider tables that exist only as declarations (never refreshed yet)
+    // are invisible to sqlite_master; merge them so first-query autocomplete works.
+    return mergeDeclaredProviderTables({ relations, columns, functions }, this.tableProviderService.getDeclaredTables());
   }
 
   private shouldIncludeAutocompleteRelation(relation: AutocompleteSchemaRelation): boolean {
@@ -1319,7 +1705,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     // Don't wait for indexing - previews are read-only (they rollback)
     // and can work with partial data
 
-    // previewDML is only available on VaultDatabase (main thread mode)
     if (!(this.database instanceof VaultDatabase)) {
       throw new Error('Preview is not supported in web worker mode');
     }
@@ -1327,7 +1712,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     try {
       const result = await this.database.previewDML(sql, params);
 
-      // Validate against vault state - check for file conflicts
       this.validatePreviewResult(result);
 
       return result;
@@ -1349,7 +1733,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (r.table === 'notes' || r.table === 'notes_with_properties') {
         for (const row of r.after) {
           if (row.path) {
-            const pathStr = String(row.path);
+            const pathStr = formatUnknownValue(row.path);
             const file = this.app.vault.getAbstractFileByPath(normalizePath(pathStr));
             if (file && r.op === 'insert') {
               errors.push(`File already exists: ${pathStr}`);
@@ -1375,7 +1759,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       throw new Error(ERROR_MESSAGES.WRITE_OPERATIONS_DISABLED_APPLY);
     }
 
-    // applyDML is only available on VaultDatabase (main thread mode)
     if (!(this.database instanceof VaultDatabase)) {
       throw new Error('Apply preview is not supported in web worker mode');
     }
@@ -1447,6 +1830,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     event: EventName,
     data: VaultQueryEvents[EventName]
   ): void {
+    if (event !== 'database-lost') {
+      // database-lost is the only event that does not signal an indexed-data change
+      this.indexGeneration++;
+    }
     const eventName: string = event;
     this.eventBus.emit(event, data, error => {
       logger.error(`Error in event listener for '${eventName}'`, error);

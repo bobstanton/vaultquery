@@ -1,42 +1,10 @@
 import { syntaxTree } from '@codemirror/language';
 import { RangeSetBuilder, EditorState, Transaction, Prec } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import {
-  Decoration,
-  DecorationSet,
-  EditorView,
-  ViewPlugin,
-  ViewUpdate,
-} from '@codemirror/view';
+import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
+import { SQL_KEYWORD_TOKENS as SQL_KEYWORDS, SQL_FUNCTION_TOKENS as SQL_FUNCTIONS, SQL_TYPE_TOKENS as SQL_TYPES } from '../Constants/SqlCatalog';
 import { consumeSqlSingleQuotedString } from '../utils/SQLParsingUtils';
-
-const SQL_KEYWORDS = new Set([
-  'select', 'from', 'where', 'and', 'or', 'not', 'in', 'is', 'null',
-  'like', 'between', 'exists', 'case', 'when', 'then', 'else', 'end',
-  'as', 'on', 'join', 'left', 'right', 'inner', 'outer', 'cross', 'full',
-  'union', 'all', 'distinct', 'group', 'by', 'having', 'order', 'asc', 'desc',
-  'limit', 'offset', 'insert', 'into', 'values', 'update', 'set', 'delete',
-  'create', 'table', 'drop', 'alter', 'index', 'primary', 'key', 'foreign',
-  'references', 'constraint', 'default', 'check', 'unique', 'cascade',
-  'with', 'recursive', 'over', 'partition', 'row', 'rows', 'range',
-  'preceding', 'following', 'unbounded', 'current', 'first', 'last',
-  'nulls', 'filter', 'window', 'lateral', 'natural', 'using',
-]);
-
-const SQL_FUNCTIONS = new Set([
-  'count', 'sum', 'avg', 'min', 'max', 'coalesce', 'nullif', 'cast',
-  'substr', 'substring', 'length', 'upper', 'lower', 'trim', 'ltrim', 'rtrim',
-  'replace', 'instr', 'printf', 'typeof', 'abs', 'round', 'random',
-  'date', 'time', 'datetime', 'julianday', 'strftime', 'now',
-  'ifnull', 'iif', 'glob', 'hex', 'quote', 'zeroblob',
-  'total', 'group_concat', 'json', 'json_extract', 'json_array', 'json_object',
-]);
-
-const SQL_TYPES = new Set([
-  'integer', 'int', 'real', 'text', 'blob', 'numeric', 'boolean', 'varchar',
-  'char', 'float', 'double', 'decimal', 'date', 'datetime', 'timestamp',
-]);
 
 const SQL_OPERATORS = new Set(['=', '<>', '!=', '<', '>', '<=', '>=', '||', '+', '-', '*', '/', '%']);
 
@@ -448,9 +416,6 @@ function tokenizeGenericYamlConfig(text: string, baseOffset: number, builder: Ra
   }
   else if (/^\d+(\.\d+)?$/.test(entry.value)) {
     addYamlValue(entry, baseOffset, builder, numberMark);
-  }
-  else if (/^rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}$/.test(entry.value)) {
-    addYamlValue(entry, baseOffset, builder, stringMark);
   }
   else {
     addYamlValue(entry, baseOffset, builder, stringMark);

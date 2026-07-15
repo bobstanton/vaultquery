@@ -3,8 +3,9 @@ import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { detectDmlOperationInSql } from '../utils/SQLParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 import { scalarFromResults } from '../utils/ResultFormatUtils';
-import { isCodeElementInsidePre } from './InlineMarkdownUtils';
-import { createInlineDecorationExtension, type InlineSyntax } from './InlineDecorationUtils';
+import { processReadingViewInlineCode } from './InlineMarkdownUtils';
+import { createInlineDecorationExtension } from './InlineDecorationUtils';
+import type { InlineSyntax } from './InlineDecorationUtils';
 import { createInlineSpan, setInlineSpanError, setInlineSpanValue } from './InlineDomState';
 import { waitForInlineVaultQueryReady } from './InlineVaultQueryReadiness';
 
@@ -78,17 +79,8 @@ export function createInlineQueryExtension(plugin: VaultQueryPluginContext) {
 }
 
 export function processReadingViewInlineQueries(plugin: VaultQueryPluginContext, element: HTMLElement, sourcePath: string): void {
-  const codeElements = element.querySelectorAll('code');
-
-  for (const codeEl of Array.from(codeElements)) {
-    if (isCodeElementInsidePre(codeEl)) continue;
-
-    const text = codeEl.textContent?.trim();
-    if (!text) continue;
-
+  processReadingViewInlineCode(element, (text) => {
     const sql = parseInlineQueryText(text);
-    if (!sql) continue;
-
-    codeEl.replaceWith(createInlineQueryElement(element.ownerDocument, plugin, sql, sourcePath, 'Query error'));
-  }
+    return sql ? createInlineQueryElement(element.ownerDocument, plugin, sql, sourcePath, 'Query error') : null;
+  });
 }

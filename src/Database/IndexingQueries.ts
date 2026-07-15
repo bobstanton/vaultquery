@@ -3,12 +3,12 @@
  * Used by both DatabaseService (main thread) and database.worker.ts (web worker).
  */
 
-import type { NoteRecord, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
+import type { NoteRecord, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData, IndexNoteData } from '../types';
 import type { TagData, LinkData, InputHeadingData, DbTableCellData } from './ChangeDetection';
 
 export const INDEXING_SQL = {
-  // Notes - Use separate INSERT/UPDATE to allow AFTER UPDATE triggers to modify the row
-  // UPSERT (ON CONFLICT DO UPDATE) conflicts with triggers that UPDATE the same row
+  // Notes - see insertNoteCore in IndexingOperations.ts for why these are
+  // separate INSERT/UPDATE statements rather than an UPSERT.
   CHECK_NOTE_EXISTS: 'SELECT 1 FROM notes WHERE path = ? LIMIT 1',
   INSERT_NOTE: 'INSERT INTO notes (path, title, content, created, modified, size) VALUES (?, ?, ?, ?, ?, ?)',
   UPDATE_NOTE: `UPDATE notes SET
@@ -34,9 +34,17 @@ export const INDEXING_SQL = {
   DELETE_TABLES: 'DELETE FROM tables WHERE path = ?',
   TABLES_COLUMNS: 7,
 
-  INSERT_LINKS_BASE: 'INSERT INTO links (path, link_text, link_target, link_target_path, link_type, line_number) VALUES ',
+  INSERT_LINKS_BASE: 'INSERT INTO links (path, link_text, link_target, link_target_path, link_type, line_number, original, start_offset, end_offset, frontmatter_key) VALUES ',
   DELETE_LINKS: 'DELETE FROM links WHERE path = ?',
-  LINKS_COLUMNS: 6,
+  LINKS_COLUMNS: 10,
+
+  INSERT_UNRESOLVED_LINKS_BASE: 'INSERT INTO unresolved_links (path, link_target, link_count) VALUES ',
+  DELETE_UNRESOLVED_LINKS: 'DELETE FROM unresolved_links WHERE path = ?',
+  UNRESOLVED_LINKS_COLUMNS: 3,
+
+  INSERT_EMBEDS_BASE: 'INSERT INTO embeds (path, embed_text, embed_target, embed_target_path, line_number) VALUES ',
+  DELETE_EMBEDS: 'DELETE FROM embeds WHERE path = ?',
+  EMBEDS_COLUMNS: 5,
 
   INSERT_TAGS_BASE: 'INSERT INTO tags (path, tag_name, line_number) VALUES ',
   DELETE_TAGS: 'DELETE FROM tags WHERE path = ?',
@@ -61,6 +69,10 @@ export const INDEXING_SQL = {
     start_offset = ?, end_offset = ? WHERE id = ?`,
   DELETE_LIST_ITEMS: 'DELETE FROM list_items WHERE path = ?',
   LIST_ITEMS_COLUMNS: 12,
+
+  INSERT_BLOCKS_BASE: 'INSERT INTO blocks (path, block_id, line_number, start_offset, end_offset, section_type) VALUES ',
+  DELETE_BLOCKS: 'DELETE FROM blocks WHERE path = ?',
+  BLOCKS_COLUMNS: 6,
 
   INSERT_USER_VIEW: 'INSERT OR REPLACE INTO _user_views (view_name, path, sql, sql_hash) VALUES (?, ?, ?, ?)',
   DELETE_USER_VIEWS: 'DELETE FROM _user_views WHERE path = ?',
@@ -119,12 +131,41 @@ export function linksToRows(path: string, links: LinkData[]): (string | number |
     link.link_target,
     link.link_target_path,
     link.link_type,
-    link.line_number
+    link.line_number,
+    link.original,
+    link.start_offset,
+    link.end_offset,
+    link.frontmatter_key
+  ]);
+}
+
+export function unresolvedLinksToRows(path: string, unresolvedLinks: NonNullable<IndexNoteData['unresolvedLinks']>): (string | number | null)[][] {
+  return unresolvedLinks.map(link => [path, link.link_target, link.link_count]);
+}
+
+export function embedsToRows(path: string, embeds: NonNullable<IndexNoteData['embeds']>): (string | number | null)[][] {
+  return embeds.map(embed => [
+    path,
+    embed.embed_text,
+    embed.embed_target,
+    embed.embed_target_path,
+    embed.line_number
   ]);
 }
 
 export function tagsToRows(path: string, tags: TagData[]): (string | number | null)[][] {
   return tags.map(tag => [path, tag.tag_name, tag.line_number]);
+}
+
+export function blocksToRows(path: string, blocks: NonNullable<IndexNoteData['blocks']>): (string | number | null)[][] {
+  return blocks.map(block => [
+    path,
+    block.block_id,
+    block.line_number,
+    block.start_offset,
+    block.end_offset,
+    block.section_type
+  ]);
 }
 
 export function tableCellsToRows(path: string, cells: DbTableCellData[]): (string | number | null)[][] {

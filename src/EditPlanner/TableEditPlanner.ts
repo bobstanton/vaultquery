@@ -1,5 +1,6 @@
 import { markdownTable } from 'markdown-table';
-import { ContentLocationService, type TableLocationInfo, type Range } from '../Services/ContentLocationService';
+import { ContentLocationService } from '../Services/ContentLocationService';
+import type { TableLocationInfo, Range } from '../Services/ContentLocationService';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { createTableKey, parseTableKey } from '../utils/StringUtils';
 import type { TableCellRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext, TableRowGroup } from './types';
@@ -62,7 +63,7 @@ export class TableEditPlanner {
   private groupCellsToTables(cells: TableCellRow[]): TableRowGroup[] {
     const byKey = new Map<string, { header: Set<string>; rows: Map<number, Record<string, string>>; line_number: number | null }>();
 
-    for (const c of cells ?? []) {
+    for (const c of cells) {
       const key = createTableKey(c.path, c.table_index);
 
       let group = byKey.get(key);

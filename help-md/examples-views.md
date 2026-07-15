@@ -191,24 +191,22 @@ SELECT
   link_target_path as path,
   COUNT(*) as incoming_links
 FROM links
-WHERE link_type = 'internal'
-  AND link_target_path IS NOT NULL
+WHERE link_target_path IS NOT NULL
 GROUP BY link_target_path
 ORDER BY incoming_links DESC
 ~~~
 
 ### Broken links
 
-Using `resolve_link()` to find links that don't resolve to any file:
+Using the `unresolved_links` table:
 
 ~~~vaultquery-view
 CREATE VIEW broken_links AS
 SELECT
-  l.path as source,
-  l.link_target as target
-FROM links l
-WHERE l.link_type = 'internal'
-  AND resolve_link(l.link_target, l.path) IS NULL
+  path as source,
+  link_target as target,
+  link_count
+FROM unresolved_links
 ~~~
 
 ### Link graph edges

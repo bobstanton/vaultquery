@@ -101,7 +101,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "parse_date(text)" });
   const para6 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para6.appendText("Extracts and normalizes a date from anywhere in the text. Returns ISO format (YYYY-MM-DD) or null.");
-  const tableWrapper = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });
   const thead = table.createEl('thead');
   const row = thead.createEl('tr');
@@ -140,7 +140,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "format_date(date, format)" });
   const para7 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para7.appendText("Formats an ISO date (YYYY-MM-DD) or compact date (YYYYMMDD) using format specifiers. Returns null if date is invalid.");
-  const tableWrapper1 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper1 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table1 = tableWrapper1.createEl('table', { cls: 'vaultquery-help-table' });
   const thead1 = table1.createEl('thead');
   const row7 = thead1.createEl('tr');
@@ -232,7 +232,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   para8.appendText(" (wikilinks). Use in markdown output blocks, such as ");
   para8.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-markdown" });
   para8.appendText(".");
-  const tableWrapper2 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper2 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table2 = tableWrapper2.createEl('table', { cls: 'vaultquery-help-table' });
   const thead2 = table2.createEl('thead');
   const row20 = thead2.createEl('tr');
@@ -326,7 +326,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "resolve_link(wikilink [, sourcePath])" });
   const para9 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para9.appendText("Resolves a wikilink to its full file path using Obsidian's link resolution. Returns null if the link cannot be resolved.");
-  const tableWrapper3 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper3 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table3 = tableWrapper3.createEl('table', { cls: 'vaultquery-help-table' });
   const thead3 = table3.createEl('thead');
   const row27 = thead3.createEl('tr');
@@ -366,7 +366,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Path functions" });
   const para11 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para11.appendText("Extract components from file paths. Names match Obsidian's TFile properties.");
-  const tableWrapper4 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper4 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table4 = tableWrapper4.createEl('table', { cls: 'vaultquery-help-table' });
   const thead4 = table4.createEl('thead');
   const row30 = thead4.createEl('tr');
@@ -422,7 +422,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Geolocation functions" });
   const para12 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para12.appendText("Calculate distances between geographic coordinates using the Haversine formula.");
-  const tableWrapper5 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper5 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table5 = tableWrapper5.createEl('table', { cls: 'vaultquery-help-table' });
   const thead5 = table5.createEl('thead');
   const row36 = thead5.createEl('tr');

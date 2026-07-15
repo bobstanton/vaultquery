@@ -2,26 +2,14 @@
  * Helper functions for third-party plugins to access the VaultQuery API.
  */
 
-import type {
-  EventRef,
-  IVaultQueryAPI,
-} from './VaultQueryAPI';
-import type {
-  TableProviderRegistration,
-  TableProviderStatus,
-  VaultQueryTableProvider,
-} from './Providers/TableProviderTypes';
+import type { EventRef, IVaultQueryAPI } from './VaultQueryAPI';
+import type { TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './Providers/TableProviderTypes';
 import { getErrorMessage } from './utils/ErrorMessages';
 
+export const VAULTQUERY_API_READY_EVENT = 'vaultquery:api-ready';
+
 export interface WaitForAPIOptions {
-  /** Maximum number of retry attempts (default: 5) */
-  maxRetries?: number;
-  /** Base delay in milliseconds, doubles each retry (default: 200) */
-  baseDelayMs?: number;
-  /** Maximum delay cap in milliseconds (default: 5000) */
-  maxDelayMs?: number;
-  /** Called before each retry with the attempt number */
-  onRetry?: (attempt: number) => void;
+  timeoutMs?: number;
   /** If true, also waits for indexing to complete before returning (default: false) */
   waitForReady?: boolean;
 }
@@ -70,13 +58,10 @@ export type VaultQueryAppLike = object & {
   plugins?: {
     plugins?: Record<string, { api?: IVaultQueryAPI }>;
   };
-};
-
-const DEFAULT_OPTIONS: Required<Omit<WaitForAPIOptions, 'onRetry'>> = {
-  maxRetries: 5,
-  baseDelayMs: 200,
-  maxDelayMs: 5000,
-  waitForReady: false,
+  workspace?: {
+    on(name: string, callback: () => void): unknown;
+    offref(ref: unknown): void;
+  };
 };
 
 /**
@@ -113,11 +98,7 @@ export function getVaultQueryAPI(app: VaultQueryAppLike): IVaultQueryAPI | null 
  * import { waitForVaultQueryAPI } from 'vaultquery/api';
  *
  * // In a plugin's onload():
- * const api = await waitForVaultQueryAPI(this.app, {
- *   maxRetries: 5,
- *   baseDelayMs: 200,
- *   onRetry: (attempt) => console.debug(`Waiting for VaultQuery, attempt ${attempt + 1}`)
- * });
+ * const api = await waitForVaultQueryAPI(this.app);
  *
  * if (!api) {
  *   console.warn('VaultQuery not available');
@@ -130,26 +111,34 @@ export function getVaultQueryAPI(app: VaultQueryAppLike): IVaultQueryAPI | null 
  * ```
  */
 export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: WaitForAPIOptions): Promise<IVaultQueryAPI | null> {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const timeoutMs = options?.timeoutMs ?? 10_000;
 
   let api = getVaultQueryAPI(app);
 
-  if (api === null) {
-    for (let attempt = 0; attempt < opts.maxRetries; attempt++) {
-      const delay = Math.min(
-        opts.baseDelayMs * Math.pow(2, attempt),
-        opts.maxDelayMs
-      );
+  const workspace = app.workspace;
+  if (api === null && workspace) {
+    api = await new Promise<IVaultQueryAPI | null>((resolve) => {
+      let timeoutId: number | null = null;
+      let ref: unknown = null;
+      let settled = false;
 
-      opts.onRetry?.(attempt);
+      const finish = (result: IVaultQueryAPI | null): void => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        if (ref !== null) workspace.offref(ref);
+        resolve(result);
+      };
 
-      await new Promise<void>(resolve => window.setTimeout(resolve, delay));
+      ref = workspace.on(VAULTQUERY_API_READY_EVENT, () => finish(getVaultQueryAPI(app)));
+      timeoutId = window.setTimeout(() => finish(getVaultQueryAPI(app)), timeoutMs);
 
-      api = getVaultQueryAPI(app);
-      if (api !== null) {
-        break;
+      // The API may have appeared between the initial check and subscribing.
+      const current = getVaultQueryAPI(app);
+      if (current !== null) {
+        finish(current);
       }
-    }
+    });
   }
 
   if (api !== null && options?.waitForReady) {
@@ -160,9 +149,7 @@ export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: Wai
 }
 
 const DEFAULT_PROVIDER_WAIT_OPTIONS: WaitForAPIOptions = {
-  maxRetries: 12,
-  baseDelayMs: 500,
-  maxDelayMs: 8000,
+  timeoutMs: 30_000,
 };
 
 function resolveProviderLogger(logger?: VaultQueryProviderRegistrationLogger): Required<VaultQueryProviderRegistrationLogger> {
@@ -262,13 +249,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
   private async attemptRegistration(): Promise<VaultQueryProviderRegistrationState> {
     const waitOptions = { ...DEFAULT_PROVIDER_WAIT_OPTIONS, ...this.options.wait };
     this.logger.info(`[VaultQuery] ${this.options.pluginId}: waiting for VaultQuery table provider API`);
-    const api = await waitForVaultQueryAPI(this.app, {
-      ...waitOptions,
-      onRetry: (attempt) => {
-        waitOptions.onRetry?.(attempt);
-        this.logger.debug(`[VaultQuery] ${this.options.pluginId}: waiting for VaultQuery API, attempt ${attempt + 1}`);
-      },
-    });
+    const api = await waitForVaultQueryAPI(this.app, waitOptions);
 
     if (this.disposed) {
       return this.markDisposed();

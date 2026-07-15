@@ -7,12 +7,17 @@ import { createVaultQueryCodeBlockContainer } from './ProcessorUtils';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import type { PendingBlock } from '../utils/IndexingUtils';
 import type { ParsedQuery, ParseQueryBlockOptions } from '../utils/QueryParsingUtils';
+import { logger as rootLogger } from '../utils/logger';
+import { hashString } from '../utils/StringUtils';
+
+const logger = rootLogger.scope('QueryPerformance');
 
 type ReadQueryOutputKind = NonNullable<ParseQueryBlockOptions['forceOutputKind']>;
 
 export abstract class BaseReadQueryCodeBlockProcessor {
   protected pendingBlocks = new Set<PendingBlock>();
   private activeRequests = new WeakMap<HTMLElement, number>();
+  private queryExecutionCounts = new Map<string, number>();
 
   protected constructor(protected app: App, protected plugin: VaultQueryPluginContext) {}
 
@@ -74,17 +79,14 @@ export abstract class BaseReadQueryCodeBlockProcessor {
     this.activeRequests.set(container, requestId);
 
     try {
+      await api.waitForInitialQueryReadiness();
+      const queryHash = hashString(parsed.query);
+      const previousExecutions = this.queryExecutionCounts.get(queryHash) ?? 0;
+      const queryStartedAt = performance.now();
       const results = await api.query(parsed.query, ctx.sourcePath);
+      const queryMs = performance.now() - queryStartedAt;
 
       if (this.activeRequests.get(container) !== requestId || !container.isConnected) {
-        return;
-      }
-
-      if (!results || !Array.isArray(results)) {
-        BaseRenderer.renderError(container, {
-          title: 'Query Error',
-          message: `Invalid results (${typeof results})`
-        });
         return;
       }
 
@@ -103,7 +105,18 @@ export abstract class BaseReadQueryCodeBlockProcessor {
         }
       };
 
+      const renderStartedAt = performance.now();
       await QueryRenderer.render(renderContext);
+      logger.debug('Query refresh phases', {
+        queryHash,
+        cacheState: previousExecutions === 0 ? 'cold' : 'warm',
+        rows: results.length,
+        columns: results.length > 0 ? Object.keys(results[0]).length : 0,
+        queryMs: Math.round(queryMs),
+        renderMs: Math.round(performance.now() - renderStartedAt),
+        sourcePath: ctx.sourcePath,
+      });
+      this.queryExecutionCounts.set(queryHash, previousExecutions + 1);
     }
     catch (error: unknown) {
       if (this.activeRequests.get(container) !== requestId || !container.isConnected) {

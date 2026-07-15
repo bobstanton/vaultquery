@@ -2,6 +2,7 @@ import { Chart, ChartConfiguration, ChartDataset, registerables, Colors } from '
 import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
 import { BaseRenderer } from './BaseRenderer';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { formatUnknownValue } from '../utils/ResultFormatUtils';
 
 type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null;
 type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
@@ -13,7 +14,8 @@ function ensureChartRegistration(): void {
   isRegistered = true;
 }
 
-type ChartType = 'bar' | 'line' | 'pie' | 'doughnut' | 'scatter';
+const CHART_TYPES = ['bar', 'line', 'pie', 'doughnut', 'scatter'] as const;
+type ChartType = (typeof CHART_TYPES)[number];
 
 interface ChartConfig {
   type: ChartType;
@@ -35,11 +37,11 @@ export class ChartRenderer {
   private static instances = new WeakMap<HTMLElement, Chart>();
 
   static parseConfig(options?: Record<string, unknown>): ChartConfig {
-    const type = typeof options?.type === 'string' ? options.type.toLowerCase() : '';
     const config: Partial<ChartConfig> = {};
 
-    if (type && ['bar', 'line', 'pie', 'doughnut', 'scatter'].includes(type)) {
-      config.type = type as ChartType;
+    const type = this.parseChartType(options?.type);
+    if (type) {
+      config.type = type;
     }
 
     if (typeof options?.title === 'string') config.title = options.title;
@@ -130,7 +132,7 @@ export class ChartRenderer {
     }
 
     const chartType = value.toLowerCase();
-    return ['bar', 'line', 'pie', 'doughnut', 'scatter'].includes(chartType)
+    return (CHART_TYPES as readonly string[]).includes(chartType)
       ? chartType as ChartType
       : undefined;
   }
@@ -147,12 +149,12 @@ export class ChartRenderer {
       const seriesMap = new Map<string, SeriesData>();
 
       for (const row of results) {
-        const seriesName = String(row.series ?? 'Unknown');
+        const seriesName = formatUnknownValue(row.series) || 'Unknown';
         if (!seriesMap.has(seriesName)) {
           seriesMap.set(seriesName, {
             points: [],
-            backgroundColor: row.backgroundColor ? String(row.backgroundColor) : undefined,
-            borderColor: row.borderColor ? String(row.borderColor) : undefined
+            backgroundColor: formatUnknownValue(row.backgroundColor) || undefined,
+            borderColor: formatUnknownValue(row.borderColor) || undefined
           });
         }
         seriesMap.get(seriesName)!.points.push({
@@ -210,8 +212,8 @@ export class ChartRenderer {
     const seriesMap = new Map<string, SeriesData>();
 
     for (const row of results) {
-      const label = String(row.label ?? 'Unknown');
-      const series = String(row.series ?? 'Unknown');
+      const label = formatUnknownValue(row.label) || 'Unknown';
+      const series = formatUnknownValue(row.series) || 'Unknown';
       const value = Number(row.value ?? 0);
 
       labelSet.add(label);
@@ -220,8 +222,8 @@ export class ChartRenderer {
         seriesMap.set(series, {
           values: new Map(),
           chartType: this.parseChartType(row.chartType),
-          backgroundColor: row.backgroundColor ? String(row.backgroundColor) : undefined,
-          borderColor: row.borderColor ? String(row.borderColor) : undefined
+          backgroundColor: formatUnknownValue(row.backgroundColor) || undefined,
+          borderColor: formatUnknownValue(row.borderColor) || undefined
         });
       }
       seriesMap.get(series)!.values.set(label, value);
@@ -254,7 +256,7 @@ export class ChartRenderer {
   }
 
   private static prepareSingleSeriesData(results: Record<string, unknown>[], config: ChartConfig): ChartConfiguration['data'] {
-    const labels = results.map(row => String(row.label ?? 'Unknown'));
+    const labels = results.map(row => formatUnknownValue(row.label) || 'Unknown');
     const data = results.map(row => Number(row.value ?? 0));
 
     const hasBackgroundColor = results.length > 0 && 'backgroundColor' in results[0];
@@ -267,14 +269,14 @@ export class ChartRenderer {
     };
 
     if (hasBackgroundColor) {
-      dataset.backgroundColor = results.map(row => String(row.backgroundColor ?? ''));
+      dataset.backgroundColor = results.map(row => formatUnknownValue(row.backgroundColor));
     }
     else if (config.datasetBackgroundColor) {
       dataset.backgroundColor = config.datasetBackgroundColor;
     }
 
     if (hasBorderColor) {
-      dataset.borderColor = results.map(row => String(row.borderColor ?? ''));
+      dataset.borderColor = results.map(row => formatUnknownValue(row.borderColor));
     }
     else if (config.datasetBorderColor) {
       dataset.borderColor = config.datasetBorderColor;

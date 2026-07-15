@@ -1,4 +1,5 @@
 import type { TableStructure } from './DatabaseSchema';
+import { escapeSqlString } from '../utils/SqlIdentifierUtils';
 
 /**
  * PRAGMA statements to run when initializing a database connection.
@@ -32,7 +33,7 @@ export const SQL_QUERIES = {
 } as const;
 
 export function getViewColumnsPragma(viewName: string): string {
-  return `PRAGMA table_info('${viewName.replace(/'/g, "''")}')`;
+  return `PRAGMA table_info('${escapeSqlString(viewName)}')`;
 }
 
 function sanitizeIdentifier(name: string): string {

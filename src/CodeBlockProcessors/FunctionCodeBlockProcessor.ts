@@ -55,7 +55,7 @@ export class FunctionCodeBlockProcessor extends BaseUserDefinedProcessor {
       header.appendText(' registered');
     }
     else {
-      header.createEl('span', {
+      header.createSpan({
         text: `Function "${functionName}" registered`
       });
     }

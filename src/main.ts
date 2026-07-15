@@ -1,6 +1,7 @@
 import { MarkdownPostProcessorContext, MarkdownView, Plugin, loadPrism, Notice } from 'obsidian';
 import { normalizeConsoleLogLevel } from 'obsidian-debug-logger';
-import { VaultQueryAPI, type EventRef } from './VaultQueryAPI';
+import { VaultQueryAPI } from './VaultQueryAPI';
+import type { EventRef } from './VaultQueryAPI';
 import { VaultQuerySettings, DEFAULT_SETTINGS, normalizeSettings } from './Settings/Settings';
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
@@ -40,7 +41,8 @@ import * as calendarHelp from './generated-help/vaultquery-calendar-help.generat
 import './styles.css';
 import './slickgrid-obsidian-theme.css';
 
-export { getVaultQueryAPI, waitForVaultQueryAPI, registerVaultQueryTableProviders } from './helpers';
+import { VAULTQUERY_API_READY_EVENT } from './helpers';
+export { getVaultQueryAPI, waitForVaultQueryAPI, registerVaultQueryTableProviders, VAULTQUERY_API_READY_EVENT } from './helpers';
 export type {
   ManagedVaultQueryTableProviderRegistration,
   RegisterVaultQueryTableProvidersOptions,
@@ -184,7 +186,7 @@ export default class VaultQueryPlugin extends Plugin {
     const viewProcessor = new ViewCodeBlockProcessor(this.app, this);
     const functionProcessor = new FunctionCodeBlockProcessor(this.app, this);
     const functionHelpProcessor = new FunctionHelpCodeBlockProcessor(this.app, this);
-    const examplesProcessor = new ExamplesCodeBlockProcessor(this.app, this);
+    const examplesProcessor = new ExamplesCodeBlockProcessor(this.app);
     const apiGuideProcessor = new ApiGuideCodeBlockProcessor(this.app, this);
     const triggerProcessor = new TriggerCodeBlockProcessor(this.app, this);
     const triggerHelpProcessor = new TriggerHelpCodeBlockProcessor(this.app, this);
@@ -490,16 +492,12 @@ export default class VaultQueryPlugin extends Plugin {
     }
   }
 
-  private updateLoadingDiv(loadingDiv: HTMLElement, progress: { current: number; total: number; currentFile: string }): void {
-    renderIndexingProgress(loadingDiv, progress);
-  }
-
   private updateProcessorBlocks(processor: BlockProcessor, indexingStatus: IndexingStatus): void {
     for (const block of processor.getPendingBlocks()) {
       if (!block.el || !block.el.parentNode || !block.container) continue;
       const loadingDiv = block.container.querySelector('.vaultquery-loading');
       if (loadingDiv && loadingDiv.instanceOf(HTMLElement) && indexingStatus.progress) {
-        this.updateLoadingDiv(loadingDiv, indexingStatus.progress);
+        renderIndexingProgress(loadingDiv, indexingStatus.progress);
       }
     }
   }
@@ -532,7 +530,7 @@ export default class VaultQueryPlugin extends Plugin {
 
     const workspaceEl = this.app.workspace.containerEl;
     if (workspaceEl) {
-      this.lifecycle.addDomEvent(workspaceEl, 'scroll', scrollHandler, { capture: true, passive: true });
+      this.registerDomEvent(workspaceEl, 'scroll', scrollHandler, { capture: true, passive: true });
     }
 
     this.lifecycle.scheduleInterval(VaultQueryPlugin.TIMER_GRID_RESTORE, () => {
@@ -546,7 +544,7 @@ export default class VaultQueryPlugin extends Plugin {
   }
 
   private setupVisibilityHandler(): void {
-    this.lifecycle.addDomEvent(activeDocument, 'visibilitychange', () => {
+    this.registerDomEvent(activeDocument, 'visibilitychange', () => {
       if (activeDocument.visibilityState === 'visible') {
         void this.databaseRecoveryManager.handleResume();
       }
@@ -616,10 +614,13 @@ export default class VaultQueryPlugin extends Plugin {
       return;
     }
 
+    this.api.setPipelineStateProvider(this.indexingStateManager);
     this.api.setProviderBlockLanguageRegistrar((language) => {
       this.registerProviderDefinitionBlockLanguage(language);
     });
     this.setupAutocompleteSchemaInvalidation();
+
+    this.app.workspace.trigger(VAULTQUERY_API_READY_EVENT);
   }
 
   private async indexAllNotes() {
@@ -635,12 +636,11 @@ export default class VaultQueryPlugin extends Plugin {
     const indexedFiles = await this.api.getIndexedFiles();
     const isFirstRun = indexedFiles.length === 0;
 
+    this.startUpdatingPendingCodeBlocks();
     if (isFirstRun) {
-      this.startUpdatingPendingCodeBlocks();
       await this.api.forceReindexVault();
     }
     else {
-      this.startUpdatingPendingCodeBlocks();
       await this.api.reindexVault();
     }
     await this.processPendingCodeBlocks();

@@ -5,6 +5,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { RenderContext } from './BaseRenderer';
 import { parseBooleanOptionOrNull, parseCssDimensionOrNull } from '../utils/ConfigParsingUtils';
+import { formatUnknownValue } from '../utils/ResultFormatUtils';
 
 declare const activeWindow: Window;
 
@@ -52,7 +53,6 @@ interface CalendarInstance {
   resizeObserver?: ResizeObserver;
   intersectionObserver?: IntersectionObserver;
   animationFrames: number[];
-  timeouts: ReturnType<typeof setTimeout>[];
   retryTimeout?: ReturnType<typeof setTimeout>;
   sizeRetryCount: number;
   responsiveConfig: ResponsiveCalendarConfig;
@@ -196,7 +196,6 @@ export class CalendarRenderer {
     const instance: CalendarInstance = {
       calendar,
       animationFrames: [],
-      timeouts: [],
       retryTimeout: undefined,
       sizeRetryCount: 0,
       responsiveConfig,
@@ -463,7 +462,6 @@ export class CalendarRenderer {
 
   private static scheduleCalendarSizeUpdate(container: HTMLElement, root: HTMLElement, instance: CalendarInstance): void {
     const win = root.ownerDocument.defaultView ?? activeWindow;
-    const delays = [0, 50, 150, 350];
 
     this.clearScheduledCalendarSizeUpdates(root, instance);
 
@@ -479,35 +477,22 @@ export class CalendarRenderer {
         if (instance.sizeRetryCount >= this.MAX_HIDDEN_SIZE_RETRIES) {
           return;
         }
-
-        if (instance.retryTimeout === undefined) {
-          instance.sizeRetryCount++;
-          instance.retryTimeout = win.setTimeout(() => {
-            instance.retryTimeout = undefined;
-            if (root.isConnected && this.instances.get(container) === instance) {
-              this.scheduleCalendarSizeUpdate(container, root, instance);
-            }
-          }, 500);
-        }
+        instance.sizeRetryCount++;
+        instance.retryTimeout = win.setTimeout(() => {
+          instance.retryTimeout = undefined;
+          if (root.isConnected && this.instances.get(container) === instance) {
+            this.scheduleCalendarSizeUpdate(container, root, instance);
+          }
+        }, 500);
         return;
       }
 
       instance.sizeRetryCount = 0;
-      instance.calendar.updateSize();
       root.removeClass('vaultquery-calendar-initializing');
     };
 
-    const rafId = win.requestAnimationFrame(() => {
-      update();
-      const nestedRafId = win.requestAnimationFrame(update);
-      instance.animationFrames.push(nestedRafId);
-    });
+    const rafId = win.requestAnimationFrame(update);
     instance.animationFrames.push(rafId);
-
-    for (const delay of delays) {
-      const timeoutId = win.setTimeout(update, delay);
-      instance.timeouts.push(timeoutId);
-    }
   }
 
   private static clearScheduledCalendarSizeUpdates(root: HTMLElement, instance: CalendarInstance): void {
@@ -517,11 +502,6 @@ export class CalendarRenderer {
       win.cancelAnimationFrame(frame);
     }
     instance.animationFrames = [];
-
-    for (const timeout of instance.timeouts) {
-      win.clearTimeout(timeout);
-    }
-    instance.timeouts = [];
 
     if (instance.retryTimeout !== undefined) {
       win.clearTimeout(instance.retryTimeout);
@@ -537,10 +517,6 @@ export class CalendarRenderer {
 
     if (normalized === 'timegridday' || normalized === 'day') {
       return 'timeGridDay';
-    }
-
-    if (normalized === 'daygridmonth' || normalized === 'month') {
-      return 'dayGridMonth';
     }
 
     return 'dayGridMonth';
@@ -801,7 +777,7 @@ export class CalendarRenderer {
     const existing = doc.querySelector<HTMLElement>('.vaultquery-calendar-tooltip');
     existing?.remove();
 
-    const tooltip = doc.createElement('div');
+    const tooltip = doc.body.createDiv();
     tooltip.className = 'vaultquery-calendar-tooltip';
     tooltip.textContent = text;
     tooltip.setAttribute('role', 'tooltip');
@@ -889,7 +865,7 @@ export class CalendarRenderer {
       return this.normalizeTimestamp(value);
     }
 
-    const stringValue = String(value).trim();
+    const stringValue = formatUnknownValue(value).trim();
     if (!stringValue) {
       return null;
     }
@@ -979,26 +955,20 @@ export class CalendarRenderer {
       return undefined;
     }
 
-    const stringValue = String(value).trim();
+    const stringValue = formatUnknownValue(value).trim();
     return stringValue || undefined;
   }
 
   private static toOptionalColor(value: unknown): string | undefined {
-    const color = this.toOptionalString(value);
-    return color || undefined;
+    return this.toOptionalString(value);
   }
 
   private static toBoolean(value: unknown): boolean {
-    if (typeof value === 'boolean') {
-      return value;
-    }
-
     if (typeof value === 'number') {
       return value !== 0;
     }
 
-    const normalized = String(value).trim().toLowerCase();
-    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    return parseBooleanOptionOrNull(value) ?? false;
   }
 
   private static parseIntegerOption(value: unknown): number | null {

@@ -4,6 +4,8 @@ import type { VaultQuerySettings } from '../Settings/Settings';
 import { parseBooleanOption } from '../utils/ConfigParsingUtils';
 
 const logger = rootLogger.scope('QueryRefresh');
+const AUTO_REFRESH_DEBOUNCE_MS = 150;
+const REFRESH_CONCURRENCY = 4;
 
 export interface RefreshEntry {
   onRefresh: () => Promise<void>;
@@ -35,6 +37,9 @@ export function resolveAutoRefreshSetting(settings: VaultQuerySettings, parsed: 
 
 export class QueryRefreshRegistry {
   private static entries = new Map<HTMLElement, RefreshEntry>();
+  private static autoRefreshTimeout: number | null = null;
+  private static autoRefreshPending = false;
+  private static autoRefreshRunning = false;
 
   static hasEntries(): boolean {
     return this.entries.size > 0;
@@ -59,7 +64,7 @@ export class QueryRefreshRegistry {
   }
 
   static async refreshAll(options: RefreshAllOptions = {}): Promise<void> {
-    const promises: Promise<void>[] = [];
+    const refreshes: Array<() => Promise<void>> = [];
 
     for (const [container, entry] of Array.from(this.entries.entries())) {
       if (!container.isConnected) {
@@ -69,14 +74,49 @@ export class QueryRefreshRegistry {
       if (!options.force && !entry.autoRefresh) {
         continue;
       }
-      promises.push(entry.onRefresh());
+      refreshes.push(entry.onRefresh);
     }
 
-    const results = await Promise.allSettled(promises);
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        logger.error('Query refresh failed', result.reason);
+    let nextIndex = 0;
+    const worker = async (): Promise<void> => {
+      while (nextIndex < refreshes.length) {
+        const refresh = refreshes[nextIndex++];
+        try {
+          await refresh();
+        }
+        catch (error) {
+          logger.error('Query refresh failed', error);
+        }
       }
+    };
+
+    const workerCount = Math.min(REFRESH_CONCURRENCY, refreshes.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  }
+
+  static scheduleAutoRefresh(): void {
+    this.autoRefreshPending = true;
+    if (this.autoRefreshTimeout !== null) {
+      window.clearTimeout(this.autoRefreshTimeout);
+    }
+
+    this.autoRefreshTimeout = window.setTimeout(() => {
+      this.autoRefreshTimeout = null;
+      void this.drainScheduledAutoRefreshes();
+    }, AUTO_REFRESH_DEBOUNCE_MS);
+  }
+
+  private static async drainScheduledAutoRefreshes(): Promise<void> {
+    if (this.autoRefreshRunning) return;
+
+    this.autoRefreshRunning = true;
+    try {
+      while (this.autoRefreshPending) {
+        this.autoRefreshPending = false;
+        await this.refreshAll();
+      }
+    } finally {
+      this.autoRefreshRunning = false;
     }
   }
 

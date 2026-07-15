@@ -6,6 +6,7 @@ import { getErrorMessage } from '../utils/ErrorMessages';
 import { ConfirmationModal } from '../Modals/ConfirmationModal';
 import { generateUniqueId } from '../utils/StringUtils';
 import type { RenderContext } from './BaseRenderer';
+import { previewRowCount, previewTotalRowCount } from '../Services/PreviewService';
 import type { PreviewResult } from '../Services/PreviewService';
 
 declare const activeWindow: Window;
@@ -50,7 +51,7 @@ export class PreviewGridRenderer {
 
   private static createSummarySection(previewResult: PreviewResult, container: HTMLElement, _context: PreviewRenderContext): void {
     const { op, table, before, after, sqlToApply: _sqlToApply } = previewResult;
-    const rowCount = Math.max(before.length, after.length);
+    const rowCount = previewRowCount(previewResult);
 
     let summaryText = '';
     let summaryClass = '';
@@ -63,7 +64,7 @@ export class PreviewGridRenderer {
       case 'update': {
         const changedFieldCount = this.countChangedFields(before, after);
         if (rowCount === 0) {
-          summaryText = `ℹ️ No changes to apply. No rows matched the UPDATE statement.`;
+          summaryText = 'ℹ️ No changes to apply. No rows matched the UPDATE statement.';
         }
         else if (changedFieldCount === 0) {
           summaryText = `ℹ️ No changes to apply. The ${rowCount} matching row${rowCount !== 1 ? 's' : ''} already ${rowCount !== 1 ? 'have' : 'has'} the specified values.`;
@@ -76,13 +77,13 @@ export class PreviewGridRenderer {
       }
       case 'delete':
         summaryText = rowCount === 0
-          ? `ℹ️ No rows matched the DELETE statement.`
+          ? 'ℹ️ No rows matched the DELETE statement.'
           : `⚠️ ${rowCount} row${rowCount !== 1 ? 's' : ''} will be deleted from table "${table}".`;
         summaryClass = 'vaultquery-summary-delete';
         break;
       case 'multi': {
         const operations = previewResult.multiResults || [];
-        const totalRows = operations.reduce((sum, result) => sum + Math.max(result.before.length, result.after.length), 0);
+        const totalRows = previewTotalRowCount(operations);
         summaryText = `🔄 Multi-statement operation affecting ${totalRows} rows across ${operations.length} operations.`;
         summaryClass = 'vaultquery-summary-multi';
         break;
@@ -175,27 +176,10 @@ export class PreviewGridRenderer {
       e.stopPropagation();
       e.preventDefault();
 
-      // SlickGrid uses different attribute names - try both 'row' and data attributes
       const row = cell.closest('.slick-row') as HTMLElement;
       if (!row) return;
 
-      // Try multiple ways to get the row index
-      let rowIndex = -1;
-
-      const rowAttr = row.getAttribute('row');
-      if (rowAttr !== null) {
-        rowIndex = parseInt(rowAttr);
-      }
-
-      if (rowIndex < 0) {
-        const style = row.style.top;
-        if (style) {
-          const topPx = parseInt(style);
-          if (!isNaN(topPx)) {
-            rowIndex = Math.round(topPx / 32);
-          }
-        }
-      }
+      const rowIndex = self.rowIndexOfRowElement(row);
 
       if (rowIndex >= 0 && rowIndex < (previewResult.multiResults?.length || 0)) {
         self.toggleOperationDetails(gridContainer, rowIndex, previewResult, context);
@@ -205,6 +189,8 @@ export class PreviewGridRenderer {
     gridContainer.addEventListener('click', handleExpandClick, true);
     gridContainer.addEventListener('touchend', handleExpandClick, true);
 
+    // SlickGridRenderer defers grid mounting (scheduleGridEnsure), so the
+    // cells to style do not exist yet when this runs.
     const win = gridContainer.ownerDocument.defaultView ?? activeWindow;
     win.setTimeout(() => {
       const cells = gridContainer.querySelectorAll('.slick-cell');
@@ -236,16 +222,16 @@ export class PreviewGridRenderer {
       }
     });
 
-    const rowElement = gridContainer.querySelector(`.slick-row[row="${rowIndex}"]`);
+    const rowElement = this.findRowElement(gridContainer, rowIndex);
 
-    const detailsContainer = gridContainer.ownerDocument.createElement('div');
+    const detailsContainer = gridContainer.createDiv();
+    detailsContainer.detach();
     detailsContainer.className = 'vaultquery-operation-details';
     detailsContainer.setAttribute('data-details-for', rowIndex.toString());
 
     const title = detailsContainer.createDiv({ cls: 'vaultquery-subgrid-title' });
-    const icon = this.getOperationIcon(operationData.op);
-    title.appendText(icon + ' ');
     const strong = title.createEl('strong');
+    strong.appendText(`${this.getOperationIcon(operationData.op)} `);
     strong.appendText(`${operationData.op.toUpperCase()} Details - ${operationData.table} table`);
 
     const detailedData = this.prepareOperationDetailData(operationData, context);
@@ -293,8 +279,30 @@ export class PreviewGridRenderer {
     return text === this.SHOW_CHANGES_BELOW_LABEL || text === this.HIDE_CHANGES_BELOW_LABEL;
   }
 
+  /**
+   * SlickGrid exposes no row-index attribute on .slick-row elements; rows are
+   * absolutely positioned at index x rowHeight.
+   */
+  private static rowIndexOfRowElement(row: HTMLElement): number {
+    const topPx = parseInt(row.style.top);
+    const height = row.offsetHeight;
+    if (isNaN(topPx) || height <= 0) {
+      return -1;
+    }
+    return Math.round(topPx / height);
+  }
+
+  private static findRowElement(gridContainer: HTMLElement, rowIndex: number): HTMLElement | null {
+    for (const row of Array.from(gridContainer.querySelectorAll<HTMLElement>('.slick-row'))) {
+      if (this.rowIndexOfRowElement(row) === rowIndex) {
+        return row;
+      }
+    }
+    return null;
+  }
+
   private static updateOperationDetailsLabel(gridContainer: HTMLElement, rowIndex: number, expanded: boolean): void {
-    const row = gridContainer.querySelector(`.slick-row[row="${rowIndex}"], .slick-row[data-row="${rowIndex}"]`);
+    const row = this.findRowElement(gridContainer, rowIndex);
     if (!row) {
       return;
     }
@@ -473,7 +481,7 @@ export class PreviewGridRenderer {
       '#': index + 1,
       '📋 Action': `${this.getOperationIcon(result.op)} ${result.op.toUpperCase()}`,
       '🗂️ Table': result.table,
-      '📊 Rows': Math.max(result.before.length, result.after.length),
+      '📊 Rows': previewRowCount(result),
       '🔍 Details': this.SHOW_CHANGES_BELOW_LABEL,
       '_operationIndex': index,
       '_operationData': result
@@ -481,7 +489,7 @@ export class PreviewGridRenderer {
   }
 
   private static getOperationIcon(operation: string): string {
-    switch (operation.toLowerCase()) {
+    switch (operation) {
       case 'insert': return '➕';
       case 'update': return '✏️';
       case 'delete': return '🗑️';
@@ -494,10 +502,10 @@ export class PreviewGridRenderer {
 
     let rowCount: number;
     if (op === 'multi' && multiResults) {
-      rowCount = multiResults.reduce((sum, result) => sum + Math.max(result.before.length, result.after.length), 0);
+      rowCount = previewTotalRowCount(multiResults);
     }
     else {
-      rowCount = Math.max(before.length, after.length);
+      rowCount = previewRowCount(previewResult);
     }
 
     if (rowCount === 0) {
@@ -538,8 +546,8 @@ export class PreviewGridRenderer {
   }
 
   private static async confirmApply(previewResult: PreviewResult, context: PreviewRenderContext): Promise<boolean> {
-    const { op, table, before, after } = previewResult;
-    const rowCount = Math.max(before.length, after.length);
+    const { op, table } = previewResult;
+    const rowCount = previewRowCount(previewResult);
 
     let message = '';
     switch (op) {
@@ -571,4 +579,5 @@ export class PreviewGridRenderer {
 
     return changedFields.size;
   }
+
 }

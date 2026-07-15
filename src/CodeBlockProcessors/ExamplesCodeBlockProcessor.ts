@@ -1,5 +1,4 @@
 import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
-import type { VaultQueryPluginContext } from '../types/PluginContext';
 import * as examplesFunctions from '../generated-help/examples-functions.generated';
 import * as examplesViews from '../generated-help/examples-views.generated';
 import type { RenderContext } from '../generated-help/index.generated';
@@ -9,7 +8,7 @@ type ExamplePage = 'functions' | 'views';
 export class ExamplesCodeBlockProcessor {
   private component: Component;
 
-  public constructor(private app: App, private _plugin: VaultQueryPluginContext) {
+  public constructor(private app: App) {
     this.component = new Component();
     this.component.load();
   }

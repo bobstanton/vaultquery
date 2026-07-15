@@ -163,12 +163,13 @@ export abstract class BaseRenderer {
     }, 2000);
   }
 
-  static addCopyAsMarkdownButton(buttonContainer: HTMLElement, results: Record<string, unknown>[], columns?: string[]): void {
+  static addCopyAsMarkdownButton(buttonContainer: HTMLElement, results: Record<string, unknown>[] | (() => Record<string, unknown>[]), columns?: string[]): void {
     this.createFloatingButton(buttonContainer, {
       ariaLabel: 'Copy as Markdown',
       icon: 'clipboard',
       onClick: async () => {
-        const markdownTable = this.generateMarkdownTable(results, columns);
+        const currentResults = typeof results === 'function' ? results() : results;
+        const markdownTable = this.generateMarkdownTable(currentResults, columns);
         await navigator.clipboard.writeText(markdownTable);
       }
     });

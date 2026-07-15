@@ -4,8 +4,9 @@ import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { logger as rootLogger } from '../utils/logger';
 import { detectDmlOperationInSql, stripSqlComments } from '../utils/SQLParsingUtils';
 import { formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
-import { isCodeElementInsidePre } from './InlineMarkdownUtils';
-import { createInlineDecorationExtension, type InlineSyntax } from './InlineDecorationUtils';
+import { processReadingViewInlineCode } from './InlineMarkdownUtils';
+import { createInlineDecorationExtension } from './InlineDecorationUtils';
+import type { InlineSyntax } from './InlineDecorationUtils';
 import { setButtonLoading, showQueryFailedNotice } from './InlineDomState';
 import { waitForInlineVaultQueryReady } from './InlineVaultQueryReadiness';
 
@@ -117,7 +118,8 @@ function showInlineButtonResult(result: InlineButtonResult): void {
 }
 
 function createInlineButtonElement(owner: Document, plugin: VaultQueryPluginContext, spec: InlineButtonSpec, sourcePath: string, debounce = true): HTMLButtonElement {
-  const button = owner.createElement('button');
+  const button = owner.body.createEl('button');
+  button.detach();
   let lastClickTime = 0;
 
   button.className = getButtonClasses(spec);
@@ -192,17 +194,8 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPluginContext,
     return;
   }
 
-  const codeElements = element.querySelectorAll('code');
-
-  for (const codeEl of Array.from(codeElements)) {
-    if (isCodeElementInsidePre(codeEl)) continue;
-
-    const text = codeEl.textContent?.trim();
-    if (!text) continue;
-
+  processReadingViewInlineCode(element, (text) => {
     const spec = parseInlineButtonText(text);
-    if (!spec) continue;
-
-    codeEl.replaceWith(createInlineButtonElement(element.ownerDocument, plugin, spec, sourcePath, false));
-  }
+    return spec ? createInlineButtonElement(element.ownerDocument, plugin, spec, sourcePath, false) : null;
+  });
 }

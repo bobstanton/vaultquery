@@ -3,61 +3,12 @@
  * Uses adapter pattern to abstract away database access differences.
  */
 
-import {
-  INDEXING_SQL,
-  tagsToRows,
-  linksToRows,
-  tableCellsToRows,
-  tasksToRows,
-  headingsToRows,
-  listItemsToRows,
-  propertyToParams,
-  userViewToParams,
-  userFunctionToParams,
-  userTriggerToParams,
-  type InputPropertyData,
-} from './IndexingQueries';
+import { INDEXING_SQL, noteToParams, noteToUpdateParams, tagsToRows, linksToRows, unresolvedLinksToRows, embedsToRows, tableCellsToRows, blocksToRows, tasksToRows, headingsToRows, listItemsToRows, propertyToParams, userViewToParams, userFunctionToParams, userTriggerToParams } from './IndexingQueries';
+import type { InputPropertyData } from './IndexingQueries';
 import { hashString } from '../utils/StringUtils';
-import {
-  detectTagChanges,
-  detectLinkChanges,
-  detectTableCellChanges,
-  detectTaskChanges,
-  detectHeadingChanges,
-  detectListItemChanges,
-  detectPropertyChanges,
-  toDbTableCell,
-  toDbTask,
-  toDbHeading,
-  toDbListItem,
-  parseTaskRows,
-  parseListItemRows,
-  TASK_SELECT_COLUMNS,
-  LIST_ITEM_SELECT_COLUMNS,
-  type TagData,
-  type TagRow,
-  type LinkData,
-  type LinkRow,
-  type DbTableCellData,
-  type TableCellRow,
-  type DbTaskData,
-  type DbListItemData,
-  type HeadingData,
-  type HeadingRow,
-  type InputHeadingData,
-  type PropertyData,
-  type PropertyChanges,
-  type SqlResult,
-} from './ChangeDetection';
-import type {
-  TableCellData as InputTableCellData,
-  IndexNoteData,
-  TaskData,
-  ListItemData,
-  UserViewData,
-  UserFunctionData,
-  UserTriggerData,
-} from '../types';
+import { detectTagChanges, detectLinkChanges, detectTableCellChanges, detectTaskChanges, detectHeadingChanges, detectListItemChanges, detectPropertyChanges, toDbTableCell, toDbTask, toDbHeading, toDbListItem, parseTaskRows, parseListItemRows, TASK_SELECT_COLUMNS, LIST_ITEM_SELECT_COLUMNS } from './ChangeDetection';
+import type { TagData, TagRow, LinkData, LinkRow, DbTableCellData, TableCellRow, DbTaskData, DbListItemData, HeadingData, HeadingRow, InputHeadingData, PropertyData, PropertyChanges, SqlResult } from './ChangeDetection';
+import type { TableCellData as InputTableCellData, IndexNoteData, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
 
 export interface IndexingLogger {
   debug(message: string, ...data: unknown[]): void;
@@ -82,9 +33,20 @@ export interface IndexingDbAdapter {
   runMultiRowInsert(baseSQL: string, columnsCount: number, rows: (string | number | null)[][]): void;
 }
 
+type SqlRow = SqlResult[number]['values'][number];
+
+function execRows<T>(adapter: IndexingDbAdapter, sql: string, params: unknown[], mapRow: (row: SqlRow) => T): T[] {
+  const result = adapter.exec(sql, params);
+  if (result.length === 0) {
+    return [];
+  }
+  return result[0].values.map(mapRow);
+}
+
 interface IndexingOperationHandlers {
   insertNote(note: IndexNoteData['note']): void;
   replaceProperties(path: string, frontmatterData: IndexNoteData['frontmatterData'], skipDeletes: boolean): void;
+  propertiesMatRefreshSql?(): { deleteSql: string; insertSql: string } | null;
   replaceTasks(path: string, tasks: IndexNoteData['tasks'], skipDeletes: boolean): void;
   replaceHeadings(path: string, headings: IndexNoteData['headings'], skipDeletes: boolean): void;
   replaceListItems(path: string, listItems: IndexNoteData['listItems'], skipDeletes: boolean): void;
@@ -97,20 +59,40 @@ interface IndexingOperationHandlers {
  * Main-thread and worker databases provide handlers for operations that need
  * environment-specific behavior, while pure table replacements stay shared here.
  */
+export function insertNoteCore(adapter: IndexingDbAdapter, note: IndexNoteData['note']): void {
+  const exists = adapter.exec(INDEXING_SQL.CHECK_NOTE_EXISTS, [note.path]);
+
+  if (exists.length > 0 && exists[0].values.length > 0) {
+    adapter.runPrepared(INDEXING_SQL.UPDATE_NOTE, noteToUpdateParams(note));
+  } else {
+    adapter.runPrepared(INDEXING_SQL.INSERT_NOTE, noteToParams(note));
+  }
+}
+
 export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: IndexNoteData, skipDeletes: boolean, handlers: IndexingOperationHandlers, logger: IndexingLogger): void {
-  const { note, frontmatterData, tables, tableCells, tasks, headings, links, tags, listItems, userViews, userFunctions, userTriggers } = data;
+  const { note, frontmatterData, tables, tableCells, tasks, headings, links, unresolvedLinks, embeds, tags, listItems, blocks, userViews, userFunctions, userTriggers } = data;
 
   handlers.insertNote(note);
 
   const replacements: Array<[unknown[] | undefined, () => void]> = [
-    [frontmatterData, () => handlers.replaceProperties(note.path, frontmatterData, skipDeletes)],
+    [frontmatterData, () => {
+      handlers.replaceProperties(note.path, frontmatterData, skipDeletes);
+      const matRefresh = handlers.propertiesMatRefreshSql?.();
+      if (matRefresh) {
+        adapter.run(matRefresh.deleteSql, [note.path]);
+        adapter.run(matRefresh.insertSql, [note.path]);
+      }
+    }],
     [tables, () => replaceTablesCore(adapter, note.path, tables, skipDeletes)],
     [tableCells, () => replaceTableCellsCore(adapter, note.path, tableCells, skipDeletes)],
     [tasks, () => handlers.replaceTasks(note.path, tasks, skipDeletes)],
     [headings, () => handlers.replaceHeadings(note.path, headings, skipDeletes)],
     [links, () => replaceLinksCore(adapter, note.path, links, skipDeletes)],
+    [unresolvedLinks, () => replaceUnresolvedLinksCore(adapter, note.path, unresolvedLinks, skipDeletes)],
+    [embeds, () => replaceEmbedsCore(adapter, note.path, embeds, skipDeletes)],
     [tags, () => replaceTagsCore(adapter, note.path, tags, skipDeletes)],
     [listItems, () => handlers.replaceListItems(note.path, listItems, skipDeletes)],
+    [blocks, () => replaceBlocksCore(adapter, note.path, blocks, skipDeletes)],
   ];
 
   for (const [value, replace] of replacements) {
@@ -122,6 +104,27 @@ export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: 
   handlers.replaceUserTriggers(note.path, userTriggers, skipDeletes);
 }
 
+function replaceUnresolvedLinksCore(adapter: IndexingDbAdapter, path: string, unresolvedLinks: IndexNoteData['unresolvedLinks'], skipDeletes: boolean): void {
+  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_UNRESOLVED_LINKS, [path]);
+  if (unresolvedLinks?.length) {
+    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_UNRESOLVED_LINKS_BASE, INDEXING_SQL.UNRESOLVED_LINKS_COLUMNS, unresolvedLinksToRows(path, unresolvedLinks));
+  }
+}
+
+function replaceEmbedsCore(adapter: IndexingDbAdapter, path: string, embeds: IndexNoteData['embeds'], skipDeletes: boolean): void {
+  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_EMBEDS, [path]);
+  if (embeds?.length) {
+    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_EMBEDS_BASE, INDEXING_SQL.EMBEDS_COLUMNS, embedsToRows(path, embeds));
+  }
+}
+
+function replaceBlocksCore(adapter: IndexingDbAdapter, path: string, blocks: IndexNoteData['blocks'], skipDeletes: boolean): void {
+  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_BLOCKS, [path]);
+  if (blocks?.length) {
+    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_BLOCKS_BASE, INDEXING_SQL.BLOCKS_COLUMNS, blocksToRows(path, blocks));
+  }
+}
+
 function replaceTagsCore(adapter: IndexingDbAdapter, path: string, tags: TagData[] | undefined, skipDeletes: boolean): void {
   if (!tags?.length) {
     if (!skipDeletes) {
@@ -130,20 +133,16 @@ function replaceTagsCore(adapter: IndexingDbAdapter, path: string, tags: TagData
     return;
   }
 
-  const existing: TagRow[] = [];
-  const result = adapter.exec(
+  const existing: TagRow[] = execRows(
+    adapter,
     'SELECT id, tag_name, line_number FROM tags WHERE path = ?',
-    [path]
+    [path],
+    row => ({
+      id: row[0] as number,
+      tag_name: row[1] as string,
+      line_number: row[2] as number
+    })
   );
-  if (result.length > 0 && result[0].values) {
-    for (const row of result[0].values) {
-      existing.push({
-        id: row[0] as number,
-        tag_name: row[1] as string,
-        line_number: row[2] as number
-      });
-    }
-  }
 
   const changes = detectTagChanges(tags, existing);
 
@@ -172,23 +171,23 @@ function replaceLinksCore(adapter: IndexingDbAdapter, path: string, links: LinkD
     return;
   }
 
-  const existing: LinkRow[] = [];
-  const result = adapter.exec(
-    'SELECT id, link_text, link_target, link_target_path, link_type, line_number FROM links WHERE path = ?',
-    [path]
+  const existing: LinkRow[] = execRows(
+    adapter,
+    'SELECT id, link_text, link_target, link_target_path, link_type, line_number, original, start_offset, end_offset, frontmatter_key FROM links WHERE path = ?',
+    [path],
+    row => ({
+      id: row[0] as number,
+      link_text: row[1] as string,
+      link_target: row[2] as string,
+      link_target_path: row[3] as string | null,
+      link_type: row[4] as string,
+      line_number: row[5] as number | null,
+      original: row[6] as string | null,
+      start_offset: row[7] as number | null,
+      end_offset: row[8] as number | null,
+      frontmatter_key: row[9] as string | null,
+    })
   );
-  if (result.length > 0 && result[0].values) {
-    for (const row of result[0].values) {
-      existing.push({
-        id: row[0] as number,
-        link_text: row[1] as string,
-        link_target: row[2] as string,
-        link_target_path: row[3] as string | null,
-        link_type: row[4] as string,
-        line_number: row[5] as number,
-      });
-    }
-  }
 
   const changes = detectLinkChanges(links, existing);
 
@@ -198,8 +197,8 @@ function replaceLinksCore(adapter: IndexingDbAdapter, path: string, links: LinkD
 
   for (const { id, new: link } of changes.updated) {
     adapter.run(
-      'UPDATE links SET link_text = ?, link_target = ?, link_target_path = ?, link_type = ?, line_number = ? WHERE id = ?',
-      [link.link_text, link.link_target, link.link_target_path, link.link_type, link.line_number, id]
+      'UPDATE links SET link_text = ?, link_target = ?, link_target_path = ?, link_type = ?, line_number = ?, original = ?, start_offset = ?, end_offset = ?, frontmatter_key = ? WHERE id = ?',
+      [link.link_text, link.link_target, link.link_target_path, link.link_type, link.line_number, link.original, link.start_offset, link.end_offset, link.frontmatter_key, id]
     );
   }
 
@@ -220,24 +219,20 @@ function replaceTableCellsCore(adapter: IndexingDbAdapter, path: string, tableCe
     return;
   }
 
-  const existing: TableCellRow[] = [];
-  const result = adapter.exec(
+  const existing: TableCellRow[] = execRows(
+    adapter,
     'SELECT id, table_index, table_name, row_index, column_name, cell_value, line_number FROM table_cells WHERE path = ?',
-    [path]
+    [path],
+    row => ({
+      id: row[0] as number,
+      table_index: row[1] as number,
+      table_name: row[2] as string | null,
+      row_index: row[3] as number,
+      column_name: row[4] as string,
+      cell_value: row[5] as string,
+      line_number: row[6] as number | null
+    })
   );
-  if (result.length > 0 && result[0].values) {
-    for (const row of result[0].values) {
-      existing.push({
-        id: row[0] as number,
-        table_index: row[1] as number,
-        table_name: row[2] as string | null,
-        row_index: row[3] as number,
-        column_name: row[4] as string,
-        cell_value: row[5] as string,
-        line_number: row[6] as number | null
-      });
-    }
-  }
 
   const file: DbTableCellData[] = tableCells.map(toDbTableCell);
 
@@ -290,24 +285,19 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
     return;
   }
 
-  const existing = adapter.exec(
+  const existingRows: TableDbRow[] = execRows(
+    adapter,
     'SELECT table_index, table_name, block_id, start_offset, end_offset, line_number FROM tables WHERE path = ? ORDER BY table_index',
-    [path]
+    [path],
+    row => ({
+      table_index: row[0] as number,
+      table_name: row[1] as string | null,
+      block_id: row[2] as string | null,
+      start_offset: row[3] as number | null,
+      end_offset: row[4] as number | null,
+      line_number: row[5] as number | null
+    })
   );
-
-  const existingRows: TableDbRow[] = [];
-  if (existing.length > 0 && existing[0].values) {
-    for (const row of existing[0].values) {
-      existingRows.push({
-        table_index: row[0] as number,
-        table_name: row[1] as string | null,
-        block_id: row[2] as string | null,
-        start_offset: row[3] as number | null,
-        end_offset: row[4] as number | null,
-        line_number: row[5] as number | null
-      });
-    }
-  }
 
   const sortedFileTables = [...tables].sort((a, b) => a.table_index - b.table_index);
 
@@ -461,25 +451,21 @@ export function replaceHeadingsCore(adapter: IndexingDbAdapter, path: string, he
     return;
   }
 
-  const existing: HeadingRow[] = [];
-  const result = adapter.exec(
+  const existing: HeadingRow[] = execRows(
+    adapter,
     'SELECT id, level, heading_text, line_number, block_id, anchor_hash, start_offset, end_offset FROM headings WHERE path = ?',
-    [path]
+    [path],
+    row => ({
+      id: row[0] as number,
+      level: row[1] as number,
+      heading_text: row[2] as string,
+      line_number: row[3] as number,
+      block_id: row[4] as string | null,
+      anchor_hash: row[5] as string | null,
+      start_offset: row[6] as number | null,
+      end_offset: row[7] as number | null
+    })
   );
-  if (result.length > 0 && result[0].values) {
-    for (const row of result[0].values) {
-      existing.push({
-        id: row[0] as number,
-        level: row[1] as number,
-        heading_text: row[2] as string,
-        line_number: row[3] as number,
-        block_id: row[4] as string | null,
-        anchor_hash: row[5] as string | null,
-        start_offset: row[6] as number | null,
-        end_offset: row[7] as number | null
-      });
-    }
-  }
 
   const file: HeadingData[] = headings.map(toDbHeading);
 
@@ -588,21 +574,17 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
     return null;
   }
 
-  const existing: PropertyData[] = [];
-  const result = adapter.exec(
+  const existing: PropertyData[] = execRows(
+    adapter,
     'SELECT key, value, value_type, array_index FROM properties WHERE path = ?',
-    [path]
+    [path],
+    row => ({
+      key: row[0] as string,
+      value: row[1] as string,
+      value_type: row[2] as string,
+      array_index: row[3] as number | null
+    })
   );
-  if (result.length > 0 && result[0].values) {
-    for (const row of result[0].values) {
-      existing.push({
-        key: row[0] as string,
-        value: row[1] as string,
-        value_type: row[2] as string,
-        array_index: row[3] as number | null
-      });
-    }
-  }
 
   const file: PropertyData[] = propertiesData.map(p => ({
     key: p.key,
@@ -628,8 +610,10 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
         valueType: prop.value_type,
         arrayIndex: prop.array_index
       }));
-    } catch {
-      // Silently skip duplicate property inserts
+    } catch (error) {
+      if (!/constraint/i.test(error instanceof Error ? error.message : String(error))) {
+        throw error;
+      }
     }
   }
 
@@ -646,49 +630,69 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
   return { existing, changes };
 }
 
-function getViewsForPathCore(adapter: IndexingDbAdapter, path: string, logger: IndexingLogger): string[] {
+interface UserEntityKind<T> {
+  label: string;
+  selectForPathSql: string;
+  deleteForPathSql: string;
+  dropExisting(name: string): void;
+  reinsert(items: T[]): void;
+}
+
+function getUserEntityNamesForPathCore<T>(adapter: IndexingDbAdapter, path: string, kind: UserEntityKind<T>, logger: IndexingLogger): string[] {
   try {
-    const results = adapter.exec(INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH, [path]);
+    const results = adapter.exec(kind.selectForPathSql, [path]);
     return results[0]?.values?.map(row => row[0] as string) ?? [];
   } catch (error) {
-    logger.error(`Failed to load views for "${path}"`, error);
+    logger.error(`Failed to load ${kind.label}s for "${path}"`, error);
     throw error;
   }
 }
 
-function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userViews: UserViewData[] | undefined, skipDeletes: boolean, logger: IndexingLogger): void {
-  if (userViews === undefined) {
+function replaceUserEntitiesCore<T>(adapter: IndexingDbAdapter, path: string, items: T[] | undefined, skipDeletes: boolean, kind: UserEntityKind<T>, logger: IndexingLogger): void {
+  if (items === undefined) {
     return;
   }
 
   if (!skipDeletes) {
-    const existingViews = getViewsForPathCore(adapter, path, logger);
-    adapter.runPrepared(INDEXING_SQL.DELETE_USER_VIEWS, [path]);
+    const existingNames = getUserEntityNamesForPathCore(adapter, path, kind, logger);
+    adapter.runPrepared(kind.deleteForPathSql, [path]);
 
-    for (const viewName of existingViews) {
+    for (const name of existingNames) {
       try {
-        adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []);
+        kind.dropExisting(name);
       } catch (error) {
-        logger.debug(`Failed to drop view "${viewName}"`, error);
+        logger.debug(`Failed to drop ${kind.label} "${name}"`, error);
       }
     }
   }
 
-  if (userViews.length > 0) {
-    for (const view of userViews) {
-      const sqlHash = hashString(view.sql);
-      adapter.runPrepared(INDEXING_SQL.INSERT_USER_VIEW, userViewToParams(path, view, sqlHash));
-    }
-
-    for (const { view_name: viewName, sql } of userViews) {
-      try {
-        adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []);
-        adapter.run(sql, []);
-      } catch (error) {
-        logger.error(`Failed to create view "${viewName}"`, error);
-      }
-    }
+  if (items.length > 0) {
+    kind.reinsert(items);
   }
+}
+
+function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userViews: UserViewData[] | undefined, skipDeletes: boolean, logger: IndexingLogger): void {
+  replaceUserEntitiesCore(adapter, path, userViews, skipDeletes, {
+    label: 'view',
+    selectForPathSql: INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH,
+    deleteForPathSql: INDEXING_SQL.DELETE_USER_VIEWS,
+    dropExisting: (viewName) => adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []),
+    reinsert: (views) => {
+      for (const view of views) {
+        const sqlHash = hashString(view.sql);
+        adapter.runPrepared(INDEXING_SQL.INSERT_USER_VIEW, userViewToParams(path, view, sqlHash));
+      }
+
+      for (const { view_name: viewName, sql } of views) {
+        try {
+          adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []);
+          adapter.run(sql, []);
+        } catch (error) {
+          logger.error(`Failed to create view "${viewName}"`, error);
+        }
+      }
+    },
+  }, logger);
 }
 
 type RegisterFunctionHook = (name: string, source: string) => void;
@@ -714,48 +718,27 @@ export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: strin
   }
 }
 
-function getTriggersForPathCore(adapter: IndexingDbAdapter, path: string, logger: IndexingLogger): string[] {
-  try {
-    const results = adapter.exec(INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH, [path]);
-    return results[0]?.values?.map(row => row[0] as string) ?? [];
-  } catch (error) {
-    logger.error(`Failed to load triggers for "${path}"`, error);
-    throw error;
-  }
-}
-
 type ActivateTriggerHook = (triggerName: string, triggerSql: string, path: string) => void;
 
 export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string, userTriggers: UserTriggerData[] | undefined, skipDeletes: boolean, activateTrigger: ActivateTriggerHook | null, logger: IndexingLogger): void {
-  if (userTriggers === undefined) {
-    return;
-  }
+  replaceUserEntitiesCore(adapter, path, userTriggers, skipDeletes, {
+    label: 'trigger',
+    selectForPathSql: INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH,
+    deleteForPathSql: INDEXING_SQL.DELETE_USER_TRIGGERS,
+    dropExisting: (triggerName) => adapter.run(`DROP TRIGGER IF EXISTS "_vq_user_${triggerName}"`, []),
+    reinsert: (triggers) => {
+      for (const trigger of triggers) {
+        const sqlHash = hashString(trigger.trigger_sql);
+        adapter.runPrepared(INDEXING_SQL.INSERT_USER_TRIGGER, userTriggerToParams(path, trigger, sqlHash));
 
-  if (!skipDeletes) {
-    const existingTriggers = getTriggersForPathCore(adapter, path, logger);
-    adapter.runPrepared(INDEXING_SQL.DELETE_USER_TRIGGERS, [path]);
-
-    for (const triggerName of existingTriggers) {
-      try {
-        adapter.run(`DROP TRIGGER IF EXISTS "_vq_user_${triggerName}"`, []);
-      } catch (error) {
-        logger.debug(`Failed to drop trigger "${triggerName}"`, error);
-      }
-    }
-  }
-
-  if (userTriggers?.length) {
-    for (const trigger of userTriggers) {
-      const sqlHash = hashString(trigger.trigger_sql);
-      adapter.runPrepared(INDEXING_SQL.INSERT_USER_TRIGGER, userTriggerToParams(path, trigger, sqlHash));
-
-      if (activateTrigger) {
-        try {
-          activateTrigger(trigger.trigger_name, trigger.trigger_sql, path);
-        } catch (error) {
-          logger.warn(`Failed to activate trigger "${trigger.trigger_name}" during indexing`, error);
+        if (activateTrigger) {
+          try {
+            activateTrigger(trigger.trigger_name, trigger.trigger_sql, path);
+          } catch (error) {
+            logger.warn(`Failed to activate trigger "${trigger.trigger_name}" during indexing`, error);
+          }
         }
       }
-    }
-  }
+    },
+  }, logger);
 }

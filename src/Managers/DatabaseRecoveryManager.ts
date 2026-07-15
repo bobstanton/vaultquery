@@ -136,7 +136,7 @@ export class DatabaseRecoveryManager {
     }
     catch (error) {
       logger.recovery.error('Failed to recover from database loss', error);
-      new Notice('VaultQuery: Failed to recover database. Please restart Obsidian.', 10000);
+      new Notice('VaultQuery: Failed to recover database.', 10000);
     }
   }
 }

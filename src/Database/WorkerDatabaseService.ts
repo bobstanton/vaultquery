@@ -216,17 +216,30 @@ export class WorkerDatabase {
   }
 
   public async saveToDisk(): Promise<void> {
-    if (this.useMemoryStorage || !this.fileAdapter) return;
+    if (this.useMemoryStorage || !this.fileAdapter) {
+      logger.debug('Database persistence skipped', {
+        reason: this.useMemoryStorage ? 'memory-storage-enabled' : 'file-adapter-unavailable',
+      });
+      return;
+    }
 
     try {
+      const exportStartedAt = performance.now();
       const data = await this.callWorker<ArrayBuffer>({ type: 'export' });
+      const exportMs = performance.now() - exportStartedAt;
       const databaseDir = getDatabaseDir(this.configDir);
 
       if (!(await this.fileAdapter.exists(databaseDir))) {
         await this.fileAdapter.mkdir(databaseDir);
       }
 
+      const writeStartedAt = performance.now();
       await this.fileAdapter.writeBinary(this.databasePath, data);
+      logger.debug('Database persistence phases', {
+        bytes: data.byteLength,
+        exportMs: Math.round(exportMs),
+        writeMs: Math.round(performance.now() - writeStartedAt),
+      });
     } catch (error) {
       logger.error('Failed to save database', error);
     }

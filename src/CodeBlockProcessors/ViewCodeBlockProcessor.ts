@@ -3,6 +3,7 @@ import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
 import { parseSQLObjectName, validateSQLObjectStart } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import type { RenderContext } from '../Renderers/BaseRenderer';
@@ -136,7 +137,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
     }
 
     const existing = await this.plugin.api.query(
-      `SELECT name FROM sqlite_master WHERE type = 'view' AND name = "${viewName.replace(/"/g, '""')}" LIMIT 1`
+      `SELECT name FROM sqlite_master WHERE type = 'view' AND name = ${quoteIdentifier(viewName)} LIMIT 1`
     );
 
     return existing.length === 0;

@@ -87,7 +87,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   const para4 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
   para4.appendText("These functions queue actions that modify actual markdown files:");
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "General Functions" });
-  const tableWrapper = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });
   const thead = table.createEl('thead');
   const row = thead.createEl('tr');
@@ -141,7 +141,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td10.createEl('code', { cls: 'vaultquery-help-code', text: "ms" });
   td10.appendText(" milliseconds of idle time passes. Call at START of trigger body.");
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "Task Functions" });
-  const tableWrapper1 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper1 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table1 = tableWrapper1.createEl('table', { cls: 'vaultquery-help-table' });
   const thead1 = table1.createEl('thead');
   const row10 = thead1.createEl('tr');
@@ -179,7 +179,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td18.createEl('code', { cls: 'vaultquery-help-code', text: "vq_delete_task(path, line_number)" });
   row16.createEl('td', { text: "Delete a task at the specified line" });
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "Heading Functions" });
-  const tableWrapper2 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper2 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table2 = tableWrapper2.createEl('table', { cls: 'vaultquery-help-table' });
   const thead2 = table2.createEl('thead');
   const row17 = thead2.createEl('tr');
@@ -203,7 +203,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td22.createEl('code', { cls: 'vaultquery-help-code', text: "vq_delete_heading(path, line_number)" });
   row21.createEl('td', { text: "Delete a heading at the specified line" });
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "List Item Functions" });
-  const tableWrapper3 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper3 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table3 = tableWrapper3.createEl('table', { cls: 'vaultquery-help-table' });
   const thead3 = table3.createEl('thead');
   const row22 = thead3.createEl('tr');
@@ -223,7 +223,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td25.createEl('code', { cls: 'vaultquery-help-code', text: "vq_delete_list_item(path, line_number)" });
   row25.createEl('td', { text: "Delete a list item at the specified line" });
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "Table Functions" });
-  const tableWrapper4 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper4 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table4 = tableWrapper4.createEl('table', { cls: 'vaultquery-help-table' });
   const thead4 = table4.createEl('thead');
   const row26 = thead4.createEl('tr');
@@ -253,7 +253,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   td31.createEl('code', { cls: 'vaultquery-help-code', text: "row_index" });
   td31.appendText(" is 0-based from data rows.");
   container.createEl('h4', { cls: 'vaultquery-help-heading vaultquery-help-h4', text: "Note Functions" });
-  const tableWrapper5 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper5 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table5 = tableWrapper5.createEl('table', { cls: 'vaultquery-help-table' });
   const thead5 = table5.createEl('thead');
   const row30 = thead5.createEl('tr');
@@ -269,7 +269,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   para5.appendText("Regular SQL statements can also be used in triggers. Changes to the following are ");
   para5.createEl('strong', { cls: 'vaultquery-help-bold', text: "automatically synced back to files" });
   para5.appendText(":");
-  const tableWrapper6 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper6 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table6 = tableWrapper6.createEl('table', { cls: 'vaultquery-help-table' });
   const thead6 = table6.createEl('thead');
   const row32 = thead6.createEl('tr');

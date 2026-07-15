@@ -36,10 +36,10 @@ export function checkSqlJsDatabaseHealth(db: Database | null, diagnostics: Recor
 
     return { healthy: true, diagnostics };
   }
-  catch (error) {
-    const message = getErrorMessage(error);
-    diagnostics.exceptionType = error?.constructor?.name;
-    diagnostics.exceptionMessage = message;
+	  catch (error) {
+	    const message = getErrorMessage(error);
+	    diagnostics.exceptionType = error instanceof Error ? error.constructor.name : typeof error;
+	    diagnostics.exceptionMessage = message;
 
     return {
       healthy: false,

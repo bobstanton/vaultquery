@@ -2,8 +2,11 @@ import { Database } from 'sql.js';
 import { ERROR_MESSAGES, WARNING_MESSAGES, friendlySqliteError } from '../utils/ErrorMessages';
 import { collectStatementRows } from '../Database/StatementRows';
 import { logger as rootLogger } from '../utils/logger';
-import { appendOrReplaceReturning, detectDmlOperation, extractDmlTargetTable, splitSqlStatements, stripLeadingCte, stripReturningClause, stripTrailingSemicolon, type DmlOperation } from '../utils/SQLParsingUtils';
+import { appendOrReplaceReturning, detectDmlOperation, extractDmlTargetTable, splitSqlStatements, stripLeadingCte, stripReturningClause, stripTrailingSemicolon } from '../utils/SQLParsingUtils';
+import type { DmlOperation } from '../utils/SQLParsingUtils';
 import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
+import { formatUnknownValue } from '../utils/ResultFormatUtils';
+import { expandListItemViewDeletes } from '../WriteSync/ListItemDescendants';
 
 const logger = rootLogger.scope('Preview');
 
@@ -21,6 +24,14 @@ export type PreviewResult = {
   sqlToApply: SqlAndParams[];
   multiResults?: PreviewResult[];
 };
+
+export function previewRowCount(result: Pick<PreviewResult, 'before' | 'after'>): number {
+  return Math.max(result.before.length, result.after.length);
+}
+
+export function previewTotalRowCount(results: readonly Pick<PreviewResult, 'before' | 'after'>[]): number {
+  return results.reduce((sum, result) => sum + previewRowCount(result), 0);
+}
 
 export class PreviewService {
   public constructor(private db: Database) {}
@@ -53,65 +64,12 @@ export class PreviewService {
     if (!table) throw new Error(ERROR_MESSAGES.DML_TABLE_NOT_FOUND);
 
     const pkCols = getPrimaryKeyCols(this.db, table);
-    const savepoint = "preview";
-    this.db.exec(`SAVEPOINT ${savepoint}`);
-    try {
-      if (op === "delete") {
-        const affected = executeDeleteAndCaptureRows(this.db, table, sql, params);
-        const rowids = tryCollectRowids(affected);
-        const ids = affected.map(r => pkCols.map(c => r[c]));
-
-        this.db.exec(`ROLLBACK TO ${savepoint}`);
-        const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
-        this.db.exec(`RELEASE ${savepoint}`);
-
-        return {
-          op, table, pkCols, ids,
-          rowids: rowids.length ? rowids : undefined,
-          before, after,
-          sqlToApply: [{ sql: stripReturningClause(sql), params }]
-        };
-      }
-
-      let returningList = buildReturningList(pkCols, true);
-      let affected: Row[];
-      try {
-        affected = selectRows(this.db, appendOrReplaceReturning(sql, returningList), params);
-      }
-      catch {
-        returningList = buildReturningList(pkCols, false);
-        affected = selectRows(this.db, appendOrReplaceReturning(sql, returningList), params);
-      }
-
-      const rowids = tryCollectRowids(affected);
-      const ids = affected.map(r => pkCols.map(c => r[c]));
-
-      if (op === "update") {
-        this.db.exec(`ROLLBACK TO ${savepoint}`);
-      }
-      const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
-      if (op !== "update") {
-        this.db.exec(`ROLLBACK TO ${savepoint}`);
-      }
-
-      this.db.exec(`RELEASE ${savepoint}`);
-
-      return {
-        op, table, pkCols, ids,
-        rowids: rowids.length ? rowids : undefined,
-        before, after,
-        sqlToApply: [{ sql: stripReturningClause(sql), params }]
-      };
-    }
-    catch (e) {
-      try {
-        this.db.exec(`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
-      }
-      catch {
-        // Rollback failed - nothing we can do, re-throw original error
-      }
-      throw new Error(friendlySqliteError(e, { sql, table }));
-    }
+    return this.previewStatementWithSavepoint({ sql, op, table, pkCols }, params, {
+      savepoint: "preview",
+      applyChanges: false,
+      wrapErrors: true,
+      logRollbackFailures: false
+    });
   }
 
   private previewMultiStatementDml(statements: string[], params: unknown[] = []): PreviewResult {
@@ -175,64 +133,76 @@ export class PreviewService {
   }
 
   private previewStatementAndApplyToTransaction(statement: { sql: string; op: DmlOperation; table: string; pkCols: string[] }, params: unknown[]): PreviewResult {
-    const savepoint = "statement_preview";
+    return this.previewStatementWithSavepoint(statement, params, {
+      savepoint: "statement_preview",
+      applyChanges: true,
+      wrapErrors: false,
+      logRollbackFailures: true
+    });
+  }
+
+  private previewStatementWithSavepoint(
+    statement: { sql: string; op: DmlOperation; table: string; pkCols: string[] },
+    params: unknown[],
+    options: { savepoint: string; applyChanges: boolean; wrapErrors: boolean; logRollbackFailures: boolean }
+  ): PreviewResult {
+    const { sql, op, table, pkCols } = statement;
+    const { savepoint } = options;
     this.db.exec(`SAVEPOINT ${savepoint}`);
     try {
-      if (statement.op === "delete") {
-        const affected = executeDeleteAndCaptureRows(this.db, statement.table, statement.sql, params);
+      if (op === "delete") {
+        const affected = executeDeleteAndCaptureRows(this.db, table, sql, params);
         const rowids = tryCollectRowids(affected);
-        const ids = affected.map(r => statement.pkCols.map(c => r[c]));
+        const ids = affected.map(r => pkCols.map(c => r[c]));
 
         this.db.exec(`ROLLBACK TO ${savepoint}`);
-        const { before, after } = this.buildPreviewRows(statement.op, statement.table, statement.pkCols, affected, ids, rowids);
+        const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
         this.db.exec(`RELEASE ${savepoint}`);
 
-        this.db.run(stripReturningClause(statement.sql), params as (string | number | null | Uint8Array)[]);
+        if (options.applyChanges) {
+          this.db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
+        }
 
         return {
-          op: statement.op,
-          table: statement.table,
-          pkCols: statement.pkCols,
-          ids,
+          op, table, pkCols, ids,
           rowids: rowids.length ? rowids : undefined,
-          before,
-          after,
-          sqlToApply: [{ sql: stripReturningClause(statement.sql), params }]
+          before, after,
+          sqlToApply: [{ sql: stripReturningClause(sql), params }]
         };
       }
 
-      let returningList = buildReturningList(statement.pkCols, true);
+      let returningList = buildReturningList(pkCols, true);
       let affected: Row[];
       try {
-        affected = selectRows(this.db, appendOrReplaceReturning(statement.sql, returningList), params);
+        affected = selectRows(this.db, appendOrReplaceReturning(sql, returningList), params);
       }
       catch {
-        returningList = buildReturningList(statement.pkCols, false);
-        affected = selectRows(this.db, appendOrReplaceReturning(statement.sql, returningList), params);
+        returningList = buildReturningList(pkCols, false);
+        affected = selectRows(this.db, appendOrReplaceReturning(sql, returningList), params);
       }
 
       const rowids = tryCollectRowids(affected);
-      const ids = affected.map(r => statement.pkCols.map(c => r[c]));
-      if (statement.op === "update") {
-        this.db.exec(`ROLLBACK TO ${savepoint}`);
-      }
-      const { before, after } = this.buildPreviewRows(statement.op, statement.table, statement.pkCols, affected, ids, rowids);
+      const ids = affected.map(r => pkCols.map(c => r[c]));
 
-      if (statement.op !== "update") {
+      if (op === "update") {
         this.db.exec(`ROLLBACK TO ${savepoint}`);
       }
+      const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
+      if (op !== "update") {
+        this.db.exec(`ROLLBACK TO ${savepoint}`);
+      }
+
       this.db.exec(`RELEASE ${savepoint}`);
-      this.db.run(stripReturningClause(statement.sql), params as (string | number | null | Uint8Array)[]);
+
+      if (options.applyChanges) {
+        this.db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
+      }
 
       return {
-        op: statement.op,
-        table: statement.table,
-        pkCols: statement.pkCols,
-        ids,
+        op, table, pkCols, ids,
         rowids: rowids.length ? rowids : undefined,
-        before,
-        after,
-        sqlToApply: [{ sql: stripReturningClause(statement.sql), params }]
+        before, after,
+        sqlToApply: [{ sql: stripReturningClause(sql), params }]
       };
     }
     catch (error) {
@@ -241,7 +211,12 @@ export class PreviewService {
       }
       catch (rollbackError) {
         // Savepoint rollback is best-effort; preserve the original error below.
-        logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
+        if (options.logRollbackFailures) {
+          logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
+        }
+      }
+      if (options.wrapErrors) {
+        throw new Error(friendlySqliteError(error, { sql, table }));
       }
       throw error;
     }
@@ -283,49 +258,9 @@ export class PreviewService {
   }
 
   private expandListItemsViewDeletes(rows: Row[]): Row[] {
-    const expandedRows: Row[] = [];
-    const seen = new Set<string>();
-
-    for (const row of rows) {
-      const path = row.path;
-      const listIndex = row.list_index;
-      const itemIndex = row.item_index;
-
-      if (typeof path !== 'string' || typeof listIndex !== 'number' || typeof itemIndex !== 'number') {
-        continue;
-      }
-
-      const descendants = selectRows(
-        this.db,
-        `WITH RECURSIVE descendants(item_index) AS (
-          SELECT ?
-          UNION ALL
-          SELECT child.item_index
-          FROM list_items child
-          JOIN descendants parent
-            ON child.parent_index = parent.item_index
-          WHERE child.path = ?
-            AND child.list_index = ?
-        )
-        SELECT view_row.*
-        FROM list_items_view view_row
-        JOIN descendants d ON view_row.item_index = d.item_index
-        WHERE view_row.path = ?
-          AND view_row.list_index = ?
-        ORDER BY view_row.item_index`,
-        [itemIndex, path, listIndex, path, listIndex]
-      );
-
-      for (const descendant of descendants) {
-        const key = `${descendant.path}:${descendant.list_index}:${descendant.item_index}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          expandedRows.push(descendant);
-        }
-      }
-    }
-
-    return expandedRows;
+    const deletableRows = rows.filter(row =>
+      typeof row.path === 'string' && typeof row.list_index === 'number' && typeof row.item_index === 'number');
+    return expandListItemViewDeletes(deletableRows, (sql, params) => selectRows(this.db, sql, params), 'list_items_view');
   }
 
   private resetDeferredForeignKeys(): void {
@@ -436,40 +371,36 @@ function fetchByIds(db: Database, table: string, pkCols: string[], ids: unknown[
   }
 
   if (ids.length && pkCols.length) {
-    const tupleSize = pkCols.length;
-    const tuples = ids.filter(t => t.length === tupleSize);
-    if (tuples.length) {
-      const hasNulls = tuples.some(t => t.some(v => v === null));
+    const hasNulls = ids.some(t => t.some(v => v === null));
 
-      if (hasNulls) {
-        const conditions: string[] = [];
-        const allParams: unknown[] = [];
+    if (hasNulls) {
+      const conditions: string[] = [];
+      const allParams: unknown[] = [];
 
-        for (const tuple of tuples) {
-          const parts: string[] = [];
-          for (let i = 0; i < pkCols.length; i++) {
-            const col = quoteIdentifier(pkCols[i]);
-            if (tuple[i] === null) {
-              parts.push(`${col} IS NULL`);
-            }
-            else {
-              parts.push(`${col} = ?`);
-              allParams.push(tuple[i]);
-            }
+      for (const tuple of ids) {
+        const parts: string[] = [];
+        for (let i = 0; i < pkCols.length; i++) {
+          const col = quoteIdentifier(pkCols[i]);
+          if (tuple[i] === null) {
+            parts.push(`${col} IS NULL`);
           }
-          conditions.push(`(${parts.join(' AND ')})`);
+          else {
+            parts.push(`${col} = ?`);
+            allParams.push(tuple[i]);
+          }
         }
+        conditions.push(`(${parts.join(' AND ')})`);
+      }
 
-        const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE ${conditions.join(' OR ')}`;
-        return selectRows(db, sql, allParams);
-      }
-      else {
-        const cols = pkCols.map(quoteIdentifier).join(", ");
-        const placeholders = tuples.map(t => `(${qMarks(t.length)})`).join(", ");
-        const flatParams = tuples.flat();
-        const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE (${cols}) IN (${placeholders})`;
-        return selectRows(db, sql, flatParams);
-      }
+      const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE ${conditions.join(' OR ')}`;
+      return selectRows(db, sql, allParams);
+    }
+    else {
+      const cols = pkCols.map(quoteIdentifier).join(", ");
+      const placeholders = ids.map(t => `(${qMarks(t.length)})`).join(", ");
+      const flatParams = ids.flat();
+      const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE (${cols}) IN (${placeholders})`;
+      return selectRows(db, sql, flatParams);
     }
   }
   if (rowids.length) {
@@ -503,10 +434,10 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
     const rows = selectRows(db, `EXPLAIN ${s}`);
     
     for (const row of rows) {
-      const opcode = String(row.opcode ?? row.Opcode ?? "").toUpperCase();
+      const opcode = formatUnknownValue(row.opcode).toUpperCase();
       if (opcode !== "OPENWRITE") continue;
 
-      const rootpage = Number(row.p2 ?? row.P2);
+      const rootpage = Number(row.p2);
       
       if (!Number.isFinite(rootpage)) {
         continue;

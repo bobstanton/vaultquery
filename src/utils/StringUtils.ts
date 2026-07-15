@@ -44,7 +44,7 @@ export function escapeHTML(text: string): string {
 }
 
 export function escapeRegex(text: string): string {
-  return (text ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function processEscapeSequences(text: string): string {
@@ -57,17 +57,9 @@ export function processEscapeSequences(text: string): string {
 
 export function generateUniqueId(prefix = ''): string {
   const timestamp = Date.now();
-  let random: string;
-
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    const array = new Uint32Array(2);
-    crypto.getRandomValues(array);
-    random = array[0].toString(36) + array[1].toString(36);
-  }
-
-  else {
-    random = Math.random().toString(36).slice(2, 11);
-  }
+  const array = new Uint32Array(2);
+  crypto.getRandomValues(array);
+  const random = array[0].toString(36) + array[1].toString(36);
 
   return prefix ? `${prefix}-${timestamp}-${random}` : `${timestamp}-${random}`;
 }

@@ -6,7 +6,7 @@ export interface MarkdownCodeFence {
   end: number;
 }
 
-function scanMarkdownCodeFences(content: string): MarkdownCodeFence[] {
+export function scanMarkdownCodeFences(content: string): MarkdownCodeFence[] {
   const blocks: MarkdownCodeFence[] = [];
   const regex = /^(```|~~~)([^\s`~]*)[^\n]*\n([\s\S]*?)^\1\s*$/gm;
   let match: RegExpExecArray | null;
@@ -26,20 +26,8 @@ function scanMarkdownCodeFences(content: string): MarkdownCodeFence[] {
   return blocks;
 }
 
-export function extractMarkdownCodeFences(content: string): MarkdownCodeFence[] {
-  return scanMarkdownCodeFences(content);
-}
-
 export function findCodeBlockRanges(text: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  const codeBlockRegex = /^(```|~~~).*\n[\s\S]*?^\1\s*$/gm;
-
-  let match: RegExpExecArray | null;
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    ranges.push([match.index, match.index + match[0].length]);
-  }
-
-  return ranges;
+  return scanMarkdownCodeFences(text).map((block): [number, number] => [block.start, block.end]);
 }
 
 export function isInsideCodeBlock(pos: number, ranges: Array<[number, number]>): boolean {

@@ -51,6 +51,20 @@ export interface IndexNoteData {
     link_target: string;
     link_target_path: string | null;
     link_type: string;
+    line_number: number | null;
+    original: string | null;
+    start_offset: number | null;
+    end_offset: number | null;
+    frontmatter_key: string | null;
+  }>;
+  unresolvedLinks?: Array<{
+    link_target: string;
+    link_count: number;
+  }>;
+  embeds?: Array<{
+    embed_text: string;
+    embed_target: string;
+    embed_target_path: string | null;
     line_number: number;
   }>;
   tags?: Array<{
@@ -58,6 +72,13 @@ export interface IndexNoteData {
     line_number: number;
   }>;
   listItems?: ListItemData[];
+  blocks?: Array<{
+    block_id: string;
+    line_number: number;
+    start_offset: number;
+    end_offset: number;
+    section_type: string | null;
+  }>;
   userViews?: UserViewData[];
   userFunctions?: UserFunctionData[];
   userTriggers?: UserTriggerData[];

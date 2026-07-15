@@ -3,28 +3,18 @@ import { App } from 'obsidian';
 import { getDatabaseDir, getDatabasePath } from '../Settings/Settings';
 import type { WasmSettings } from '../Settings/Settings';
 import { PreviewService } from '../Services/PreviewService';
-import { getTablesOnlySQL, getIndexesForFeatures, EnabledFeatures } from './DatabaseSchema';
-import { PRAGMA_STATEMENTS } from './SchemaQueries';
-import {
-  INDEXING_SQL,
-  PREPARED_STATEMENT_CACHE_LIMIT,
-  MAX_ROWS_PER_INSERT_BATCH,
-  noteToParams,
-  noteToUpdateParams,
-} from './IndexingQueries';
-import {
-  replaceTasksCore,
-  replaceHeadingsCore,
-  replaceListItemsCore,
-  replacePropertiesCore,
-  replaceUserFunctionsCore,
-  replaceUserTriggersCore,
-  performIndexingOperationsCore,
-  type IndexingDbAdapter,
-} from './IndexingOperations';
+import type { EnabledFeatures } from './DatabaseSchema';
+import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache } from './SchemaOperations';
+import type { IndexCreationState } from './SchemaOperations';
+import { StatementCache } from './StatementCache';
+import { escapeSqlString } from '../utils/SqlIdentifierUtils';
+import { queryRows } from './QueryRows';
+import { INDEXING_SQL, PREPARED_STATEMENT_CACHE_LIMIT, MAX_ROWS_PER_INSERT_BATCH } from './IndexingQueries';
+import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
+import type { IndexingDbAdapter } from './IndexingOperations';
 import { CustomSQLFunctions } from './CustomSQLFunctions';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
-import { type VaultFileAdapter } from './DatabaseInterface';
+import type { VaultFileAdapter } from './DatabaseInterface';
 import { loadWasmBinary, cacheWasmBinaryIfNeeded, CDN_URL } from './WasmLoader';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
 import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
@@ -33,7 +23,6 @@ import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } fro
 import { rewriteTriggerWithPrefix } from '../utils/SQLParsingUtils';
 import { hashString } from '../utils/StringUtils';
 import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
-import { type SqlResult } from './ChangeDetection';
 import type { TriggerFunctions } from '../Triggers';
 import type { IndexNoteData, NoteRecord } from '../types';
 import type { PreviewResult } from '../Services/PreviewService';
@@ -59,15 +48,14 @@ export class VaultDatabase {
   private configDir: string;
   public readonly useMemoryStorage: boolean;
 
-  private preparedStatements = new Map<string, Statement>();
+  private statementCache = new StatementCache(PREPARED_STATEMENT_CACHE_LIMIT, (message, error) => logger.warn(message, error));
   private multiRowInsertSqlCache = new Map<string, string>();
   private previewService: PreviewService;
   public readonly schema: DatabaseSchemaManager;
   private triggerFunctions: TriggerFunctions | null = null;
 
   private dbLock: Promise<void> = Promise.resolve();
-  private indexesCreated = false;
-  private enabledFeatures: EnabledFeatures | null = null;
+  private indexState: IndexCreationState = { indexesCreated: false, enabledFeatures: null };
 
   private constructor(db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
     this.db = db;
@@ -77,6 +65,7 @@ export class VaultDatabase {
     this.configDir = configDir;
     this.previewService = new PreviewService(db);
     this.schema = new DatabaseSchemaManager(db);
+    this.schema.onPropertiesViewRebuilt = () => this.invalidatePropertiesMatRefreshSql();
   }
 
   public static async createFromBinary(app: App, configDir: string, data: ArrayBuffer, options: DatabaseOptions = {}): Promise<VaultDatabase> {
@@ -150,17 +139,30 @@ export class VaultDatabase {
   }
   
   public async saveToDisk(): Promise<void> {
-    if (this.useMemoryStorage || !this.fileAdapter) return;
+    if (this.useMemoryStorage || !this.fileAdapter) {
+      logger.debug('Database persistence skipped', {
+        reason: this.useMemoryStorage ? 'memory-storage-enabled' : 'file-adapter-unavailable',
+      });
+      return;
+    }
 
     try {
+      const exportStartedAt = performance.now();
       const array = this.db.export();
+      const exportMs = performance.now() - exportStartedAt;
       const databaseDir = getDatabaseDir(this.configDir);
       if (!(await this.fileAdapter.exists(databaseDir))) {
         await this.fileAdapter.mkdir(databaseDir);
       }
       
       const ab = array.buffer.slice(array.byteOffset, array.byteOffset + array.byteLength);
+      const writeStartedAt = performance.now();
       await this.fileAdapter.writeBinary(this.databasePath, ab as ArrayBuffer);
+      logger.debug('Database persistence phases', {
+        bytes: array.byteLength,
+        exportMs: Math.round(exportMs),
+        writeMs: Math.round(performance.now() - writeStartedAt),
+      });
     }
     catch (error) {
       logger.error(CONSOLE_ERRORS.DATABASE_SAVE_FAILED, error);
@@ -168,14 +170,7 @@ export class VaultDatabase {
   }
 
   private runPragmaStatements(): void {
-    try {
-      for (const pragma of PRAGMA_STATEMENTS) {
-        this.db.run(pragma);
-      }
-    }
-    catch (error) {
-      logger.warn(WARNING_MESSAGES.DATABASE_OPTIMIZATIONS_UNAVAILABLE, error);
-    }
+    runPragmaStatementsCore(this.db, error => logger.warn(WARNING_MESSAGES.DATABASE_OPTIMIZATIONS_UNAVAILABLE, error));
   }
 
   public async acquireDbLock(): Promise<() => void> {
@@ -230,29 +225,8 @@ export class VaultDatabase {
   }
 
   private getPreparedStatement(sql: string): Statement {
-    const cached = this.preparedStatements.get(sql);
-    if (cached) {
-      this.preparedStatements.delete(sql);
-      this.preparedStatements.set(sql, cached);
-      return cached;
-    }
-
     try {
-      const stmt = this.db.prepare(sql);
-      this.preparedStatements.set(sql, stmt);
-
-      if (this.preparedStatements.size > PREPARED_STATEMENT_CACHE_LIMIT) {
-        const firstKey = this.preparedStatements.keys().next().value;
-        if (firstKey) {
-          const oldStmt = this.preparedStatements.get(firstKey);
-          if (oldStmt) {
-            freePreparedStatement(oldStmt);
-          }
-          this.preparedStatements.delete(firstKey);
-        }
-      }
-
-      return stmt;
+      return this.statementCache.get(this.db, sql);
     }
     catch (error: unknown) {
       throw new Error(getErrorMessage(error) || ERROR_MESSAGES.SQL_PREPARE_FAILED);
@@ -260,60 +234,16 @@ export class VaultDatabase {
   }
 
   private cleanupPreparedStatements(): void {
-    for (const [, stmt] of this.preparedStatements) {
-      try {
-        stmt.free();
-      }
-      catch (error) {
-        logger.warn(WARNING_MESSAGES.STATEMENT_FREE_ERROR, error);
-      }
-    }
-    this.preparedStatements.clear();
-  }
-
-  private execSchemaBundle(sql: string): void {
-    this.db.run('BEGIN');
-    try {
-      this.db.run('PRAGMA foreign_keys = ON;');
-      this.db.exec(sql);
-      this.db.run('COMMIT');
-    }
-    catch (e) {
-      this.db.run('ROLLBACK');
-      throw e;
-    }
+    this.statementCache.freeAll();
   }
 
   private createSchema(): void {
-    this.execSchemaBundle(getTablesOnlySQL());
-    this.indexesCreated = false;
+    createSchemaCore(this.db, message => logger.info(message));
+    this.indexState.indexesCreated = false;
   }
 
   public createIndexes(features?: EnabledFeatures): void {
-    if (features) {
-      this.enabledFeatures = features;
-    }
-
-    if (this.indexesCreated) return;
-
-    try {
-      const effectiveFeatures = this.enabledFeatures ?? {
-        indexContent: true,
-        indexFrontmatter: true,
-        indexTables: true,
-        indexTasks: true,
-        indexHeadings: true,
-        indexLinks: true,
-        indexTags: true,
-        indexListItems: true
-      };
-      this.execSchemaBundle(getIndexesForFeatures(effectiveFeatures));
-      this.indexesCreated = true;
-    }
-    catch (error) {
-      logger.warn('Error creating indexes (may already exist)', error);
-      this.indexesCreated = true; 
-    }
+    createIndexesCore(this.db, features, this.indexState, (message, error) => logger.error(message, error));
   }
 
   public async indexNote(data: IndexNoteData): Promise<void> {
@@ -335,6 +265,7 @@ export class VaultDatabase {
       insertNote: (note) => this.insertNote(note),
       replaceProperties: (path, frontmatterData, shouldSkipDeletes) =>
         this.replaceProperties(path, frontmatterData, shouldSkipDeletes, skipAutoSync),
+      propertiesMatRefreshSql: () => this.getPropertiesMatRefreshSql(),
       replaceTasks: (path, tasks, shouldSkipDeletes) =>
         this.replaceTasks(path, tasks, shouldSkipDeletes, skipAutoSync),
       replaceHeadings: (path, headings, shouldSkipDeletes) =>
@@ -348,19 +279,8 @@ export class VaultDatabase {
     }, logger);
   }
 
-  // Indexing operations - using shared SQL constants and row transformations
-  // Use separate INSERT/UPDATE to allow AFTER UPDATE triggers to modify the row
-  // UPSERT conflicts with triggers that UPDATE the same row during execution
   private insertNote(note: NoteRecord): void {
-    const exists = this.db.exec(INDEXING_SQL.CHECK_NOTE_EXISTS, [note.path]);
-
-    if (exists.length > 0 && exists[0].values && exists[0].values.length > 0) {
-      // Note exists - run UPDATE (fires AFTER UPDATE triggers)
-      this.runWithPreparedStatement(INDEXING_SQL.UPDATE_NOTE, noteToUpdateParams(note));
-    } else {
-      // Note doesn't exist - run INSERT (fires AFTER INSERT triggers)
-      this.runWithPreparedStatement(INDEXING_SQL.INSERT_NOTE, noteToParams(note));
-    }
+    insertNoteCore(this.createIndexingAdapter(), note);
 
     // NOTE: Auto-sync for notes.content is DISABLED.
     // Direct SQL changes to notes.content (like `UPDATE notes SET content = ...`) will NOT sync to files.
@@ -376,7 +296,7 @@ export class VaultDatabase {
     const originalPropsInDB = new Set<string>();
     if (!skipAutoSync) {
       const existingResult = this.db.exec(INDEXING_SQL.SELECT_PROPERTIES_FOR_SYNC, [path]);
-      if (existingResult.length > 0 && existingResult[0].values) {
+      if (existingResult.length > 0) {
         for (const row of existingResult[0].values) {
           const key = row[0] as string;
           const arrayIndex = row[1] as number | null;
@@ -401,7 +321,7 @@ export class VaultDatabase {
     const propertyKeysFromFile = new Set(propertiesData.map(p => p.key));
     if (this.shouldPerformAutoSync(skipAutoSync, propertiesData.length)) {
       const syncResult = this.db.exec(INDEXING_SQL.SELECT_PROPERTIES_VALUES_FOR_SYNC, [path]);
-      if (syncResult.length > 0 && syncResult[0].values) {
+      if (syncResult.length > 0) {
         for (const row of syncResult[0].values) {
           const key = row[0] as string;
           const dbValue = row[1] as string;
@@ -451,7 +371,7 @@ export class VaultDatabase {
    */
   private createIndexingAdapter(): IndexingDbAdapter {
     return {
-      exec: (sql, params) => this.db.exec(sql, params as (string | number | null | Uint8Array)[] | undefined) as SqlResult,
+      exec: (sql, params) => this.db.exec(sql, params as (string | number | null | Uint8Array)[] | undefined),
       run: (sql, params) => this.db.run(sql, params as (string | number | null | Uint8Array)[]),
       runPrepared: (sql, params) => this.runWithPreparedStatement(sql, params),
       batchDeleteByIds: (table, ids) => this.batchDeleteByIds(table, ids),
@@ -505,7 +425,7 @@ export class VaultDatabase {
   private storedHashNeedsUpdate(selectHashSql: string, name: string, source: string, sourceHash = hashString(source)): boolean {
     try {
       const result = this.db.exec(selectHashSql, [name]);
-      if (result.length > 0 && result[0].values?.length > 0) {
+      if (result.length > 0 && result[0].values.length > 0) {
         const existingHash = result[0].values[0][0] as string;
         return existingHash !== sourceHash;
       }
@@ -620,8 +540,8 @@ export class VaultDatabase {
   public async previewDML(sql: string, params: unknown[] = []): Promise<PreviewResult> {
     const releaseLock = await this.acquireDbLock();
     try {
-      // Set preview mode to prevent sync handlers from queuing actions
-      // (EditPlanner handles file sync during preview/apply cycle)
+      // Set preview mode to prevent sync handlers from queuing actions.
+      // WriteSyncService handles file sync during the preview/apply cycle.
       this.triggerFunctions?.setPreviewMode(true);
       const result = this.previewService.previewDmlFromSql(sql, params);
       return result;
@@ -645,9 +565,6 @@ export class VaultDatabase {
     }
 
     try {
-      // IMPORTANT: Use await, not return. With return, the finally block runs immediately
-      // after the Promise is created (before SQL executes). With await, finally runs
-      // after the Promise resolves (after SQL completes).
       await this.withTx(() => {
         this.applyDMLWithoutTransaction(previewResult);
       });
@@ -719,7 +636,7 @@ export class VaultDatabase {
     return checkSqlJsDatabaseHealth(this.db, {
       timestamp: new Date().toISOString(),
       useMemoryStorage: this.useMemoryStorage,
-      preparedStatementCount: this.preparedStatements.size
+      preparedStatementCount: this.statementCache.size
     });
   }
 
@@ -867,20 +784,23 @@ export class VaultDatabase {
     replaceUserTriggersCore(this.createIndexingAdapter(), path, userTriggers, skipDeletes, (name, sql, triggerPath) => this.activateTrigger(name, sql, triggerPath), logger);
   }
 
-  public getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
+  private queryCatalogRows<T>(label: string, sql: string, mapRow: (row: unknown[]) => T): T[] {
     try {
-      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS);
-      return results[0]?.values?.map(row => ({
-        trigger_name: row[0] as string,
-        path: row[1] as string,
-        trigger_sql: row[2] as string,
-        enabled: row[3] as number
-      })) ?? [];
+      return queryRows(s => this.db.exec(s)[0]?.values ?? [], sql, mapRow);
     }
     catch (error) {
-      logger.warn('DatabaseService.getAllUserTriggers: Query failed', error);
+      logger.warn(`DatabaseService.${label}: Query failed`, error);
       return [];
     }
+  }
+
+  public getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
+    return this.queryCatalogRows('getAllUserTriggers', INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, row => ({
+      trigger_name: row[0] as string,
+      path: row[1] as string,
+      trigger_sql: row[2] as string,
+      enabled: row[3] as number
+    }));
   }
 
   public registerUserTriggers(): void {
@@ -894,6 +814,16 @@ export class VaultDatabase {
         logger.error(`Failed to register trigger "${trigger.trigger_name}"`, error);
       }
     }
+  }
+
+  private matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
+
+  public invalidatePropertiesMatRefreshSql(): void {
+    this.matRefreshSqlCache.invalidate();
+  }
+
+  private getPropertiesMatRefreshSql(): { deleteSql: string; insertSql: string } | null {
+    return this.matRefreshSqlCache.get(this.db, () => this.schema.getAllPropertyKeys());
   }
 
   public registerUserFunctions(): void {
@@ -938,7 +868,7 @@ export class VaultDatabase {
     this.db.run(`DROP TRIGGER IF EXISTS "${prefixedName}"`);
 
     const sqlWithPath = sourcePath
-      ? triggerSql.replace(/\{this\.path\}/g, sourcePath.replace(/'/g, "''"))
+      ? triggerSql.replace(/\{this\.path\}/g, escapeSqlString(sourcePath))
       : triggerSql;
 
     const sqlWithTableRowsRewrite = sqlWithPath.replace(
@@ -952,7 +882,7 @@ export class VaultDatabase {
     this.db.run(prefixedSql);
 
     const verify = this.db.exec(`SELECT name FROM sqlite_master WHERE type='trigger' AND name=?`, [prefixedName]);
-    if (verify.length > 0 && verify[0].values?.length > 0) {
+    if (verify.length > 0 && verify[0].values.length > 0) {
       logger.debug(`Trigger ${prefixedName} verified in sqlite_master`);
     } else {
       logger.error(`Trigger ${prefixedName} NOT FOUND in sqlite_master after creation`);
@@ -960,33 +890,19 @@ export class VaultDatabase {
   }
 
   public getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
-    try {
-      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_VIEWS);
-      return results[0]?.values?.map(row => ({
-        view_name: row[0] as string,
-        path: row[1] as string,
-        sql: row[2] as string
-      })) ?? [];
-    }
-    catch (error) {
-      logger.warn('DatabaseService.getAllUserViews: Query failed', error);
-      return [];
-    }
+    return this.queryCatalogRows('getAllUserViews', INDEXING_SQL.SELECT_ALL_USER_VIEWS, row => ({
+      view_name: row[0] as string,
+      path: row[1] as string,
+      sql: row[2] as string
+    }));
   }
 
   public getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
-    try {
-      const results = this.db.exec(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS);
-      return results[0]?.values?.map(row => ({
-        function_name: row[0] as string,
-        path: row[1] as string,
-        source: row[2] as string
-      })) ?? [];
-    }
-    catch (error) {
-      logger.warn('DatabaseService.getAllUserFunctions: Query failed', error);
-      return [];
-    }
+    return this.queryCatalogRows('getAllUserFunctions', INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, row => ({
+      function_name: row[0] as string,
+      path: row[1] as string,
+      source: row[2] as string
+    }));
   }
 
   /**
@@ -1003,14 +919,5 @@ export class VaultDatabase {
            !!dataLength &&
            !!this.triggerFunctions &&
            !this.triggerFunctions.getIsProcessingTriggers();
-  }
-}
-
-function freePreparedStatement(stmt: Statement): void {
-  try {
-    stmt.free();
-  }
-  catch (error) {
-    logger.warn(WARNING_MESSAGES.STATEMENT_FREE_ERROR, error);
   }
 }

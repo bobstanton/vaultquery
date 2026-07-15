@@ -2,6 +2,7 @@ import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
 import inlineWorkerPlugin from "esbuild-plugin-inline-worker";
+import { readFile, writeFile } from "node:fs/promises";
 
 const banner =
 `/*
@@ -37,8 +38,9 @@ const context = await esbuild.context({
 		"@lezer/lr",
 		...builtinModules],
 	format: "cjs",
-	target: "es2018",
+	target: "es2022",
 	logLevel: "info",
+	minify: prod,
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
 	outdir: ".",
@@ -51,7 +53,7 @@ const context = await esbuild.context({
 		inlineWorkerPlugin({
 			// Extra esbuild options for worker bundles
 			format: "iife",
-			target: "es2018",
+			target: "es2022",
 			treeShaking: true,
 			minify: prod,
 			// Externalize Node.js builtins - sql.js conditionally requires them but won't use them in browser
@@ -66,6 +68,14 @@ const context = await esbuild.context({
 
 if (prod) {
 	await context.rebuild();
+	const cssPath = "main.css";
+	const css = await readFile(cssPath, "utf8");
+	const expandedHex = css
+		.replace(/#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])(?=[^0-9a-f]|$)/gi,
+			(_match, r, g, b, a) => `#${r}${r}${g}${g}${b}${b}${a}${a}`)
+		.replace(/#([0-9a-f])([0-9a-f])([0-9a-f])(?=[^0-9a-f]|$)/gi,
+			(_match, r, g, b) => `#${r}${r}${g}${g}${b}${b}`);
+	await writeFile(cssPath, expandedHex);
 	process.exit(0);
 } else {
 	await context.watch();

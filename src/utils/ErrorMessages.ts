@@ -170,7 +170,7 @@ export function friendlySqliteError(error: unknown, context?: { sql?: string; ta
 
   const noTableMatch = message.match(/no such table: (\w+)/i);
   if (noTableMatch) {
-    return `Unknown table: '${noTableMatch[1]}'. Check the name and make sure its indexing option is enabled.`;
+    return `Unknown table: '${noTableMatch[1]}'. The name may be wrong or its indexing option disabled.`;
   }
 
   return message;

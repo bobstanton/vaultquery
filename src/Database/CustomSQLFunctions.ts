@@ -1,5 +1,5 @@
 import { Database } from 'sql.js';
-import { App } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { SharedSQLFunctions } from './SharedSQLFunctions';
 
 type SyncHandler = (...args: unknown[]) => number;
@@ -18,7 +18,13 @@ export class CustomSQLFunctions extends SharedSQLFunctions {
   static register(db: Database, app: App): void {
     this.registerRegexFunctions(db);
     this.registerDateFunctions(db);
-    this.registerLinkFunctions(db);
+    this.registerLinkFunctions(db, (path, subpath, alias) => {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        return null;
+      }
+      return app.fileManager.generateMarkdownLink(file, '', subpath, alias ?? '');
+    });
     this.registerPathFunctions(db);
     this.registerGeoFunctions(db);
     this.registerResolveFunctions(db, app);

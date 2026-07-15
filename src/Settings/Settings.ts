@@ -25,6 +25,7 @@ export interface VaultQuerySettings {
   allowWriteOperations: boolean;
   allowDeleteNotes: boolean;
   enableJavaScriptFunctions: boolean;
+  workerQueries: boolean;
   enableJavaScriptRendering: boolean;
   enableTriggers: boolean;
   enableThirdPartyProviderTables: boolean;
@@ -84,12 +85,16 @@ export const DEFAULT_SETTINGS: VaultQuerySettings = {
     indexTasks: true,
     indexHeadings: true,
     indexLinks: false,
+    indexUnresolvedLinks: false,
+    indexEmbeds: false,
     indexTags: true,
-    indexListItems: false
+    indexListItems: false,
+    indexBlocks: false
   },
   allowWriteOperations: false,
   allowDeleteNotes: false,
   enableJavaScriptFunctions: false,
+  workerQueries: true,
   enableJavaScriptRendering: false,
   enableTriggers: false,
   enableThirdPartyProviderTables: false,

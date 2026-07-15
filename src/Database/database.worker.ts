@@ -1,48 +1,37 @@
 import initSqlJs, { Database, Statement, type SqlJsStatic } from 'sql.js';
 import { WorkerSQLFunctions } from './WorkerSQLFunctions';
-import { getTablesOnlySQL, getIndexesForFeatures, EnabledFeatures, generateDynamicPropertiesView, generateNotePropertiesView, generateDynamicTableViews, TableStructure } from './DatabaseSchema';
-import { PRAGMA_STATEMENTS, SQL_QUERIES, getViewColumnsPragma, processTableStructureResults } from './SchemaQueries';
-import {
-  INDEXING_SQL,
-  PREPARED_STATEMENT_CACHE_LIMIT,
-  MAX_ROWS_PER_INSERT_BATCH,
-  noteToParams,
-  noteToUpdateParams,
-} from './IndexingQueries';
+import { EnabledFeatures, migrateLinksColumns } from './DatabaseSchema';
+import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache, LINKS_MIGRATED_LOG_MESSAGE } from './SchemaOperations';
+import type { IndexCreationState } from './SchemaOperations';
+import { StatementCache } from './StatementCache';
+import { DatabaseSchemaManager } from './DatabaseSchemaManager';
+import { INDEXING_SQL, PREPARED_STATEMENT_CACHE_LIMIT, MAX_ROWS_PER_INSERT_BATCH } from './IndexingQueries';
 import type { WorkerRequest, WorkerResponse } from './worker-types';
 import type { IndexNoteData } from '../types/types.d.ts';
 import { hashString } from '../utils/StringUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
-import { type SqlResult } from './ChangeDetection';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
 import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
-import {
-  replaceTasksCore,
-  replaceHeadingsCore,
-  replaceListItemsCore,
-  replacePropertiesCore,
-  replaceUserFunctionsCore,
-  replaceUserTriggersCore,
-  performIndexingOperationsCore,
-  type IndexingLogger,
-  type IndexingDbAdapter,
-} from './IndexingOperations';
+import { queryRows } from './QueryRows';
+import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
+import type { IndexingLogger, IndexingDbAdapter } from './IndexingOperations';
 
 const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 
 let db: Database | null = null;
 let sqlJsModule: SqlJsStatic | null = null;
-let indexesCreated = false;
-let enabledFeatures: EnabledFeatures | null = null;
-const preparedStatements = new Map<string, Statement>();
+let schemaManager: DatabaseSchemaManager | null = null;
+const indexState: IndexCreationState = { indexesCreated: false, enabledFeatures: null };
 const multiRowInsertSqlCache = new Map<string, string>();
 const logger: IndexingLogger = {
   debug: () => {},
   warn: (message: string, ...data: unknown[]) => console.warn(`[Worker] ${message}`, ...data),
   error: (message: string, ...data: unknown[]) => console.error(`[Worker] ${message}`, ...data),
 };
+const statementCache = new StatementCache(PREPARED_STATEMENT_CACHE_LIMIT, (message, error) => logger.warn(message, error));
+const matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
 
 function respond(response: WorkerResponse, transfer?: Transferable[]): void {
   if (transfer && transfer.length > 0) {
@@ -58,38 +47,7 @@ function handleError(id: number, error: unknown): void {
 
 function getPreparedStatement(sql: string): Statement {
   if (!db) throw new Error('Database not initialized');
-
-  const cached = preparedStatements.get(sql);
-  if (cached) {
-    preparedStatements.delete(sql);
-    preparedStatements.set(sql, cached);
-    return cached;
-  }
-
-  const stmt = db.prepare(sql);
-  preparedStatements.set(sql, stmt);
-
-  if (preparedStatements.size > PREPARED_STATEMENT_CACHE_LIMIT) {
-    const firstKey = preparedStatements.keys().next().value;
-    if (firstKey) {
-      const oldStmt = preparedStatements.get(firstKey);
-      if (oldStmt) {
-        freePreparedStatement(oldStmt);
-      }
-      preparedStatements.delete(firstKey);
-    }
-  }
-
-  return stmt;
-}
-
-function freePreparedStatement(stmt: Statement): void {
-  try {
-    stmt.free();
-  }
-  catch (error) {
-    logger.warn('Failed to free prepared statement', error);
-  }
+  return statementCache.get(db, sql);
 }
 
 function queryValues(sql: string): unknown[][] {
@@ -104,91 +62,41 @@ function queryValues(sql: string): unknown[][] {
   }
 }
 
-function safeQueryValues(sql: string): unknown[][] {
-  try {
-    return queryValues(sql);
-  }
-  catch {
-    return [];
-  }
-}
-
 function batchDeleteByIds(tableName: string, ids: number[]): void {
   if (!db || ids.length === 0) return;
   const activeDb = db;
   batchDeleteRowsByIds(tableName, ids, (sql, params) => activeDb.run(sql, params));
 }
 
-function execSchemaBundle(sql: string): void {
-  if (!db) return;
-  db.run('BEGIN');
-  try {
-    db.run('PRAGMA foreign_keys = ON;');
-    db.exec(sql);
-    db.run('COMMIT');
-  } catch (e) {
-    db.run('ROLLBACK');
-    throw e;
-  }
-}
-
 function createSchema(): void {
-  execSchemaBundle(getTablesOnlySQL());
-  indexesCreated = false;
+  if (!db) return;
+  createSchemaCore(db, message => logger.warn(message));
+  indexState.indexesCreated = false;
 }
 
 function createIndexes(features?: EnabledFeatures): void {
   if (!db) return;
-
-  if (features) {
-    enabledFeatures = features;
-  }
-
-  if (indexesCreated) return;
-
-  try {
-    const effectiveFeatures = enabledFeatures ?? {
-      indexContent: true,
-      indexFrontmatter: true,
-      indexTables: true,
-      indexTasks: true,
-      indexHeadings: true,
-      indexLinks: true,
-      indexTags: true,
-      indexListItems: true
-    };
-    execSchemaBundle(getIndexesForFeatures(effectiveFeatures));
-    indexesCreated = true;
-  } catch (error) {
-    console.warn('[Worker] Error creating indexes (may already exist):', error);
-    indexesCreated = true;
-  }
+  createIndexesCore(db, features, indexState, (message, error) => logger.error(message, error));
 }
 
 function runPragmaStatements(): void {
   if (!db) return;
-  try {
-    for (const pragma of PRAGMA_STATEMENTS) {
-      db.run(pragma);
-    }
-  } catch (error) {
-    console.warn('[Worker] Some PRAGMA statements not available:', error);
-  }
+  runPragmaStatementsCore(db, error => logger.warn('Some PRAGMA statements not available:', error));
 }
 
 function checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
   return checkSqlJsDatabaseHealth(db, {
     timestamp: new Date().toISOString(),
     mode: 'worker',
-    preparedStatementCount: preparedStatements.size,
-    indexesCreated,
+    preparedStatementCount: statementCache.size,
+    indexesCreated: indexState.indexesCreated,
   });
 }
 
 function createIndexingAdapter(): IndexingDbAdapter {
   if (!db) throw new Error('Database not initialized');
   return {
-    exec: (sql, params) => db!.exec(sql, params as (string | number | null | Uint8Array)[] | undefined) as SqlResult,
+    exec: (sql, params) => db!.exec(sql, params as (string | number | null | Uint8Array)[] | undefined),
     run: (sql, params) => db!.run(sql, params as (string | number | null | Uint8Array)[]),
     runPrepared: (sql, params) => {
       const stmt = getPreparedStatement(sql);
@@ -201,25 +109,6 @@ function createIndexingAdapter(): IndexingDbAdapter {
       db!.run(sql, params);
     }),
   };
-}
-
-// Use separate INSERT/UPDATE to allow AFTER UPDATE triggers to modify the row
-// UPSERT conflicts with triggers that UPDATE the same row during execution
-function insertNote(note: IndexNoteData['note']): void {
-  if (!db) throw new Error('Database not initialized');
-
-  const exists = db.exec(INDEXING_SQL.CHECK_NOTE_EXISTS, [note.path]);
-  if (exists.length > 0 && exists[0].values && exists[0].values.length > 0) {
-    const stmt = getPreparedStatement(INDEXING_SQL.UPDATE_NOTE);
-    runPreparedStatement(stmt, noteToUpdateParams(note), resetError => {
-      logger.warn('Failed to reset prepared statement', resetError);
-    });
-  } else {
-    const stmt = getPreparedStatement(INDEXING_SQL.INSERT_NOTE);
-    runPreparedStatement(stmt, noteToParams(note), resetError => {
-      logger.warn('Failed to reset prepared statement', resetError);
-    });
-  }
 }
 
 function replaceProperties(path: string, propertiesData?: Array<{key: string; value: string; valueType: string; arrayIndex: number | null}>, skipDeletes: boolean = false): void {
@@ -247,15 +136,22 @@ function replaceUserTriggers(path: string, userTriggers?: IndexNoteData['userTri
   replaceUserTriggersCore(createIndexingAdapter(), path, userTriggers, skipDeletes, null, logger);
 }
 
+function propertiesMatRefreshSql(): { deleteSql: string; insertSql: string } | null {
+  if (!db) return null;
+  return matRefreshSqlCache.get(db, getAllPropertyKeys);
+}
+
 function registerCustomFunction(name: string, source: string): void {
   if (!db) return;
   db.create_function(name, createUserSqlFunction(source));
 }
 
 function performIndexingOperations(data: IndexNoteData, skipDeletes: boolean): void {
-  performIndexingOperationsCore(createIndexingAdapter(), data, skipDeletes, {
-    insertNote,
+  const adapter = createIndexingAdapter();
+  performIndexingOperationsCore(adapter, data, skipDeletes, {
+    insertNote: note => insertNoteCore(adapter, note),
     replaceProperties,
+    propertiesMatRefreshSql,
     replaceTasks,
     replaceHeadings,
     replaceListItems,
@@ -280,24 +176,25 @@ function withTx<T>(fn: () => T): T {
   }
 }
 
-function getAllPropertyKeys(): string[] {
+function workerQueryRows<T>(sql: string, mapRow: (row: unknown[]) => T): T[] {
   if (!db) return [];
-  return safeQueryValues(SQL_QUERIES.GET_ALL_PROPERTY_KEYS).map(row => row[0] as string);
+  return queryRows(queryValues, sql, mapRow);
+}
+
+function getAllPropertyKeys(): string[] {
+  return schemaManager?.getAllPropertyKeys() ?? [];
 }
 
 function getViewNames(): string[] {
-  if (!db) return [];
-  return safeQueryValues(SQL_QUERIES.GET_VIEW_NAMES).map(row => row[0] as string);
+  return schemaManager?.getViewNames() ?? [];
 }
 
 function getViewColumns(viewName: string): string[] {
-  if (!db) return [];
-  return safeQueryValues(getViewColumnsPragma(viewName)).map(row => row[1] as string);
+  return schemaManager?.getViewColumns(viewName) ?? [];
 }
 
 function getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
-  if (!db) return [];
-  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_VIEWS).map(row => ({
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_VIEWS, row => ({
     view_name: row[0] as string,
     path: row[1] as string,
     sql: row[2] as string
@@ -305,8 +202,7 @@ function getAllUserViews(): Array<{view_name: string; path: string; sql: string}
 }
 
 function getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
-  if (!db) return [];
-  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS).map(row => ({
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, row => ({
     function_name: row[0] as string,
     path: row[1] as string,
     source: row[2] as string
@@ -314,8 +210,7 @@ function getAllUserFunctions(): Array<{function_name: string; path: string; sour
 }
 
 function getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
-  if (!db) return [];
-  return safeQueryValues(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS).map(row => ({
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, row => ({
     trigger_name: row[0] as string,
     path: row[1] as string,
     trigger_sql: row[2] as string,
@@ -339,73 +234,15 @@ function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: s
     });
   }
 
-  // NOTE: Do NOT activate trigger in worker - vq_* functions are not available here
-  // Triggers will be activated on the main thread after DB transfer
+  // Activation happens on the main thread; see registerUserTriggers.
 }
 
 /**
- * Register all user triggers from _user_triggers table with SQLite.
- * NOTE: This is a no-op in the worker. Triggers that use vq_* functions can only
- * be activated on the main thread where those functions are registered.
- * The main thread will call registerUserTriggers() after receiving the DB.
+ * No-op in the worker: user triggers call vq_* functions, which are only
+ * registered on the main thread, so activation happens there after the
+ * database is transferred.
  */
 function registerUserTriggers(): void {
-  // No-op in worker - triggers are activated on main thread only
-  // because vq_* functions (vq_set_property, vq_rename_note, etc.) are not available here
-}
-
-function rebuildPropertiesView(): void {
-  if (!db) return;
-  try {
-    const propertyKeys = getAllPropertyKeys();
-    const viewSQL = generateDynamicPropertiesView(propertyKeys);
-    db.exec(viewSQL);
-    const notePropertiesSQL = generateNotePropertiesView(propertyKeys);
-    db.exec(notePropertiesSQL);
-  } catch (error) {
-    console.error('[Worker] Error rebuilding properties view:', error);
-    throw error;
-  }
-}
-
-function discoverTableStructures(): TableStructure[] {
-  if (!db) return [];
-
-  try {
-    const results = db.exec(SQL_QUERIES.DISCOVER_TABLE_STRUCTURES);
-
-    if (results.length === 0 || !results[0].values) {
-      return [];
-    }
-
-    return processTableStructureResults(results[0].values as unknown[][]);
-  } catch (error) {
-    console.warn('[Worker] Error discovering table structures:', error);
-    return [];
-  }
-}
-
-let lastTableStructuresHash: string | null = null;
-
-function rebuildTableViews(enableDynamicTableViews: boolean): void {
-  if (!db || !enableDynamicTableViews) return;
-
-  const structures = discoverTableStructures();
-  if (structures.length === 0) {
-    return;
-  }
-
-  // Skip the DROP/CREATE churn when the structures are unchanged.
-  const structuresHash = hashString(JSON.stringify(structures));
-  if (structuresHash === lastTableStructuresHash) {
-    return;
-  }
-
-  const sql = generateDynamicTableViews(structures);
-  if (sql) {
-    db.exec(sql);
-  }
-  lastTableStructuresHash = structuresHash;
 }
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -420,6 +257,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         });
 
         db = new sqlJsModule.Database();
+        schemaManager = new DatabaseSchemaManager(db);
+        matRefreshSqlCache.invalidate();
         runPragmaStatements();
         WorkerSQLFunctions.register(db);
         createSchema();
@@ -537,47 +376,44 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case 'import': {
         if (!db) throw new Error('Database not initialized');
         if (!sqlJsModule) throw new Error('SQL.js module not initialized');
-        for (const stmt of preparedStatements.values()) {
-          try { stmt.free(); } catch {
-            // Continue importing even if a stale prepared statement cannot be freed.
-          }
-        }
-        preparedStatements.clear();
+        statementCache.freeAll();
 
         db.close();
         db = new sqlJsModule.Database(new Uint8Array(request.data));
-        lastTableStructuresHash = null;
+        schemaManager = new DatabaseSchemaManager(db);
+        matRefreshSqlCache.invalidate();
         runPragmaStatements();
         WorkerSQLFunctions.register(db);
+        if (migrateLinksColumns(db)) {
+          logger.warn(LINKS_MIGRATED_LOG_MESSAGE);
+        }
 
         respond({ type: 'success', id: request.id });
         break;
       }
 
       case 'close': {
-        for (const stmt of preparedStatements.values()) {
-          try { stmt.free(); } catch {
-            // Continue closing the worker even if statement cleanup fails.
-          }
-        }
-        preparedStatements.clear();
+        statementCache.freeAll();
 
         if (db) {
           db.close();
           db = null;
         }
+        schemaManager = null;
+        matRefreshSqlCache.invalidate();
         respond({ type: 'success', id: request.id });
         break;
       }
 
       case 'rebuildPropertiesView': {
-        rebuildPropertiesView();
+        matRefreshSqlCache.invalidate();
+        schemaManager?.rebuildPropertiesView();
         respond({ type: 'success', id: request.id });
         break;
       }
 
       case 'rebuildTableViews': {
-        rebuildTableViews(request.enableDynamicTableViews);
+        schemaManager?.rebuildTableViews(request.enableDynamicTableViews);
         respond({ type: 'success', id: request.id });
         break;
       }

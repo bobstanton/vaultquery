@@ -121,10 +121,28 @@ A convenience view for row-based table operations. Columns:
 - `path` (TEXT): Foreign key to notes.path
 - `link_text` (TEXT): Display text of the link (auto-derived from `link_target` if not provided)
 - `link_target` (TEXT): Target of the link (original text for internal, URL for external)
-- `link_target_path` (TEXT): Resolved file path for internal links
-- `link_type` (TEXT): Type of link - auto-derived: 'external' if target starts with http/https, otherwise 'internal'
-- `line_number` (INTEGER): Line number where link appears (optional)
+- `link_target_path` (TEXT): Resolved file path for internal links (NULL when Obsidian cannot resolve the target)
+- `link_type` (TEXT): Type of link - 'internal' for body links, 'frontmatter' for links in YAML properties; 'external' auto-derived on INSERT if target starts with http/https
+- `line_number` (INTEGER): Line number where link appears (NULL for frontmatter links)
 - `insert_position` (TEXT): Position hint for INSERT operations - `new_line` (default), `line_start`, or `line_end`
+- `original` (TEXT): Raw link markup exactly as written (e.g. `[[Target#Heading|alias]]`)
+- `start_offset` (INTEGER): Character offset where the link starts (NULL for frontmatter links)
+- `end_offset` (INTEGER): Character offset where the link ends (NULL for frontmatter links)
+- `frontmatter_key` (TEXT): Frontmatter property holding the link, e.g. `related.0` (NULL for body links)
+
+### `unresolved_links` table (when unresolved link indexing is enabled):
+- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
+- `path` (TEXT): Source file path
+- `link_target` (TEXT): Unresolved target text reported by Obsidian
+- `link_count` (INTEGER): Number of unresolved links to the target in `path`
+
+### `embeds` table (when embed indexing is enabled):
+- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
+- `path` (TEXT): Source file path
+- `embed_text` (TEXT): Display text of the embed
+- `embed_target` (TEXT): Embed target text
+- `embed_target_path` (TEXT): Resolved target file path, when Obsidian can resolve it
+- `line_number` (INTEGER): Line number where embed appears (optional)
 
 ### `tags` table (when tag indexing is enabled):
 - `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
@@ -147,6 +165,15 @@ A convenience view for row-based table operations. Columns:
 - `start_offset` (INTEGER): Character offset where item starts
 - `end_offset` (INTEGER): Character offset where item ends
 - `anchor_hash` (TEXT): Content-based hash for change detection
+
+### `blocks` table (when block indexing is enabled):
+- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
+- `path` (TEXT): File path
+- `block_id` (TEXT): Obsidian block reference ID
+- `line_number` (INTEGER): Line number where the block appears (optional)
+- `start_offset` (INTEGER): Character offset where the block starts
+- `end_offset` (INTEGER): Character offset where the block ends
+- `section_type` (TEXT): Containing Obsidian section type
 
 ## Usage
 
@@ -728,7 +755,11 @@ The `vaultquery-api-help` code block provides complete API documentation in any 
 - **Task Indexing**: Index task lists with priorities and due dates
 - **Heading Indexing**: Index note headings and structure
 - **Link Indexing**: Index internal and external links
+- **Unresolved Link Indexing**: Index links Obsidian cannot resolve to a note
+- **Embed Indexing**: Index embedded links such as images, PDFs, and embedded notes
+- **Block Indexing**: Index Obsidian block IDs
 - **Tag Indexing**: Index hashtags throughout notes
+- **List Item Indexing**: Index bulleted and numbered list items
 
 ### Performance Settings
 - **File Size Limit**: Maximum file size to index (default: 1MB)

@@ -64,6 +64,7 @@ export class MarkdownTableUtils {
 
   static detectAllTables(content: string, contentOffset: number = 0, noteTitle?: string): MarkdownTable[] {
     const lines = content.split('\n');
+    const lineOffsets = this.buildLineStartOffsets(lines);
     const tables: MarkdownTable[] = [];
     let tableIdx = 0;
     let currentHeading: string | undefined;
@@ -76,7 +77,7 @@ export class MarkdownTableUtils {
       }
 
       if (i < lines.length - 1 && this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
-        const start_offset = this.getLineStartOffset(content, i) + contentOffset;
+        const start_offset = lineOffsets[i] + contentOffset;
         let j = i + 2;
         while (j < lines.length && this.isTableRow(lines[j])) j++;
 
@@ -89,7 +90,7 @@ export class MarkdownTableUtils {
           }
         }
 
-        const end_offset = this.getLineStartOffset(content, j) + contentOffset;
+        const end_offset = lineOffsets[j] + contentOffset;
         const table_name = block_id ?? currentHeading ?? noteTitle;
         tables.push({
           table_index: tableIdx++,
@@ -110,6 +111,7 @@ export class MarkdownTableUtils {
 
   static findTableByIndex(content: string, tableIndex: number): { start: number; end: number } | null {
     const lines = content.split('\n');
+    const lineOffsets = this.buildLineStartOffsets(lines);
     let i = 0, found = 0;
     
     while (i < lines.length - 1) {
@@ -119,14 +121,14 @@ export class MarkdownTableUtils {
       if (this.isTableRow(currentLine) && this.isAlignRow(nextLine)) {
         
         if (found === tableIndex) {
-          const start = this.getLineStartOffset(content, i);
+          const start = lineOffsets[i];
           let j = i + 2;
 
           while (j < lines.length && this.isTableRow(lines[j])) {
             j++;
           }
 
-          const end = this.getLineStartOffset(content, j);
+          const end = lineOffsets[j];
           return { start, end };
         }
         
@@ -281,12 +283,14 @@ export class MarkdownTableUtils {
     return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
   }
 
-  private static getLineStartOffset(content: string, lineIndex: number): number {
-    const lines = content.split('\n');
+  private static buildLineStartOffsets(lines: string[]): number[] {
+    const offsets = new Array<number>(lines.length + 1);
     let offset = 0;
-    for (let i = 0; i < lineIndex && i < lines.length; i++) {
+    for (let i = 0; i < lines.length; i++) {
+      offsets[i] = offset;
       offset += lines[i].length + 1;
     }
-    return offset;
+    offsets[lines.length] = offset;
+    return offsets;
   }
 }

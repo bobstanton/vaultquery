@@ -32,7 +32,7 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   para1.createEl('a', { cls: 'vaultquery-help-link vaultquery-help-external-link', text: "FullCalendar Standard", attr: { href: "https://fullcalendar.io/", target: '_blank', rel: 'noopener' } });
   para1.appendText(". It defaults to month view with weeks displayed Sunday through Saturday. The toolbar can switch between month, week, and day views.");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Calendar result columns" });
-  const tableWrapper = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });
   const thead = table.createEl('thead');
   const row = thead.createEl('tr');
@@ -100,7 +100,7 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   para3.createEl('code', { cls: 'vaultquery-help-code', text: "color" });
   para3.appendText(" to match CSS-style naming for event background, border, and label colors. Alias SQL columns to those names when needed.");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Calendar config options" });
-  const tableWrapper1 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper1 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table1 = tableWrapper1.createEl('table', { cls: 'vaultquery-help-table' });
   const thead1 = table1.createEl('thead');
   const row10 = thead1.createEl('tr');

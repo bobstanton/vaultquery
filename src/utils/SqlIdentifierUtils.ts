@@ -3,7 +3,7 @@ export function escapeSqlString(value: string): string {
 }
 
 export function quoteIdentifier(value: string): string {
-  return `"${String(value).replace(/"/g, '""')}"`;
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 export function validateSqlIdentifier(identifier: string, label: string = 'SQL identifier'): void {

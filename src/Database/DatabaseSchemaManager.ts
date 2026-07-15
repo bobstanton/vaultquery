@@ -11,6 +11,8 @@ const logger = rootLogger.scope('DatabaseSchema');
 export class DatabaseSchemaManager {
   private lastTableStructuresHash: string | null = null;
 
+  public onPropertiesViewRebuilt: (() => void) | null = null;
+
   public constructor(private db: Database) {}
 
   private queryStrings(sql: string, columnIndex: number = 0): string[] {
@@ -45,6 +47,7 @@ export class DatabaseSchemaManager {
       this.db.exec(viewSQL);
       const notePropertiesSQL = generateNotePropertiesView(propertyKeys);
       this.db.exec(notePropertiesSQL);
+      this.onPropertiesViewRebuilt?.();
     }
 
     catch (error) {
@@ -61,7 +64,7 @@ export class DatabaseSchemaManager {
         return [];
       }
 
-      return processTableStructureResults(result[0].values as unknown[][]);
+      return processTableStructureResults(result[0].values);
     }
 
     catch (error) {

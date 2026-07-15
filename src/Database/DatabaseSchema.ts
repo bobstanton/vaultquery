@@ -81,6 +81,28 @@ CREATE TABLE IF NOT EXISTS links (
   link_type TEXT NOT NULL DEFAULT '',
   line_number INTEGER,
   insert_position TEXT,
+  original TEXT,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  frontmatter_key TEXT,
+  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS unresolved_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  link_target TEXT NOT NULL,
+  link_count INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS embeds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  embed_text TEXT NOT NULL DEFAULT '',
+  embed_target TEXT NOT NULL,
+  embed_target_path TEXT,
+  line_number INTEGER,
   FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
 );
 
@@ -107,6 +129,17 @@ CREATE TABLE IF NOT EXISTS list_items (
   start_offset INTEGER,
   end_offset INTEGER,
   anchor_hash TEXT,
+  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  block_id TEXT NOT NULL,
+  line_number INTEGER,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  section_type TEXT,
   FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
 );
 
@@ -189,6 +222,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_headings_natural ON headings(path, COALESCE
 const LINK_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_links_path ON links(path);
 CREATE INDEX IF NOT EXISTS idx_links_target ON links(link_target);
+CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(link_target_path);
+CREATE INDEX IF NOT EXISTS idx_unresolved_links_path ON unresolved_links(path);
+CREATE INDEX IF NOT EXISTS idx_unresolved_links_target ON unresolved_links(link_target);
+`;
+
+const EMBED_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_embeds_path ON embeds(path);
+CREATE INDEX IF NOT EXISTS idx_embeds_target ON embeds(embed_target);
+CREATE INDEX IF NOT EXISTS idx_embeds_target_path ON embeds(embed_target_path);
 `;
 
 const TAG_INDEXES = `
@@ -209,6 +251,11 @@ CREATE INDEX IF NOT EXISTS idx_list_items_path ON list_items(path);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_list_items_natural ON list_items(path, COALESCE(block_id, anchor_hash)) WHERE COALESCE(block_id, anchor_hash) IS NOT NULL;
 `;
 
+const BLOCK_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_blocks_path ON blocks(path);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_blocks_path_block_id ON blocks(path, block_id);
+`;
+
 const TABLE_CELL_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_table_cells_path ON table_cells(path);
 CREATE INDEX IF NOT EXISTS idx_table_cells_composite ON table_cells(path, table_index, row_index, column_name);
@@ -221,8 +268,11 @@ export interface EnabledFeatures {
   indexTasks: boolean;
   indexHeadings: boolean;
   indexLinks: boolean;
+  indexUnresolvedLinks: boolean;
+  indexEmbeds: boolean;
   indexTags: boolean;
   indexListItems: boolean;
+  indexBlocks: boolean;
 }
 
 export function getIndexesForFeatures(features: EnabledFeatures): string {
@@ -231,8 +281,11 @@ export function getIndexesForFeatures(features: EnabledFeatures): string {
   if (features.indexTasks) sql += TASK_DEDUP + TASK_INDEXES;
   if (features.indexHeadings) sql += HEADING_DEDUP + HEADING_INDEXES;
   if (features.indexLinks) sql += LINK_INDEXES;
+  if (features.indexUnresolvedLinks) sql += LINK_INDEXES;
+  if (features.indexEmbeds) sql += EMBED_INDEXES;
   if (features.indexTags) sql += TAG_INDEXES;
   if (features.indexListItems) sql += LIST_ITEM_DEDUP + LIST_ITEM_INDEXES;
+  if (features.indexBlocks) sql += BLOCK_INDEXES;
   if (features.indexTables) sql += TABLE_CELL_INDEXES;
 
   return sql;
@@ -687,6 +740,34 @@ FROM notes;
   return TABLE_DEFINITIONS + '\n' + VIEWS_AND_TRIGGERS + '\n' + initialPropertiesView;
 }
 
+interface MigratableDatabase {
+  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
+  run(sql: string): unknown;
+}
+
+const LINKS_COLUMN_MIGRATIONS: ReadonlyArray<readonly [string, string]> = [
+  ['original', 'ALTER TABLE links ADD COLUMN original TEXT'],
+  ['start_offset', 'ALTER TABLE links ADD COLUMN start_offset INTEGER'],
+  ['end_offset', 'ALTER TABLE links ADD COLUMN end_offset INTEGER'],
+  ['frontmatter_key', 'ALTER TABLE links ADD COLUMN frontmatter_key TEXT'],
+];
+
+export function migrateLinksColumns(db: MigratableDatabase): boolean {
+  const existing = new Set(
+    db.exec("PRAGMA table_info('links')")[0]?.values.map(row => row[1] as string) ?? []
+  );
+  if (existing.size === 0) return false;
+
+  const missing = LINKS_COLUMN_MIGRATIONS.filter(([column]) => !existing.has(column));
+  if (missing.length === 0) return false;
+
+  for (const [, alterSql] of missing) {
+    db.run(alterSql);
+  }
+  db.run('UPDATE notes SET modified = 0');
+  return true;
+}
+
 interface PropertyColumn {
   columnName: string;
   keys: string[];
@@ -713,10 +794,54 @@ function getPropertyColumns(propertyKeys: string[]): PropertyColumn[] {
   return Array.from(columns.values());
 }
 
+export const PROPERTIES_MAT_TABLE = '_vq_props_mat';
+
+function buildPivotSelect(propertyColumnsConfig: PropertyColumn[], pathFilter: string): string {
+  const pivotColumns = propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
+    return `  CASE
+    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
+    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
+  END AS ${quoteIdentifier(columnName)}`;
+  }).join(',\n');
+
+  return `SELECT
+  p.path,
+${pivotColumns}
+FROM properties p
+WHERE ${pathFilter}p.array_index IS NULL
+GROUP BY p.path`;
+}
+
+function matColumnList(propertyColumnsConfig: PropertyColumn[]): string {
+  return ['path', ...propertyColumnsConfig.map(({columnName}) => quoteIdentifier(columnName))].join(', ');
+}
+
+function matRowRefreshStatements(propertyColumnsConfig: PropertyColumn[], pathRef: string): string {
+  return `  DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = ${pathRef};
+  INSERT INTO ${PROPERTIES_MAT_TABLE} (${matColumnList(propertyColumnsConfig)})
+  ${buildPivotSelect(propertyColumnsConfig, `p.path = ${pathRef} AND `)};`;
+}
+
+export function generatePropertiesMatRefreshSql(propertyKeys: string[], existingMatColumns: string[]): { deleteSql: string; insertSql: string } | null {
+  const existing = new Set(existingMatColumns);
+  const config = getPropertyColumns(propertyKeys).filter(({columnName}) => existing.has(columnName));
+  if (config.length === 0) {
+    return null;
+  }
+  return {
+    deleteSql: `DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = ?`,
+    insertSql: `INSERT INTO ${PROPERTIES_MAT_TABLE} (${matColumnList(config)})
+${buildPivotSelect(config, 'p.path = ? AND ')}`,
+  };
+}
+
 export function generateDynamicPropertiesView(propertyKeys: string[]): string {
   if (propertyKeys.length === 0) {
     return `
 DROP VIEW IF EXISTS notes_with_properties;
+DROP TABLE IF EXISTS ${PROPERTIES_MAT_TABLE};
 CREATE VIEW notes_with_properties AS
 SELECT path, title, content, created, modified, size
 FROM notes;
@@ -724,16 +849,8 @@ FROM notes;
   }
 
   const propertyColumnsConfig = getPropertyColumns(propertyKeys);
-
-  const propertyColumns = propertyColumnsConfig.map(({columnName, keys}) => {
-    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
-    return `  CASE
-    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
-    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
-  END AS ${quoteIdentifier(columnName)}`;
-  }
-  ).join(',\n');
+  const columnDefs = propertyColumnsConfig.map(({columnName}) => `${quoteIdentifier(columnName)} TEXT`).join(', ');
+  const flatColumns = propertyColumnsConfig.map(({columnName}) => `  m.${quoteIdentifier(columnName)}`).join(',\n');
 
   const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
     const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
@@ -759,6 +876,19 @@ FROM notes;
 
   return `
 DROP VIEW IF EXISTS notes_with_properties;
+DROP TABLE IF EXISTS ${PROPERTIES_MAT_TABLE};
+CREATE TABLE ${PROPERTIES_MAT_TABLE} (path TEXT PRIMARY KEY, ${columnDefs});
+INSERT INTO ${PROPERTIES_MAT_TABLE} (${matColumnList(propertyColumnsConfig)})
+${buildPivotSelect(propertyColumnsConfig, '')};
+
+DROP TRIGGER IF EXISTS trg_props_mat_note_delete;
+CREATE TRIGGER trg_props_mat_note_delete
+AFTER DELETE ON notes
+FOR EACH ROW
+BEGIN
+  DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = OLD.path;
+END;
+
 CREATE VIEW notes_with_properties AS
 SELECT
   n.path,
@@ -767,23 +897,21 @@ SELECT
   n.created,
   n.modified,
   n.size,
-${propertyColumns}
+${flatColumns}
 FROM notes n
-LEFT JOIN properties p ON n.path = p.path AND p.array_index IS NULL
-GROUP BY n.path, n.title, n.content, n.created, n.modified, n.size;
+LEFT JOIN ${PROPERTIES_MAT_TABLE} m ON n.path = m.path;
 
 DROP TRIGGER IF EXISTS trg_notes_with_properties_update;
 CREATE TRIGGER trg_notes_with_properties_update
 INSTEAD OF UPDATE ON notes_with_properties
 FOR EACH ROW
 BEGIN
-  -- Update note metadata if changed
   UPDATE notes SET
     title = COALESCE(NEW.title, OLD.title),
     content = COALESCE(NEW.content, OLD.content)
   WHERE path = OLD.path;
-  -- Update each property column
 ${updateStatements}
+${matRowRefreshStatements(propertyColumnsConfig, 'OLD.path')}
 END;
 
 DROP TRIGGER IF EXISTS trg_notes_with_properties_insert;
@@ -791,14 +919,13 @@ CREATE TRIGGER trg_notes_with_properties_insert
 INSTEAD OF INSERT ON notes_with_properties
 FOR EACH ROW
 BEGIN
-  -- Insert the note first
   INSERT INTO notes (path, title, content, created, modified, size)
   VALUES (NEW.path, COALESCE(NEW.title, ''), COALESCE(NEW.content, ''),
           COALESCE(NEW.created, strftime('%s', 'now') * 1000),
           COALESCE(NEW.modified, strftime('%s', 'now') * 1000),
           COALESCE(NEW.size, 0));
-  -- Insert each property
 ${insertStatements}
+${matRowRefreshStatements(propertyColumnsConfig, 'NEW.path')}
 END;
 
 DROP TRIGGER IF EXISTS trg_notes_with_properties_delete;
@@ -806,7 +933,7 @@ CREATE TRIGGER trg_notes_with_properties_delete
 INSTEAD OF DELETE ON notes_with_properties
 FOR EACH ROW
 BEGIN
-  -- Delete the note (properties cascade via FK)
+  -- Delete the note (properties cascade via FK; mat row via trg_props_mat_note_delete)
   DELETE FROM notes WHERE path = OLD.path;
 END;
 `;
@@ -822,16 +949,7 @@ SELECT DISTINCT path FROM properties;
   }
 
   const propertyColumnsConfig = getPropertyColumns(propertyKeys);
-
-  const propertyColumns = propertyColumnsConfig.map(({columnName, keys}) => {
-    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
-    return `  CASE
-    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
-    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
-  END AS ${quoteIdentifier(columnName)}`;
-  }
-  ).join(',\n');
+  const flatColumns = propertyColumnsConfig.map(({columnName}) => `  ${quoteIdentifier(columnName)}`).join(',\n');
 
   const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
     const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
@@ -859,11 +977,9 @@ SELECT DISTINCT path FROM properties;
 DROP VIEW IF EXISTS note_properties;
 CREATE VIEW note_properties AS
 SELECT
-  p.path,
-${propertyColumns}
-FROM properties p
-WHERE p.array_index IS NULL
-GROUP BY p.path;
+  path,
+${flatColumns}
+FROM ${PROPERTIES_MAT_TABLE};
 
 DROP TRIGGER IF EXISTS trg_note_properties_update;
 CREATE TRIGGER trg_note_properties_update
@@ -871,6 +987,7 @@ INSTEAD OF UPDATE ON note_properties
 FOR EACH ROW
 BEGIN
 ${updateStatements}
+${matRowRefreshStatements(propertyColumnsConfig, 'OLD.path')}
 END;
 
 DROP TRIGGER IF EXISTS trg_note_properties_insert;
@@ -881,6 +998,7 @@ BEGIN
   SELECT RAISE(ABORT, 'Note does not exist')
   WHERE NOT EXISTS (SELECT 1 FROM notes WHERE path = NEW.path);
 ${insertStatements}
+${matRowRefreshStatements(propertyColumnsConfig, 'NEW.path')}
 END;
 
 DROP TRIGGER IF EXISTS trg_note_properties_delete;
@@ -889,6 +1007,7 @@ INSTEAD OF DELETE ON note_properties
 FOR EACH ROW
 BEGIN
   DELETE FROM properties WHERE path = OLD.path;
+  DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = OLD.path;
 END;
 `;
 }
@@ -908,6 +1027,7 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
     const { viewName, columns, tableNames } = structure;
 
     const sanitizedColumns = columns.map((col, index) => {
+      // Deliberately diverges from other sanitizers (no lowercasing): generated schema names must stay stable.
       const sanitized = col.replace(/[^a-zA-Z0-9_]/g, '_');
       return {
         original: col,
@@ -919,42 +1039,41 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
     const primaryCol = sanitizedColumns[0];
 
     const columnSelections = sanitizedColumns.map(({ original, alias }) => {
-      const quotedColumnName = `"${original.replace(/"/g, '""')}"`;
+      const quotedColumnName = quoteIdentifier(original);
       return `  ${alias}.cell_value AS ${quotedColumnName}`;
     }).join(',\n');
 
     const columnJoins = sanitizedColumns.slice(1).map(({ original, alias }) =>
-      `LEFT JOIN table_cells ${alias} ON ${primaryCol.alias}.path = ${alias}.path AND ${primaryCol.alias}.table_index = ${alias}.table_index AND ${primaryCol.alias}.row_index = ${alias}.row_index AND ${alias}.column_name = '${original.replace(/'/g, "''")}'`
+      `LEFT JOIN table_cells ${alias} ON ${primaryCol.alias}.path = ${alias}.path AND ${primaryCol.alias}.table_index = ${alias}.table_index AND ${primaryCol.alias}.row_index = ${alias}.row_index AND ${alias}.column_name = '${escapeSqlString(original)}'`
     ).join('\n');
 
-    let whereClause = `${primaryCol.alias}.column_name = '${primaryCol.original.replace(/'/g, "''")}'`;
+    let whereClause = `${primaryCol.alias}.column_name = '${escapeSqlString(primaryCol.original)}'`;
 
     if (tableNames && tableNames.length > 0) {
       const tableNameConditions = tableNames
-        .map(name => `'${name.replace(/'/g, "''")}'`)
+        .map(name => `'${escapeSqlString(name)}'`)
         .join(', ');
       whereClause += ` AND ${primaryCol.alias}.table_name IN (${tableNameConditions})`;
     }
 
-    const quotedViewName = `"${viewName.replace(/"/g, '""')}"`;
+    const quotedViewName = quoteIdentifier(viewName);
     const joinsClause = columnJoins ? `\n${columnJoins}` : '';
 
-    const triggerNameBase = viewName.replace(/"/g, '""');
-    const insertTriggerName = `"${triggerNameBase}_insert_trigger"`;
-    const updateTriggerName = `"${triggerNameBase}_update_trigger"`;
-    const deleteTriggerName = `"${triggerNameBase}_delete_trigger"`;
+    const insertTriggerName = quoteIdentifier(`${viewName}_insert_trigger`);
+    const updateTriggerName = quoteIdentifier(`${viewName}_update_trigger`);
+    const deleteTriggerName = quoteIdentifier(`${viewName}_delete_trigger`);
     const defaultTableName = tableNames && tableNames.length > 0
-      ? `'${tableNames[0].replace(/'/g, "''")}'`
+      ? `'${escapeSqlString(tableNames[0])}'`
       : 'NULL';
     const tableNameValue = `COALESCE(NEW.table_name, ${defaultTableName})`;
     const rowJsonArgs = sanitizedColumns.map(({ original }) => {
-      const escapedColName = original.replace(/'/g, "''");
-      const quotedColName = `"${original.replace(/"/g, '""')}"`;
+      const escapedColName = escapeSqlString(original);
+      const quotedColName = quoteIdentifier(original);
       return `      '${escapedColName}', NEW.${quotedColName}`;
     }).join(',\n');
     const updateStatements = sanitizedColumns.map(({ original }) => {
-      const escapedColName = original.replace(/'/g, "''");
-      const quotedColName = `"${original.replace(/"/g, '""')}"`;
+      const escapedColName = escapeSqlString(original);
+      const quotedColName = quoteIdentifier(original);
       return `    UPDATE table_cells SET cell_value = NEW.${quotedColName}
     WHERE path = OLD.path AND table_index = OLD.table_index AND row_index = OLD.row_index AND column_name = '${escapedColName}';`;
     }).join('\n');

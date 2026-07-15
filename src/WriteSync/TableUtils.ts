@@ -1,14 +1,24 @@
 import type { TableCellRow } from '../Services/ContentLocationService';
 import { createTableKey } from '../utils/StringUtils';
+import { formatUnknownValue } from '../utils/ResultFormatUtils';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('WriteSync');
+type Row = Record<string, unknown>;
+type CellsByTable = Map<string, TableCellRow[]>;
+type TableLineNumbers = Map<string, number | null>;
+type QueryMaxRow = (path: string, tableIndex: number) => Promise<number>;
 
-function parseRowJson(row: Record<string, unknown>, context: string): Record<string, unknown> {
+function parseRowJson(row: Row, context: string): Row {
   const raw = row.row_json;
   try {
-    if (typeof raw === 'string') return JSON.parse(raw) as Record<string, unknown>;
-    if (typeof raw === 'object' && raw !== null) return raw as Record<string, unknown>;
+    if (typeof raw === 'string') {
+      const parsed: unknown = JSON.parse(raw);
+      if (isRow(parsed)) return parsed;
+      logger.warn(`${context}: row_json must be an object`, raw);
+      return {};
+    }
+    if (isRow(raw)) return raw;
   }
   catch (e) {
     logger.warn(`${context}: Failed to parse row_json`, e);
@@ -16,7 +26,11 @@ function parseRowJson(row: Record<string, unknown>, context: string): Record<str
   return {};
 }
 
-function extractRowTableKey(r: Record<string, unknown>, affectedTables: Set<string>, tableLineNumbers: Map<string, number | null>): { path: string; table_index: number; tableKey: string } {
+function isRow(value: unknown): value is Row {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function extractRowTableKey(r: Row, affectedTables: Set<string>, tableLineNumbers: TableLineNumbers): { path: string; table_index: number; tableKey: string } {
   const path = r.path as string;
   const table_index = (r.table_index as number) ?? 0;
   const tableKey = createTableKey(path, table_index);
@@ -28,7 +42,8 @@ function extractRowTableKey(r: Record<string, unknown>, affectedTables: Set<stri
   return { path, table_index, tableKey };
 }
 
-function appendCellsFromObject(cellsByTable: Map<string, TableCellRow[]>, tableKey: string, path: string, table_index: number, row_index: number, obj: Record<string, unknown>, tableLineNumbers: Map<string, number | null>): void {
+function appendCellsFromObject(cellsByTable: CellsByTable, tableKey: string, path: string, table_index: number,
+  row_index: number, obj: Row, tableLineNumbers: TableLineNumbers): void {
   const tableCells = cellsByTable.get(tableKey) || [];
   let isFirstCellForTable = tableCells.length === 0;
   for (const [column_name, v] of Object.entries(obj)) {
@@ -37,7 +52,7 @@ function appendCellsFromObject(cellsByTable: Map<string, TableCellRow[]>, tableK
       table_index,
       row_index,
       column_name,
-      cell_value: v == null ? '' : String(v),
+      cell_value: formatUnknownValue(v),
       start_offset: null,
       end_offset: null,
     };
@@ -50,7 +65,7 @@ function appendCellsFromObject(cellsByTable: Map<string, TableCellRow[]>, tableK
   cellsByTable.set(tableKey, tableCells);
 }
 
-export async function appendCellsFromTableRows(rows: Record<string, unknown>[], affectedTables: Set<string>, cellsByTable: Map<string, TableCellRow[]>, queryMaxRow: (path: string, tableIndex: number) => Promise<number>, context: string): Promise<void> {
+export async function appendCellsFromTableRows(rows: Row[], affectedTables: Set<string>, cellsByTable: CellsByTable, queryMaxRow: QueryMaxRow, context: string): Promise<void> {
   const tableLineNumbers = new Map<string, number | null>();
   const maxRowByTable = new Map<string, number>();
 

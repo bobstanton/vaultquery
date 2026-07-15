@@ -283,7 +283,10 @@ The capabilities object includes:
 | `indexing.tasks`       | `tasks` table is available                   |
 | `indexing.headings`    | `headings` table is available                |
 | `indexing.links`       | `links` table is available                   |
+| `indexing.unresolvedLinks` | `unresolved_links` table is available    |
+| `indexing.embeds`      | `embeds` table is available                  |
 | `indexing.tags`        | `tags` table is available                    |
+| `indexing.blocks`      | `blocks` table is available                  |
 | `indexing.listItems`   | `list_items` table is available              |
 
 ## Schema Information
@@ -307,10 +310,8 @@ Third-party provider tables are useful for external or plugin-owned datasets suc
 Use `registerVaultQueryTableProviders()` from plugin startup code. It waits for VaultQuery with mobile-safe retries, checks whether the feature is enabled, registers every provider, re-registers after mobile database recovery, and returns a handle you can dispose during plugin unload.
 
 ```typescript
-import {
-  registerVaultQueryTableProviders,
-  type ManagedVaultQueryTableProviderRegistration
-} from 'vaultquery/api';
+import { registerVaultQueryTableProviders } from 'vaultquery/api';
+import type { ManagedVaultQueryTableProviderRegistration } from 'vaultquery/api';
 
 private vaultQueryTables: ManagedVaultQueryTableProviderRegistration | null = null;
 

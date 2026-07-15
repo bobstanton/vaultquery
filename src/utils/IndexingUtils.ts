@@ -21,14 +21,6 @@ export interface BlockProcessor {
   process(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void>;
 }
 
-interface WaitForIndexingOptions {
-  getApi: () => VaultQueryAPI | null;
-  hasPendingFileModifications?: () => boolean;
-  timeoutMs?: number;
-  pendingCheckIntervalMs?: number;
-  onPendingTimeout?: () => void;
-}
-
 export function createLoadingIndicator(container: HTMLElement, initialText: string = 'Loading...'): {
   setText: (text: string) => void;
   remove: () => void;
@@ -44,31 +36,6 @@ export function createLoadingIndicator(container: HTMLElement, initialText: stri
     setText: (text: string) => { loadingText.textContent = text; },
     remove: () => loadingContainer.remove()
   };
-}
-
-export async function waitForVaultQueryIndexing(options: WaitForIndexingOptions): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? 5000;
-  const pendingCheckIntervalMs = options.pendingCheckIntervalMs ?? 50;
-  const startedAt = Date.now();
-
-  while (options.hasPendingFileModifications?.() === true) {
-    if (Date.now() - startedAt > timeoutMs) {
-      options.onPendingTimeout?.();
-      return;
-    }
-
-    await new Promise(resolve => window.setTimeout(resolve, pendingCheckIntervalMs));
-  }
-
-  const api = options.getApi();
-  if (!api) {
-    return;
-  }
-
-  const remainingTime = timeoutMs - (Date.now() - startedAt);
-  if (remainingTime > 0) {
-    await api.waitForIndexing(remainingTime);
-  }
 }
 
 export function renderIndexingProgress(loadingDiv: HTMLElement, progress?: IndexingProgress): void {
@@ -114,16 +81,24 @@ export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, 
   }).ready;
 }
 
+function createLoadingDivUnlessReady(api: VaultQueryAPI | null, container: HTMLElement): HTMLElement | null {
+  if (api && !api.getIndexingStatus().isIndexing) {
+    return null;
+  }
+
+  const loadingDiv = container.createDiv({ cls: 'vaultquery-loading' });
+  const progress = api?.getIndexingStatus().progress ?? { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE };
+  renderIndexingProgress(loadingDiv, progress);
+  return loadingDiv;
+}
+
 export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingCheckResult {
   const { pendingBlocks, blockInfo } = options;
-  const api = options.getApi();
-  if (api && !api.getIndexingStatus().isIndexing) {
+  const loadingDiv = createLoadingDivUnlessReady(options.getApi(), options.container);
+  if (!loadingDiv) {
     return { ready: true };
   }
 
-  const loadingDiv = options.container.createDiv({ cls: 'vaultquery-loading' });
-  const progress = api?.getIndexingStatus().progress ?? { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE };
-  renderIndexingProgress(loadingDiv, progress);
   pendingBlocks.add(blockInfo);
 
   return { ready: false };
@@ -136,22 +111,11 @@ function waitForIndexingAndRender(options: {
   clearContainerOnReady: boolean;
   removeLoadingOnReady: boolean;
 }): IndexingCheckResult {
-  const api = options.getApi();
-  if (api) {
-    const indexingStatus = api.getIndexingStatus();
-    if (!indexingStatus.isIndexing) {
-      return { ready: true };
-    }
+  const loadingDiv = createLoadingDivUnlessReady(options.getApi(), options.container);
+  if (!loadingDiv) {
+    return { ready: true };
   }
 
-  const loadingDiv = options.container.createDiv({ cls: 'vaultquery-loading' });
-  const currentApi = options.getApi();
-  if (currentApi) {
-    renderIndexingProgress(loadingDiv, currentApi.getIndexingStatus().progress);
-  }
-  else {
-    renderIndexingProgress(loadingDiv, { current: 0, total: 0, currentFile: VAULTQUERY_DATABASE_PREPARING_MESSAGE });
-  }
   const checkInterval = window.setInterval(() => {
     if (!options.container.isConnected) {
       window.clearInterval(checkInterval);

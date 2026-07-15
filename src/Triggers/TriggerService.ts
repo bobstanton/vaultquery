@@ -1,29 +1,9 @@
 import { App, TFile, Notice, normalizePath } from 'obsidian';
-import type {
-  TriggerFunctions,
-  PendingAction,
-  SetPropertyParams,
-  RemovePropertyParams,
-  RenameNoteParams,
-  SetContentParams,
-  ReplaceContentParams,
-  UpdateTaskParams,
-  CompleteTaskParams,
-  AddTaskParams,
-  DeleteTaskParams,
-  UpdateHeadingParams,
-  AddHeadingParams,
-  DeleteHeadingParams,
-  UpdateListItemParams,
-  AddListItemParams,
-  DeleteListItemParams,
-  AddTableRowParams,
-  SetTableCellParams,
-  DeleteTableRowParams,
-  CreateNoteParams
-} from './TriggerFunctions';
+import type { TriggerFunctions, PendingAction, SetPropertyParams, RemovePropertyParams, RenameNoteParams, SetContentParams, ReplaceContentParams, UpdateTaskParams, CompleteTaskParams, AddTaskParams, DeleteTaskParams, UpdateHeadingParams, AddHeadingParams, DeleteHeadingParams, UpdateListItemParams, AddListItemParams, DeleteListItemParams, AddTableRowParams, SetTableCellParams, DeleteTableRowParams, CreateNoteParams } from './TriggerFunctions';
 import { logger as rootLogger } from '../utils/logger';
-import { MarkdownTableUtils, type MarkdownTableLineInfo } from '../utils/MarkdownTableUtils';
+import { createNoteWithFolders } from '../utils/VaultUtils';
+import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
+import type { MarkdownTableLineInfo } from '../utils/MarkdownTableUtils';
 
 const logger = rootLogger.scope('Triggers');
 
@@ -31,12 +11,6 @@ interface TriggerServiceDependencies {
   app: App;
   triggerFunctions: TriggerFunctions;
   reindexFile: (path: string) => Promise<void>;
-}
-
-interface MarkdownTableContext {
-  file: TFile;
-  lines: string[];
-  table: MarkdownTableLineInfo;
 }
 
 const PATTERNS = {
@@ -86,26 +60,26 @@ export class TriggerService {
     return file;
   }
 
-  private async readCurrentFile(file: TFile): Promise<string> {
-    return this.app.vault.read(file);
+  /**
+   * Uses vault.process so a trigger writing to a note that is open in an
+   * editor never clobbers concurrent edits with content from a stale read.
+   */
+  private async transformFile(file: TFile, transform: (content: string) => string | null): Promise<void> {
+    await this.app.vault.process(file, (content) => transform(content) ?? content);
   }
 
-  private async writeFromTrigger(file: TFile, content: string): Promise<void> {
-    await this.app.vault.modify(file, content);
-  }
+  private async transformFileLines(file: TFile, lineNumber: number, action: string, transform: (lines: string[], lineIndex: number) => boolean): Promise<void> {
+    await this.transformFile(file, (content) => {
+      const lines = content.split('\n');
+      const lineIndex = lineNumber - 1;
 
-  /** Read file and split into lines, validating line number */
-  private async getFileLines(file: TFile, lineNumber: number, action: string): Promise<{ lines: string[]; lineIndex: number } | null> {
-    const content = await this.readCurrentFile(file);
-    const lines = content.split('\n');
-    const lineIndex = lineNumber - 1;
+      if (lineIndex < 0 || lineIndex >= lines.length) {
+        logger.warn(`Trigger: invalid line number for ${action}`, lineNumber);
+        return null;
+      }
 
-    if (lineIndex < 0 || lineIndex >= lines.length) {
-      logger.warn(`Trigger: invalid line number for ${action}`, lineNumber);
-      return null;
-    }
-
-    return { lines, lineIndex };
+      return transform(lines, lineIndex) ? lines.join('\n') : null;
+    });
   }
 
   /**
@@ -129,7 +103,6 @@ export class TriggerService {
     let cascadeDepth = 0;
 
     try {
-      // Loop until no more actions are pending (handles cascading triggers)
       while (this.triggerFunctions.hasPendingActions() && cascadeDepth < MAX_CASCADE_DEPTH) {
         cascadeDepth++;
         const actions = this.triggerFunctions.getPendingActions();
@@ -161,13 +134,11 @@ export class TriggerService {
         }
         this.triggerFunctions.setProcessingTriggers(true);
 
-        // Safety: limit actions per cascade pass to prevent runaway triggers
         const pendingCount = this.triggerFunctions.getPendingActionsCount();
         if (pendingCount > MAX_ACTIONS_PER_PASS) {
           logger.warn(`Too many actions queued (${pendingCount}), limiting to ${MAX_ACTIONS_PER_PASS}`);
           this.triggerFunctions.limitPendingActions(MAX_ACTIONS_PER_PASS);
         }
-        // After reindex, loop back to check if any new actions were queued
       }
 
       if (cascadeDepth >= MAX_CASCADE_DEPTH) {
@@ -307,81 +278,69 @@ export class TriggerService {
     const file = this.getFile(path, 'set_content');
     if (!file) return;
 
-    const currentContent = await this.readCurrentFile(file);
-
-    // Preserve frontmatter when setting content
-    // The content parameter is just the body; we need to keep existing frontmatter
-    const frontmatterMatch = currentContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-    const frontmatter = frontmatterMatch ? frontmatterMatch[0] : '';
-    const newContent = frontmatter + content;
-
-    await this.writeFromTrigger(file, newContent);
+    await this.transformFile(file, (currentContent) => {
+      // Preserve frontmatter when setting content
+      // The content parameter is just the body; we need to keep existing frontmatter
+      const frontmatterMatch = currentContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+      const frontmatter = frontmatterMatch ? frontmatterMatch[0] : '';
+      return frontmatter + content;
+    });
   }
 
   private async replaceContent({ path, search, replacement }: ReplaceContentParams): Promise<void> {
     const file = this.getFile(path, 'replace_content');
     if (!file) return;
 
-    const fileContent = await this.readCurrentFile(file);
-    const newContent = fileContent.split(search).join(replacement);
-
-    if (newContent !== fileContent) {
-      await this.writeFromTrigger(file, newContent);
-    }
+    await this.transformFile(file, (fileContent) => {
+      const newContent = fileContent.split(search).join(replacement);
+      return newContent !== fileContent ? newContent : null;
+    });
   }
 
   private async updateTask({ path, lineNumber, status, taskText }: UpdateTaskParams): Promise<void> {
     const file = this.getFile(path, 'update_task');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'update_task');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'update_task', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      const match = line.match(PATTERNS.TASK_LINE);
+      if (!match) {
+        const contextStart = Math.max(0, lineIndex - 2);
+        const contextEnd = Math.min(lines.length, lineIndex + 3);
+        const context = lines.slice(contextStart, contextEnd).map((l, i) => `  ${contextStart + i + 1}: ${l}`).join('\n');
+        logger.warn('Trigger: line is not a task for update_task', { lineNumber, line, context });
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
+      const existingStatus = match[2];
+      const statusChar = status === null
+        ? existingStatus
+        : status === 'DONE' ? 'x' : status === 'TODO' ? ' ' : status.charAt(0).toLowerCase();
 
-    const line = lines[lineIndex];
-    const match = line.match(PATTERNS.TASK_LINE);
-    if (!match) {
-      const contextStart = Math.max(0, lineIndex - 2);
-      const contextEnd = Math.min(lines.length, lineIndex + 3);
-      const context = lines.slice(contextStart, contextEnd).map((l, i) => `  ${contextStart + i + 1}: ${l}`).join('\n');
-      logger.warn('Trigger: line is not a task for update_task', { lineNumber, line, context });
-      return;
-    }
+      const existingText = match[4];
+      const newText = taskText === null ? existingText : taskText;
 
-    const existingStatus = match[2];
-    const statusChar = status === null
-      ? existingStatus
-      : status === 'DONE' ? 'x' : status === 'TODO' ? ' ' : status.charAt(0).toLowerCase();
-
-    const existingText = match[4];
-    const newText = taskText === null ? existingText : taskText;
-
-    const newLine = `${match[1]}${statusChar}] ${newText}`;
-    lines[lineIndex] = newLine;
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines[lineIndex] = `${match[1]}${statusChar}] ${newText}`;
+      return true;
+    });
   }
 
   private async setTaskStatus({ path, lineNumber, status }: CompleteTaskParams): Promise<void> {
     const file = this.getFile(path, 'setTaskStatus');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'setTaskStatus');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'setTaskStatus', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      const match = line.match(PATTERNS.TASK_CHECKBOX);
+      if (!match) {
+        logger.warn('Trigger: line is not a task for setTaskStatus', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
-    const line = lines[lineIndex];
-    const match = line.match(PATTERNS.TASK_CHECKBOX);
-    if (!match) {
-      logger.warn('Trigger: line is not a task for setTaskStatus', line);
-      return;
-    }
-
-    const statusChar = status === 'DONE' ? 'x' : status === 'TODO' ? ' ' : status.charAt(0).toLowerCase();
-    lines[lineIndex] = `${match[1]}${statusChar}${match[3]}`;
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      const statusChar = status === 'DONE' ? 'x' : status === 'TODO' ? ' ' : status.charAt(0).toLowerCase();
+      lines[lineIndex] = `${match[1]}${statusChar}${match[3]}`;
+      return true;
+    });
   }
 
   private async addTask({ path, text, afterLine }: AddTaskParams): Promise<void> {
@@ -392,28 +351,24 @@ export class TriggerService {
     const file = this.getFile(path, 'update_heading');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'update_heading');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'update_heading', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      const match = line.match(PATTERNS.HEADING);
+      if (!match) {
+        logger.warn('Trigger: line is not a heading for update_heading', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
+      const existingLevel = match[1].length;
+      const newLevel = level === null ? existingLevel : level;
 
-    const line = lines[lineIndex];
-    const match = line.match(PATTERNS.HEADING);
-    if (!match) {
-      logger.warn('Trigger: line is not a heading for update_heading', line);
-      return;
-    }
+      const existingText = match[2];
+      const newText = headingText === null ? existingText : headingText;
 
-    const existingLevel = match[1].length;
-    const newLevel = level === null ? existingLevel : level;
-
-    const existingText = match[2];
-    const newText = headingText === null ? existingText : headingText;
-
-    const hashes = '#'.repeat(newLevel);
-    lines[lineIndex] = `${hashes} ${newText}`;
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      const hashes = '#'.repeat(newLevel);
+      lines[lineIndex] = `${hashes} ${newText}`;
+      return true;
+    });
   }
 
   private async addHeading({ path, level, text, afterLine }: AddHeadingParams): Promise<void> {
@@ -429,205 +384,154 @@ export class TriggerService {
     const file = this.getFile(path, action);
     if (!file) return;
 
-    const content = await this.readCurrentFile(file);
-    const lines = content.split('\n');
-
-    const insertIndex = Math.max(0, Math.min(afterLine, lines.length));
-    lines.splice(insertIndex, 0, newLine);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+    await this.transformFile(file, (content) => {
+      const lines = content.split('\n');
+      const insertIndex = Math.max(0, Math.min(afterLine, lines.length));
+      lines.splice(insertIndex, 0, newLine);
+      return lines.join('\n');
+    });
   }
 
   private async deleteTask({ path, lineNumber }: DeleteTaskParams): Promise<void> {
     const file = this.getFile(path, 'delete_task');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'delete_task');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'delete_task', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      if (!PATTERNS.TASK_CHECKBOX.test(line)) {
+        logger.warn('Trigger: line is not a task for delete_task', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
-
-    const line = lines[lineIndex];
-    if (!PATTERNS.TASK_CHECKBOX.test(line)) {
-      logger.warn('Trigger: line is not a task for delete_task', line);
-      return;
-    }
-
-    lines.splice(lineIndex, 1);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines.splice(lineIndex, 1);
+      return true;
+    });
   }
 
   private async deleteHeading({ path, lineNumber }: DeleteHeadingParams): Promise<void> {
     const file = this.getFile(path, 'delete_heading');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'delete_heading');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'delete_heading', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      if (!PATTERNS.HEADING_VALIDATION.test(line)) {
+        logger.warn('Trigger: line is not a heading for delete_heading', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
-
-    const line = lines[lineIndex];
-    if (!PATTERNS.HEADING_VALIDATION.test(line)) {
-      logger.warn('Trigger: line is not a heading for delete_heading', line);
-      return;
-    }
-
-    lines.splice(lineIndex, 1);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines.splice(lineIndex, 1);
+      return true;
+    });
   }
 
   private async deleteListItem({ path, lineNumber }: DeleteListItemParams): Promise<void> {
     const file = this.getFile(path, 'delete_list_item');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'delete_list_item');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'delete_list_item', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      if (!PATTERNS.LIST_ITEM_VALIDATION.test(line)) {
+        logger.warn('Trigger: line is not a list item for delete_list_item', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
-
-    const line = lines[lineIndex];
-    if (!PATTERNS.LIST_ITEM_VALIDATION.test(line)) {
-      logger.warn('Trigger: line is not a list item for delete_list_item', line);
-      return;
-    }
-
-    lines.splice(lineIndex, 1);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines.splice(lineIndex, 1);
+      return true;
+    });
   }
 
   private async updateListItem({ path, lineNumber, itemText }: UpdateListItemParams): Promise<void> {
     const file = this.getFile(path, 'update_list_item');
     if (!file) return;
 
-    const result = await this.getFileLines(file, lineNumber, 'update_list_item');
-    if (!result) return;
+    await this.transformFileLines(file, lineNumber, 'update_list_item', (lines, lineIndex) => {
+      const line = lines[lineIndex];
+      const match = line.match(PATTERNS.LIST_ITEM);
+      if (!match) {
+        logger.warn('Trigger: line is not a list item for update_list_item', line);
+        return false;
+      }
 
-    const { lines, lineIndex } = result;
-
-    const line = lines[lineIndex];
-    const match = line.match(PATTERNS.LIST_ITEM);
-    if (!match) {
-      logger.warn('Trigger: line is not a list item for update_list_item', line);
-      return;
-    }
-
-    lines[lineIndex] = `${match[1]}${itemText}`;
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines[lineIndex] = `${match[1]}${itemText}`;
+      return true;
+    });
   }
 
-  private async getMarkdownTableContext(path: string, tableIndex: number, action: string, warningAction: string = action): Promise<MarkdownTableContext | null> {
+  private async transformMarkdownTable(path: string, tableIndex: number, action: string, warningAction: string, transform: (lines: string[], table: MarkdownTableLineInfo) => boolean): Promise<void> {
     const file = this.getFile(path, action);
-    if (!file) return null;
+    if (!file) return;
 
-    const fileContent = await this.readCurrentFile(file);
-    const lines = fileContent.split('\n');
-    const tables = MarkdownTableUtils.parseTableLines(lines);
+    await this.transformFile(file, (content) => {
+      const lines = content.split('\n');
+      const tables = MarkdownTableUtils.parseTableLines(lines);
 
-    if (tableIndex < 0 || tableIndex >= tables.length) {
-      logger.warn(`Trigger: invalid table index for ${warningAction}`, tableIndex);
-      return null;
-    }
+      if (tableIndex < 0 || tableIndex >= tables.length) {
+        logger.warn(`Trigger: invalid table index for ${warningAction}`, tableIndex);
+        return null;
+      }
 
-    return {
-      file,
-      lines,
-      table: tables[tableIndex],
-    };
+      return transform(lines, tables[tableIndex]) ? lines.join('\n') : null;
+    });
   }
 
-  private async addTableRow({ path, tableIndex, valuesJson }: AddTableRowParams): Promise<void> {
-    const context = await this.getMarkdownTableContext(path, tableIndex, 'add_table_row', 'addTableRow');
-    if (!context) return;
+  private async addTableRow({ path, tableIndex, values }: AddTableRowParams): Promise<void> {
+    await this.transformMarkdownTable(path, tableIndex, 'add_table_row', 'addTableRow', (lines, table) => {
+      const cells = table.columns.map(col => values[col] || '');
+      const newRow = `| ${cells.join(' | ')} |`;
 
-    const { file, lines, table } = context;
-    let values: Record<string, string>;
-    try {
-      values = JSON.parse(valuesJson) as Record<string, string>;
-    } catch {
-      logger.warn('Trigger: invalid JSON for addTableRow', valuesJson);
-      return;
-    }
-
-    const cells = table.columns.map(col => values[col] || '');
-    const newRow = `| ${cells.join(' | ')} |`;
-
-    lines.splice(table.endLine + 1, 0, newRow);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines.splice(table.endLine + 1, 0, newRow);
+      return true;
+    });
   }
 
   private async setTableCell({ path, tableIndex, rowIndex, columnName, value }: SetTableCellParams): Promise<void> {
-    const context = await this.getMarkdownTableContext(path, tableIndex, 'set_table_cell', 'updateTableCell');
-    if (!context) return;
+    await this.transformMarkdownTable(path, tableIndex, 'set_table_cell', 'updateTableCell', (lines, table) => {
+      const columnIndex = table.columns.indexOf(columnName);
+      if (columnIndex === -1) {
+        logger.warn('Trigger: column not found for updateTableCell', columnName);
+        return false;
+      }
 
-    const { file, lines, table } = context;
-    const columnIndex = table.columns.indexOf(columnName);
-    if (columnIndex === -1) {
-      logger.warn('Trigger: column not found for updateTableCell', columnName);
-      return;
-    }
+      const lineIndex = table.dataStartLine + rowIndex;
+      if (lineIndex > table.endLine || lineIndex >= lines.length) {
+        logger.warn('Trigger: invalid row index for updateTableCell', rowIndex);
+        return false;
+      }
 
-    const lineIndex = table.dataStartLine + rowIndex;
-    if (lineIndex > table.endLine || lineIndex >= lines.length) {
-      logger.warn('Trigger: invalid row index for updateTableCell', rowIndex);
-      return;
-    }
+      const cells = MarkdownTableUtils.splitTableRow(lines[lineIndex]);
+      if (columnIndex >= cells.length) {
+        logger.warn('Trigger: cell index out of bounds for updateTableCell');
+        return false;
+      }
 
-    const cells = MarkdownTableUtils.splitTableRow(lines[lineIndex]);
-    if (columnIndex >= cells.length) {
-      logger.warn('Trigger: cell index out of bounds for updateTableCell');
-      return;
-    }
-
-    cells[columnIndex] = String(value).replace(/\|/g, '\\|');
-    lines[lineIndex] = `| ${cells.join(' | ')} |`;
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      cells[columnIndex] = String(value).replace(/\|/g, '\\|');
+      lines[lineIndex] = `| ${cells.join(' | ')} |`;
+      return true;
+    });
   }
 
   private async deleteTableRow({ path, tableIndex, rowIndex }: DeleteTableRowParams): Promise<void> {
-    const context = await this.getMarkdownTableContext(path, tableIndex, 'delete_table_row', 'deleteTableRow');
-    if (!context) return;
+    await this.transformMarkdownTable(path, tableIndex, 'delete_table_row', 'deleteTableRow', (lines, table) => {
+      const lineIndex = table.dataStartLine + rowIndex;
+      if (lineIndex > table.endLine || lineIndex >= lines.length) {
+        logger.warn('Trigger: invalid row index for deleteTableRow', rowIndex);
+        return false;
+      }
 
-    const { file, lines, table } = context;
-    const lineIndex = table.dataStartLine + rowIndex;
-    if (lineIndex > table.endLine || lineIndex >= lines.length) {
-      logger.warn('Trigger: invalid row index for deleteTableRow', rowIndex);
-      return;
-    }
-
-    lines.splice(lineIndex, 1);
-
-    await this.writeFromTrigger(file, lines.join('\n'));
+      lines.splice(lineIndex, 1);
+      return true;
+    });
   }
 
   private async createNote({ path, content }: CreateNoteParams): Promise<void> {
-    const normalizedPath = normalizePath(path);
-
-    const existing = this.app.vault.getAbstractFileByPath(normalizedPath);
+    const existing = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (existing) {
       logger.warn('Trigger: file already exists for createNote', path);
       return;
     }
 
-    const folderPath = normalizedPath.substring(0, normalizedPath.lastIndexOf('/'));
-    if (folderPath) {
-      const folder = this.app.vault.getAbstractFileByPath(normalizePath(folderPath));
-      if (!folder) {
-        try {
-          await this.app.vault.createFolder(normalizePath(folderPath));
-        } catch {
-          // Folder might already exist or be created concurrently
-        }
-      }
-    }
-
     try {
-      await this.app.vault.create(normalizedPath, content);
+      await createNoteWithFolders(this.app.vault, path, content);
     } catch (error) {
       logger.error('Trigger: failed to create note', path, error);
     }

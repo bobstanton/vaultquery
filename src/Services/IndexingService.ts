@@ -1,4 +1,4 @@
-import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, normalizePath } from 'obsidian';
+import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, BlockCache, ReferenceCache, normalizePath } from 'obsidian';
 import { VaultDatabase } from '../Database/DatabaseService';
 import { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import { VaultQuerySettings } from '../Settings/Settings';
@@ -25,6 +25,7 @@ interface IndexingEventEmitter {
 
 interface ProviderDefinitionBlockHandler {
   hasProviderDefinitionDiscovery(): boolean;
+  setRefreshDeferred(deferred: boolean): void;
   indexProviderDefinitionBlocks(path: string, content: string): Promise<void>;
   removeProviderDefinitionBlocks(path: string): void;
   clearProviderDefinitionBlocks(): void;
@@ -100,6 +101,10 @@ export class IndexingService {
     if (this.settings.enabledFeatures.indexListItems && cache?.listItems?.some(item => item.task === undefined)) return true;
 
     if (this.settings.enabledFeatures.indexHeadings && cache?.headings?.length) return true;
+    if (this.settings.enabledFeatures.indexLinks && (cache?.links?.length || cache?.frontmatterLinks?.length)) return true;
+    if (this.settings.enabledFeatures.indexEmbeds && cache?.embeds?.length) return true;
+    if (this.settings.enabledFeatures.indexTags && cache?.tags?.length) return true;
+    if (this.settings.enabledFeatures.indexBlocks && cache?.blocks) return true;
 
     return false;
   }
@@ -119,6 +124,7 @@ export class IndexingService {
     this.updateExcludePatterns();
     this.performanceMonitor.startOperation();
     this.setIndexingStatus(true);
+    this.providerDefinitionBlockHandler?.setRefreshDeferred(true);
 
     let filesIndexed = 0;
     let filesRemoved = 0;
@@ -188,6 +194,7 @@ export class IndexingService {
         initialIndexingComplete: this.initialIndexingComplete,
       });
     } finally {
+      this.providerDefinitionBlockHandler?.setRefreshDeferred(false);
       this.setIndexingStatus(false);
     }
   }
@@ -197,8 +204,12 @@ export class IndexingService {
       await this.eventEmitter.onBeforeVaultIndexed();
     }
 
-    // Mark initial indexing as complete - after this, we skip extracting views/functions/triggers
-    // from file content during realtime indexing (they're registered when code blocks render)
+    // Provider fetches discovered during the reindex may now run against the
+    // final main-thread database without extending individual file timings.
+    this.providerDefinitionBlockHandler?.setRefreshDeferred(false);
+
+    // After this point realtime indexing skips extracting views/functions/
+    // triggers from content - they are registered when code blocks render.
     this.initialIndexingComplete = true;
 
     const firstCallbacks = this.firstIndexingCallbacks.splice(0);
@@ -535,9 +546,37 @@ export class IndexingService {
       return await this.processBatchIndividually(batch, currentIndexed, totalToIndex);
     }
 
+    const prepareStartedAt = performance.now();
     const batchData = await this.prepareBatchData(batch, currentIndexed, totalToIndex);
+    const prepareMs = performance.now() - prepareStartedAt;
 
+    const databaseStartedAt = performance.now();
     await this.database.indexNotesBatch(batchData, isInitialIndexing, true);
+    const databaseMs = performance.now() - databaseStartedAt;
+    const batchBytes = batch.reduce((total, file) => total + file.stat.size, 0);
+    const featureRows = batchData.reduce((total, data) => total
+      + (data.frontmatterData?.length ?? 0)
+      + (data.tables?.length ?? 0)
+      + (data.tableCells?.length ?? 0)
+      + (data.tasks?.length ?? 0)
+      + (data.headings?.length ?? 0)
+      + (data.links?.length ?? 0)
+      + (data.unresolvedLinks?.length ?? 0)
+      + (data.embeds?.length ?? 0)
+      + (data.tags?.length ?? 0)
+      + (data.listItems?.length ?? 0)
+      + (data.blocks?.length ?? 0)
+      + (data.userViews?.length ?? 0)
+      + (data.userFunctions?.length ?? 0)
+      + (data.userTriggers?.length ?? 0), 0);
+
+    logger.debug('Index batch phases', {
+      files: batch.length,
+      bytes: batchBytes,
+      featureRows,
+      prepareMs: Math.round(prepareMs),
+      databaseMs: Math.round(databaseMs),
+    });
 
     return currentIndexed + batch.length;
   }
@@ -719,17 +758,20 @@ export class IndexingService {
   }
 
   private processFeatures(file: TFile, content: string, contentWithoutFrontmatter: string, cache: CachedMetadata | null): {
-    results: {
-      tables: IndexNoteData['tables'];
-      tableCells: IndexNoteData['tableCells'];
-      tasks: IndexNoteData['tasks'];
-      headings: IndexNoteData['headings'];
-      links: IndexNoteData['links'];
-      tags: IndexNoteData['tags'];
-      listItems: IndexNoteData['listItems'];
-      userViews: IndexNoteData['userViews'];
-      userFunctions: IndexNoteData['userFunctions'];
-      userTriggers: IndexNoteData['userTriggers'];
+      results: {
+        tables: IndexNoteData['tables'];
+        tableCells: IndexNoteData['tableCells'];
+        tasks: IndexNoteData['tasks'];
+        headings: IndexNoteData['headings'];
+        links: IndexNoteData['links'];
+        unresolvedLinks: IndexNoteData['unresolvedLinks'];
+        embeds: IndexNoteData['embeds'];
+        tags: IndexNoteData['tags'];
+        listItems: IndexNoteData['listItems'];
+        blocks: IndexNoteData['blocks'];
+        userViews: IndexNoteData['userViews'];
+        userFunctions: IndexNoteData['userFunctions'];
+        userTriggers: IndexNoteData['userTriggers'];
     };
     timings: {
       tablesTime: number;
@@ -804,11 +846,16 @@ export class IndexingService {
     const { links, time: linksTime } = this.processLinksFeature(cache, file.path);
     timings.linksTime = linksTime;
 
+    const unresolvedLinks = this.processUnresolvedLinksFeature(file.path);
+    const embeds = this.processEmbedsFeature(cache, file.path).embeds;
+
     const { tags, time: tagsTime } = this.processTagsFeature(cache);
     timings.tagsTime = tagsTime;
 
-    const { listItems, time: listItemsTime } = this.processListItemsFeature(content, fullLines, cache);
+    const { listItems, time: listItemsTime } = this.processListItemsFeature(fullLines, cache);
     timings.listItemsTime = listItemsTime;
+
+    const blocks = this.processBlocksFeature(cache);
 
     let userViews: UserViewData[] | undefined;
     let userFunctions: UserFunctionData[] | undefined;
@@ -829,8 +876,11 @@ export class IndexingService {
         tasks,
         headings,
         links,
+        unresolvedLinks,
+        embeds,
         tags,
         listItems,
+        blocks,
         userViews,
         userFunctions,
         userTriggers
@@ -855,7 +905,7 @@ export class IndexingService {
 
     const startTime = performance.now();
     const tables = MarkdownTableUtils.detectAllTables(contentWithoutFrontmatter, contentOffset, noteTitle);
-    const tableCells = this.parseAndIndexTables(contentWithoutFrontmatter, contentLines, lineOffset, contentOffset, tables ?? []);
+    const tableCells = this.parseAndIndexTables(contentLines, lineOffset, contentOffset, tables ?? []);
     const time = performance.now() - startTime;
 
     return { tables, tableCells, time };
@@ -925,19 +975,73 @@ export class IndexingService {
     }
 
     const startTime = performance.now();
-    const links = cache?.links?.map((link: LinkCache) => {
+    const links: NonNullable<IndexNoteData['links']> = cache?.links?.map((link: LinkCache) => {
       const targetFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourcePath);
       return {
         link_text: link.displayText || link.link,
         link_target: link.link,
         link_target_path: targetFile?.path ?? null,
         link_type: 'internal',
-        line_number: link.position.start.line + 1
+        line_number: link.position.start.line + 1,
+        original: link.original ?? null,
+        start_offset: link.position.start.offset,
+        end_offset: link.position.end.offset,
+        frontmatter_key: null
+      };
+    }) || [];
+
+    for (const link of cache?.frontmatterLinks ?? []) {
+      const targetFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourcePath);
+      links.push({
+        link_text: link.displayText || link.link,
+        link_target: link.link,
+        link_target_path: targetFile?.path ?? null,
+        link_type: 'frontmatter',
+        line_number: null,
+        original: link.original ?? null,
+        start_offset: null,
+        end_offset: null,
+        frontmatter_key: link.key
+      });
+    }
+
+    const time = performance.now() - startTime;
+    return { links, time };
+  }
+
+  private processUnresolvedLinksFeature(path: string): IndexNoteData['unresolvedLinks'] {
+    if (!this.settings.enabledFeatures.indexUnresolvedLinks) {
+      return undefined;
+    }
+
+    const unresolvedForPath = this.app.metadataCache.unresolvedLinks[path] ?? {};
+    return Object.entries(unresolvedForPath).map(([linkTarget, linkCount]) => ({
+      link_target: linkTarget,
+      link_count: linkCount
+    }));
+  }
+
+  private processEmbedsFeature(cache: CachedMetadata | null, sourcePath: string): {
+    embeds: IndexNoteData['embeds'];
+    time: number;
+  } {
+    if (!this.settings.enabledFeatures.indexEmbeds) {
+      return { embeds: undefined, time: 0 };
+    }
+
+    const startTime = performance.now();
+    const embeds = cache?.embeds?.map((embed: ReferenceCache) => {
+      const targetFile = this.app.metadataCache.getFirstLinkpathDest(embed.link, sourcePath);
+      return {
+        embed_text: embed.displayText || embed.link,
+        embed_target: embed.link,
+        embed_target_path: targetFile?.path ?? null,
+        line_number: embed.position.start.line + 1
       };
     }) || [];
 
     const time = performance.now() - startTime;
-    return { links, time };
+    return { embeds, time };
   }
 
   private processTagsFeature(cache: CachedMetadata | null): {
@@ -959,7 +1063,26 @@ export class IndexingService {
     return { tags, time };
   }
 
-  private processListItemsFeature(content: string, lines: string[], cache: CachedMetadata | null): {
+  private processBlocksFeature(cache: CachedMetadata | null): IndexNoteData['blocks'] {
+    if (!this.settings.enabledFeatures.indexBlocks) {
+      return undefined;
+    }
+
+    const blocks = cache?.blocks;
+    if (!blocks) {
+      return [];
+    }
+
+    return Object.values(blocks).map((block: BlockCache) => ({
+      block_id: block.id,
+      line_number: block.position.start.line + 1,
+      start_offset: block.position.start.offset,
+      end_offset: block.position.end.offset,
+      section_type: this.findSectionType(cache, block.position.start.line)
+    }));
+  }
+
+  private processListItemsFeature(lines: string[], cache: CachedMetadata | null): {
     listItems: IndexNoteData['listItems'];
     time: number;
   } {
@@ -1033,9 +1156,7 @@ export class IndexingService {
         if (mappedParentIndex !== undefined) {
           parentIndex = mappedParentIndex;
         }
-        // If parent mapping failed, check if parent was filtered out as a task
-        // In that case, the list item becomes a root item (null parent)
-        // This is expected behavior when tasks have non-task children
+        // Parent filtered out (e.g. it was a task): the item becomes a root item.
       }
 
       lineNumberToItemIndex.set(lineIndex, listItems.length);
@@ -1118,6 +1239,13 @@ export class IndexingService {
     ) ?? false;
   }
 
+  private findSectionType(cache: CachedMetadata | null, lineIndex: number): string | null {
+    return cache?.sections?.find(section =>
+      section.position.start.line <= lineIndex &&
+      section.position.end.line >= lineIndex
+    )?.type ?? null;
+  }
+
   private getNextContextOccurrence(contextOccurrences: Map<string, number>, lineIndex: number, lines: string[]): number {
     const contextKey = ContentLocationService.computeContextKey(lineIndex, lines);
     const occurrence = contextOccurrences.get(contextKey) ?? 0;
@@ -1171,19 +1299,14 @@ export class IndexingService {
     return results;
   }
 
-  private parseAndIndexTables(content: string, lines: string[], lineOffset: number, contentOffset: number, detectedTables: NonNullable<IndexNoteData['tables']>): TableCellData[] {
+  private parseAndIndexTables(lines: string[], lineOffset: number, contentOffset: number, detectedTables: NonNullable<IndexNoteData['tables']>): TableCellData[] {
     if (detectedTables.length === 0) {
       return [];
     }
 
     const tableCells: TableCellData[] = [];
 
-    const lineStartOffsets: number[] = [];
-    let currentOffset = contentOffset;
-    for (let i = 0; i < lines.length; i++) {
-      lineStartOffsets.push(currentOffset);
-      currentOffset += lines[i].length + 1;
-    }
+    const lineStartOffsets = this.buildLineStartOffsets(lines, contentOffset);
 
     for (const detectedTable of detectedTables) {
       const tableStartOffset = detectedTable.start_offset;
@@ -1237,9 +1360,9 @@ export class IndexingService {
     return low;
   }
 
-  private buildLineStartOffsets(lines: string[]): number[] {
+  private buildLineStartOffsets(lines: string[], startOffset = 0): number[] {
     const offsets: number[] = [];
-    let offset = 0;
+    let offset = startOffset;
 
     for (const line of lines) {
       offsets.push(offset);
@@ -1291,9 +1414,7 @@ export class IndexingService {
 
       const { start, end } = this.getLineRange(fullContent, fullLines, lineStartOffsets, lineIndex);
 
-      const contextKey = ContentLocationService.computeContextKey(lineIndex, fullLines);
-      const occurrence = contextOccurrences.get(contextKey) ?? 0;
-      contextOccurrences.set(contextKey, occurrence + 1);
+      const occurrence = this.getNextContextOccurrence(contextOccurrences, lineIndex, fullLines);
 
       const anchorHash = ContentLocationService.computeAnchorHash(lineIndex, fullLines, occurrence);
 
@@ -1419,7 +1540,7 @@ export class IndexingService {
   }
 
   private deriveSize(statSize: number, content: string): number {
-    return statSize > 0 ? statSize : (content?.length ?? 0);
+    return statSize > 0 ? statSize : content.length;
   }
 
   /**

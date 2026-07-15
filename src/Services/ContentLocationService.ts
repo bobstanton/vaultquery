@@ -122,13 +122,7 @@ export class ContentLocationService {
    * so moving an item doesn't change its identity.
    */
   public static computeAnchorHash(lineIndex: number, lines: string[], occurrence: number = 0): string {
-    const prevLine = (lineIndex > 0 ? lines[lineIndex - 1] : '') || '';
-    const currentLine = lines[lineIndex] || '';
-    const nextLine = (lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '') || '';
-
-    const contextWindow = [prevLine, currentLine, nextLine]
-      .map(line => line.trim().toLowerCase())
-      .join('\n');
+    const contextWindow = ContentLocationService.computeContextKey(lineIndex, lines);
 
     // Include occurrence number to distinguish items with identical context.
     // Occurrence 0 means "first item with this context", 1 means "second", etc.
@@ -141,9 +135,9 @@ export class ContentLocationService {
    * Compute the context key used to track occurrences (before adding occurrence number).
    */
   public static computeContextKey(lineIndex: number, lines: string[]): string {
-    const prevLine = (lineIndex > 0 ? lines[lineIndex - 1] : '') || '';
+    const prevLine = lineIndex > 0 ? lines[lineIndex - 1] : '';
     const currentLine = lines[lineIndex] || '';
-    const nextLine = (lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '') || '';
+    const nextLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '';
 
     return [prevLine, currentLine, nextLine]
       .map(line => line.trim().toLowerCase())
@@ -152,22 +146,11 @@ export class ContentLocationService {
 
   public static getLineOffsets(content: string, lineIndex: number): Range {
     if (lineIndex < 0) return { start: 0, end: 0 };
-    
-    let currentPos = 0;
-    let currentLine = 0;
-    
-    while (currentLine < lineIndex && currentPos < content.length) {
-      const nextNewline = content.indexOf('\n', currentPos);
-      if (nextNewline === -1) break;
-      currentPos = nextNewline + 1;
-      currentLine++;
-    }
-    
-    const start = currentPos;
-    
-    const nextNewline = content.indexOf('\n', currentPos);
+
+    const start = ContentLocationService.getLineStartOffset(content, lineIndex);
+    const nextNewline = content.indexOf('\n', start);
     const end = nextNewline === -1 ? content.length : nextNewline;
-    
+
     return { start, end };
   }
 
@@ -313,7 +296,7 @@ export class ContentLocationService {
   }
 
   private static normalizeText(s: string): string {
-    return (s ?? "").trim().toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "");
+    return s.trim().toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "");
   }
 
   private static lcsScore(a: string, b: string): number {
@@ -358,12 +341,10 @@ export class ContentLocationService {
     const lines = content.split('\n');
     const targetLineIndex = lineNumber - 1;
 
-    // If the target line is beyond the file, append at end
     if (targetLineIndex >= lines.length) {
       return ContentLocationService.findTableInsertionPoint(content);
     }
 
-    // If target line is 0 or negative, insert at beginning
     if (targetLineIndex <= 0) {
       return {
         offset: 0,
@@ -372,7 +353,6 @@ export class ContentLocationService {
       };
     }
 
-    // Insert at the start of the target line (content will appear at that line number)
     const offset = ContentLocationService.getLineStartOffset(content, targetLineIndex);
 
     return {

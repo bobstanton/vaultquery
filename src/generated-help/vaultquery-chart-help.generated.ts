@@ -42,7 +42,7 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   para1.createEl('a', { cls: 'vaultquery-help-link vaultquery-help-external-link', text: "Chart.js", attr: { href: "https://www.chartjs.org/", target: '_blank', rel: 'noopener' } });
   para1.appendText(".");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Chart result columns" });
-  const tableWrapper = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });
   const thead = table.createEl('thead');
   const row = thead.createEl('tr');
@@ -82,7 +82,7 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   td7.createEl('code', { cls: 'vaultquery-help-code', text: "borderColor" });
   row8.createEl('td', { text: "Optional border/line color" });
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Chart config options" });
-  const tableWrapper1 = container.createEl('div', { cls: 'vaultquery-help-table-wrapper' });
+  const tableWrapper1 = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table1 = tableWrapper1.createEl('table', { cls: 'vaultquery-help-table' });
   const thead1 = table1.createEl('thead');
   const row9 = thead1.createEl('tr');

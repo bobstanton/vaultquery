@@ -5,12 +5,7 @@
  */
 
 import { DEFAULT_TASK_STATUS } from './IndexingQueries';
-import type {
-  TaskData as InputTaskData,
-  ListItemData as InputListItemData,
-  TableCellData as InputTableCellData,
-  TaskMetadataFields,
-} from '../types';
+import type { TaskData as InputTaskData, ListItemData as InputListItemData, TableCellData as InputTableCellData, TaskMetadataFields } from '../types';
 
 /** Input heading format from types.d.ts (inline in IndexNoteData) */
 export interface InputHeadingData {
@@ -45,7 +40,11 @@ export interface LinkData {
   link_target: string;
   link_target_path: string | null;
   link_type: string;
-  line_number: number;
+  line_number: number | null;
+  original: string | null;
+  start_offset: number | null;
+  end_offset: number | null;
+  frontmatter_key: string | null;
 }
 
 export interface HeadingData {
@@ -127,7 +126,7 @@ export type SqlResult = Array<{ columns: string[]; values: SqlValue[][] }>;
  * anchor_hash, section_heading
  */
 export function parseTaskRows(result: SqlResult): TaskRow[] {
-  if (result.length === 0 || !result[0].values) return [];
+  if (result.length === 0) return [];
 
   return result[0].values.map(row => ({
     id: row[0] as number,
@@ -160,7 +159,7 @@ export function parseTaskRows(result: SqlResult): TaskRow[] {
  * list_type, indent_level, line_number, block_id, anchor_hash, start_offset, end_offset
  */
 export function parseListItemRows(result: SqlResult): ListItemRow[] {
-  if (result.length === 0 || !result[0].values) return [];
+  if (result.length === 0) return [];
 
   return result[0].values.map(row => ({
     id: row[0] as number,
@@ -404,7 +403,11 @@ export function detectLinkChanges(file: LinkData[], existing: LinkRow[]): LinkCh
         match.link_text !== link.link_text ||
         match.link_target_path !== link.link_target_path ||
         match.link_type !== link.link_type ||
-        match.line_number !== link.line_number;
+        match.line_number !== link.line_number ||
+        match.original !== link.original ||
+        match.start_offset !== link.start_offset ||
+        match.end_offset !== link.end_offset ||
+        match.frontmatter_key !== link.frontmatter_key;
 
       if (changed) {
         result.updated.push({ id: match.id, old: toData(match), new: link });
