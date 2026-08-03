@@ -2,7 +2,8 @@ import { RangeSetBuilder, EditorState } from '@codemirror/state';
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view';
 import { editorLivePreviewField } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
-import { findCodeBlockRanges, getActiveSourcePath, isInsideCodeBlock } from './InlineMarkdownUtils';
+import { findCodeBlockRanges, isInsideCodeBlock } from '../utils/MarkdownFenceUtils';
+import { getActiveSourcePath } from './InlineMarkdownUtils';
 
 export interface InlineMatch<T> {
   from: number;
@@ -22,7 +23,7 @@ interface InlineExtensionOptions<T> {
   createWidget: (value: T, plugin: VaultQueryPluginContext, sourcePath: string) => WidgetType;
 }
 
-export function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, cursorPos: number): InlineMatch<T>[] {
+function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, cursorPos: number): InlineMatch<T>[] {
   const matches: InlineMatch<T>[] = [];
   const text = state.doc.toString();
   const regex = new RegExp(syntax.regex.source, syntax.regex.flags.includes('g') ? syntax.regex.flags : `${syntax.regex.flags}g`);

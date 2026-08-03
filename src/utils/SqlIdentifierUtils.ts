@@ -6,7 +6,7 @@ export function quoteIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-export function validateSqlIdentifier(identifier: string, label: string = 'SQL identifier'): void {
+function validateSqlIdentifier(identifier: string, label: string = 'SQL identifier'): void {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
     throw new Error(`Invalid ${label}: ${identifier}`);
   }

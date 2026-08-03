@@ -62,4 +62,8 @@ functions
       },
     };
   }
+
+  public unload(): void {
+    this.component.unload();
+  }
 }

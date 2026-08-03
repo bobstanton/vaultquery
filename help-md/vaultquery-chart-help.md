@@ -36,6 +36,8 @@ Chart output uses [Chart.js](https://www.chartjs.org/).
 
 Use result columns for per-row or per-series colors when colors should come from SQL. Use config colors when one dataset-level color is enough.
 
+Chart blocks also accept `autoRefresh`, shared by every query block: set it to `true` or `false` to re-run this chart when indexed files change, overriding the global setting.
+
 ## Bar chart
 
 ~~~vaultquery-chart

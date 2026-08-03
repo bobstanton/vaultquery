@@ -27,12 +27,14 @@ interface InlineButtonResult {
   rowCount?: number;
 }
 
+const INLINE_BUTTON_PATTERN = String.raw`vq(\.(?:[a-zA-Z_][\w-]*)?(?:\.[a-zA-Z_][\w-]*)*)?\[([^\]\n]+)\]\{([^\`\n]+)\}`;
+
 const INLINE_BUTTON_SYNTAX: InlineSyntax<InlineButtonSpec> = {
-  regex: /`vq(\.(?:[a-zA-Z_][\w-]*)?(?:\.[a-zA-Z_][\w-]*)*)?\[([^\]\n]+)\]\{([^`\n]+)\}`/g,
+  regex: new RegExp(`\`${INLINE_BUTTON_PATTERN}\``, 'g'),
   parseMatch: (match) => parseButtonParts(match[1], match[2], match[3]),
 };
 
-const INLINE_BUTTON_TEXT_PATTERN = /^vq(\.(?:[a-zA-Z_][\w-]*)?(?:\.[a-zA-Z_][\w-]*)*)?\[([^\]\n]+)\]\{(.+)\}$/s;
+const INLINE_BUTTON_TEXT_PATTERN = new RegExp(`^${INLINE_BUTTON_PATTERN}$`);
 
 function parseButtonParts(classesStr: string | undefined, label: string, sql: string): InlineButtonSpec {
   const hasExplicitDotSyntax = classesStr !== undefined && classesStr.startsWith('.');

@@ -1,15 +1,3 @@
-export interface PreviewResult {
-  op: 'insert' | 'update' | 'delete' | 'multi';
-  table: string;
-  before: Record<string, unknown>[];
-  after: Record<string, unknown>[];
-  sqlToApply: Array<{ sql: string; params?: unknown[] }>;
-  multiResults?: PreviewResult[];
-  pkCols?: string[];
-  ids?: unknown[][];
-  rowids?: number[];
-}
-
 export function asStr(v: unknown): string;
 export function asStr(v: unknown, fallback: string): string;
 export function asStr(v: unknown, fallback: null): string | null;

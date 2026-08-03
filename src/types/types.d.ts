@@ -1,13 +1,5 @@
 import { TFile } from 'obsidian';
 
-declare global {
-  const Prism: {
-    highlightElement: (element: Element) => void;
-    highlight: (code: string, grammar: unknown, language: string) => string;
-    languages: Record<string, unknown>;
-  } | undefined;
-}
-
 export type NoteSource = string | TFile;
 
 export interface NoteRecord {

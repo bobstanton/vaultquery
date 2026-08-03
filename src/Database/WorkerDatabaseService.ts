@@ -1,11 +1,14 @@
 import { loadWasmBinary, cacheWasmBinaryIfNeeded } from './WasmLoader';
 import { getDatabaseDir, getDatabasePath } from '../Settings/Settings';
-import type { WorkerResponse } from './worker-types';
-import type { IndexNoteData } from '../types/types.d.ts';
+import type { WorkerRequestBody, WorkerResponse } from './worker-types';
+import type { IndexNoteData } from '../types';
 import type { EnabledFeatures, TableStructure } from './DatabaseSchema';
 import type { ISchemaManager, VaultFileAdapter } from './DatabaseInterface';
 import type { TriggerFunctions } from '../Triggers/TriggerFunctions';
 import type { WasmSettings } from '../Settings/Settings';
+import type { DatabaseHealth } from '../VaultQueryAPI';
+import { DbLock } from './DatabaseCore';
+import type { UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
 import { logger as rootLogger } from '../utils/logger';
 import { getErrorMessage } from '../utils/ErrorMessages';
 // @ts-expect-error - inline worker import
@@ -20,18 +23,14 @@ const DatabaseWorker = DatabaseWorkerImport as { new (): Worker };
 const HEALTH_CHECK_RETRY_DELAY_MS = 250;
 const HEALTH_CHECK_RETRY_TIMEOUT_MS = 2_000;
 
-interface DatabaseHealth {
-  healthy: boolean;
-  error?: string;
-  diagnostics: Record<string, unknown>;
-}
+class WorkerTimeoutError extends Error {}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
 class WorkerSchemaProxy implements ISchemaManager {
-  constructor(private callWorker: <T = unknown>(message: Record<string, unknown>) => Promise<T>) {}
+  constructor(private callWorker: <T = unknown>(message: WorkerRequestBody) => Promise<T>) {}
 
   getAllPropertyKeys(): Promise<string[]> {
     return this.callWorker<string[]>({ type: 'getAllPropertyKeys' });
@@ -68,12 +67,9 @@ export class WorkerDatabase {
   private fileAdapter: VaultFileAdapter | null;
   private databasePath: string;
   private configDir: string;
-  private dbLock: Promise<void> = Promise.resolve();
+  private readonly dbLock = new DbLock();
   public readonly useMemoryStorage: boolean;
   public readonly schema: WorkerSchemaProxy;
-
-  /** Identifies this as a worker-based database (survives minification) */
-  public readonly isWorkerMode = true;
 
   private constructor(fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
     this.fileAdapter = fileAdapter;
@@ -128,7 +124,7 @@ export class WorkerDatabase {
     };
   }
 
-  private async callWorker<T = unknown>(message: Record<string, unknown>, timeoutMs?: number, transfer?: Transferable[]): Promise<T> {
+  private async callWorker<T = unknown>(message: WorkerRequestBody, timeoutMs?: number, transfer?: Transferable[]): Promise<T> {
     await this.ready;
 
     const id = this.nextId++;
@@ -157,7 +153,7 @@ export class WorkerDatabase {
       if (timeoutMs !== undefined) {
         timeout = window.setTimeout(() => {
           this.pendingWorkerCalls.delete(id);
-          reject(new Error(`Worker call "${String(message.type)}" timed out after ${timeoutMs}ms`));
+          reject(new WorkerTimeoutError(`Worker call "${message.type}" timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
 
@@ -177,7 +173,7 @@ export class WorkerDatabase {
     const adapter = wasmAdapter || fileAdapter;
 
     const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
-    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings, 'WorkerDatabase');
+    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
     const { wasmBinary } = wasmLoadResult;
 
     const instance = new WorkerDatabase(
@@ -307,22 +303,15 @@ export class WorkerDatabase {
     });
   }
 
-  public async deleteNote(path: string): Promise<void> {
-    await this.callWorker({
-      type: 'deleteNote',
-      path
-    });
-  }
-
-  public async getAllUserViews(): Promise<Array<{view_name: string; path: string; sql: string}>> {
+  public async getAllUserViews(): Promise<UserViewRow[]> {
     return this.callWorker({ type: 'getAllUserViews' });
   }
 
-  public async getAllUserFunctions(): Promise<Array<{function_name: string; path: string; source: string}>> {
+  public async getAllUserFunctions(): Promise<UserFunctionRow[]> {
     return this.callWorker({ type: 'getAllUserFunctions' });
   }
 
-  public async getAllUserTriggers(): Promise<Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}>> {
+  public async getAllUserTriggers(): Promise<UserTriggerRow[]> {
     return this.callWorker({ type: 'getAllUserTriggers' });
   }
 
@@ -342,59 +331,31 @@ export class WorkerDatabase {
     await this.callWorker({ type: 'registerTrigger', triggerName, triggerSql, sourcePath });
   }
 
-  public async registerUserTriggers(): Promise<void> {
-    await this.callWorker({ type: 'registerUserTriggers' });
-  }
-
   public async checkHealth(timeoutMs: number = 10000): Promise<DatabaseHealth> {
     try {
       return await this.callWorker<DatabaseHealth>({ type: 'health' }, timeoutMs);
     }
     catch (error) {
-      const message = getErrorMessage(error);
-      const timedOut = message.includes('timed out');
-      const pendingWorkerCallCount = this.pendingWorkerCalls.size;
+      let finalError: unknown = error;
 
-      if (timedOut) {
+      if (error instanceof WorkerTimeoutError) {
         await sleep(HEALTH_CHECK_RETRY_DELAY_MS);
         try {
-          const retryHealth = await this.callWorker<DatabaseHealth>({ type: 'health' }, HEALTH_CHECK_RETRY_TIMEOUT_MS);
-          return {
-            ...retryHealth,
-            diagnostics: {
-              ...retryHealth.diagnostics,
-              previousHealthCheckTimedOut: true,
-              previousHealthCheckError: message,
-              pendingWorkerCallCountAtTimeout: pendingWorkerCallCount,
-            },
-          };
+          return await this.callWorker<DatabaseHealth>({ type: 'health' }, HEALTH_CHECK_RETRY_TIMEOUT_MS);
         }
         catch (retryError) {
-          const retryMessage = getErrorMessage(retryError);
-          return {
-            healthy: false,
-            error: retryMessage,
-            diagnostics: {
-              timestamp: new Date().toISOString(),
-              mode: 'worker',
-              workerCallTimedOut: retryMessage.includes('timed out'),
-              previousHealthCheckTimedOut: true,
-              previousHealthCheckError: message,
-              pendingWorkerCallCountAtTimeout: pendingWorkerCallCount,
-              pendingWorkerCallCount: this.pendingWorkerCalls.size,
-            },
-          };
+          finalError = retryError;
         }
       }
 
       return {
         healthy: false,
-        error: message,
+        error: getErrorMessage(finalError),
         diagnostics: {
           timestamp: new Date().toISOString(),
           mode: 'worker',
-          workerCallTimedOut: timedOut,
-          pendingWorkerCallCount,
+          workerCallTimedOut: finalError instanceof WorkerTimeoutError,
+          pendingWorkerCallCount: this.pendingWorkerCalls.size,
         },
       };
     }
@@ -415,17 +376,8 @@ export class WorkerDatabase {
     }
   }
 
-  public runWithPreparedStatement(_sql: string, _params: (string | number | null)[] = []): void {
-    throw new Error('runWithPreparedStatement is not supported in worker mode - use run() instead');
-  }
-
-  public async acquireDbLock(): Promise<() => void> {
-    let releaseLock: () => void;
-    const lockPromise = new Promise<void>(resolve => { releaseLock = resolve; });
-    const previousLock = this.dbLock;
-    this.dbLock = lockPromise;
-    await previousLock;
-    return releaseLock!;
+  public acquireDbLock(): Promise<() => void> {
+    return this.dbLock.acquire();
   }
 
   /**
@@ -435,15 +387,23 @@ export class WorkerDatabase {
    * messages: without it, another caller (e.g. indexNote) could slip a BEGIN
    * between ours and fail, or have its writes swept up in our rollback.
    */
-  public async withTx<T>(fn: () => T | Promise<T>, _opts?: { deferFK?: boolean }): Promise<T> {
+  public async withTx<T>(fn: () => T | Promise<T>, opts: { deferFK?: boolean } = {}): Promise<T> {
     const releaseLock = await this.acquireDbLock();
 
     try {
       await this.callWorker({ type: 'run', sql: 'BEGIN TRANSACTION', params: [] });
+      if (opts.deferFK) {
+        await this.callWorker({ type: 'run', sql: 'PRAGMA defer_foreign_keys = ON', params: [] });
+      }
 
       try {
         const result = await fn();
+
+        if (opts.deferFK) {
+          await this.callWorker({ type: 'run', sql: 'PRAGMA defer_foreign_keys = OFF', params: [] });
+        }
         await this.callWorker({ type: 'run', sql: 'COMMIT', params: [] });
+
         return result;
       }
       catch (error) {

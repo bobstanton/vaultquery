@@ -21,7 +21,7 @@
 	"scripts": {
 		"rename": "node -e \"require('fs').rename('main.css', 'styles.css', () => { })\"",
 		"build-help-generator": "npm --prefix node_modules/md-to-obsidian-dom run build",
-		"generate-help": "md-to-obsidian-dom ./help-md ./src/generated-help --prefix vaultquery-help",
+		"generate-help": "md-to-obsidian-dom ./help-md ./src/generated-help --prefix vaultquery-help --grammar ./help-grammar.mjs",
 		"generate-api-types": "node scripts/generate-api-dts.mjs",
 		"generate": "npm run generate-help && npm run generate-api-types",
 		"dev": "npm run generate && node esbuild.config.mjs && npm run rename",
@@ -29,7 +29,8 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json && npm run rename",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit --skipLibCheck",
-		"review": "npm run lint && npm run typecheck && npm run build"
+		"review": "npm run lint && npm run typecheck && npm run build",
+		"prepare": "npm run build"
 	},
 	"keywords": [],
 	"author": "Bob Stanton",
@@ -51,10 +52,11 @@
 		"esbuild-plugin-inline-worker": "^0.1.1",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.4.1",
-		"md-to-obsidian-dom": "github:bobstanton/md-to-obsidian-dom",
+		"md-to-obsidian-dom": "github:bobstanton/md-to-obsidian-dom#ac1da9e441ae5830780706a773863648e8718dfa",
 		"obsidian": "^1.13.1",
+		"prismjs": "^1.30.0",
 		"tslib": "2.8.1",
-		"typescript": "^6.0.3"
+		"typescript": "6.0.3"
 	},
 	"dependencies": {
 		"@fullcalendar/core": "^6.1.21",
@@ -71,6 +73,7 @@
 		"user-template-renderer": "git+https://github.com/bobstanton/user-template-renderer.git"
 	},
 	"overrides": {
-		"fast-uri": "3.1.2"
+		"fast-uri": "^4.1.2",
+		"typescript": "6.0.3"
 	}
 }

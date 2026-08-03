@@ -2,10 +2,11 @@ import type { Database } from 'sql.js';
 import { CustomSQLFunctions } from '../Database/CustomSQLFunctions';
 import { logger as rootLogger } from '../utils/logger';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
+import { createTableKey } from '../utils/StringUtils';
 
 declare const activeWindow: Window;
 
-const logger = rootLogger.scope('TriggerFunctions');
+const logger = rootLogger.scope('Triggers');
 
 export interface SetPropertyParams { path: string; key: string; value: string }
 export interface RemovePropertyParams { path: string; key: string }
@@ -63,16 +64,16 @@ export type PendingAction =
   | { type: 'delete_table_row'; params: DeleteTableRowParams }
   | { type: 'create_note'; params: CreateNoteParams };
 
-/**
- * Manages trigger action functions (vq_*) that queue actions for later execution.
- * These functions are registered with SQLite and called from user-defined triggers.
- */
-/**
- * Every trigger action function register() creates. KEEP IN SYNC with
- * register() below - the query mirror registers no-op stubs under these names
- * so trigger DDL fires identically off-thread (SQL effects replicate; file
- * actions stay main-thread). A missing stub disables the mirror loudly.
- */
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled trigger action: ${JSON.stringify(value)}`);
+}
+
+interface QueueOptions {
+  duringProcessing?: 'block' | 'allow';
+  duringPreview?: 'block' | 'allow';
+  deferWindow?: 'honor' | 'bypass';
+}
+
 export const TRIGGER_FUNCTION_NAMES = [
   'vq_set_property', 'vq_remove_property', 'vq_notify', 'vq_log', 'vq_rename_note',
   'vq_set_content', 'vq_replace_content', 'vq_sync_content', 'vq_debounce', 'vq_defer',
@@ -97,18 +98,14 @@ export class TriggerFunctions {
   // During applyDML, only block sync for DIRECT targets; allow cascades to queue.
   private directApplyTargets: Set<string> | null = null;
 
-  /**
-   * Central guard for standard trigger functions: blocks during processing/preview,
-   * calls fn() to build the action, queues it, and returns 1 on success or 0 on failure.
-   * Pass allowInPreview=true for actions that are safe during preview (e.g. notifications).
-   */
+  private static readonly AUTO_SYNC_QUEUE_OPTIONS: QueueOptions = { duringPreview: 'allow', deferWindow: 'bypass' };
+
   private guarded(fn: () => PendingAction | null, allowInPreview = false): 0 | 1 {
-    if (this.isProcessingTriggers) return 0;
-    if (!allowInPreview && this.isPreviewMode) return 0;
+    const options: QueueOptions = allowInPreview ? { duringPreview: 'allow' } : {};
+    if (!this.canQueue(options)) return 0;
     const action = fn();
     if (action === null) return 0;
-    this.queueAction(action);
-    return 1;
+    return this.queueAction(action, options) ? 1 : 0;
   }
 
   private actionFromArgs(functionName: string, args: unknown[], specs: TriggerArgumentSpec[], build: (values: TriggerArgumentValues) => PendingAction | null): PendingAction | null {
@@ -133,17 +130,23 @@ export class TriggerFunctions {
     return build(values);
   }
 
-  /**
-   * Queue an action, respecting deferred mode if active.
-   */
-  private queueAction(action: PendingAction): void {
-    if (this.currentDeferKey) {
+  private canQueue(options: QueueOptions = {}): boolean {
+    if ((options.duringProcessing ?? 'block') === 'block' && this.isProcessingTriggers) return false;
+    if ((options.duringPreview ?? 'block') === 'block' && this.isPreviewMode) return false;
+    return true;
+  }
+
+  private queueAction(action: PendingAction, options: QueueOptions = {}): boolean {
+    if (!this.canQueue(options)) return false;
+
+    if ((options.deferWindow ?? 'honor') === 'honor' && this.currentDeferKey) {
       const existing = this.deferredActionsByKey.get(this.currentDeferKey) || [];
       existing.push(action);
       this.deferredActionsByKey.set(this.currentDeferKey, existing);
     } else {
       this.pendingActions.push(action);
     }
+    return true;
   }
 
   /**
@@ -203,7 +206,7 @@ export class TriggerFunctions {
     //   UPDATE notes SET content = replace(content, '{{today}}', date('now')) WHERE path = NEW.path;
     //   SELECT vq_sync_content(NEW.path);
     db.create_function('vq_sync_content', (path: unknown) => {
-      if (this.isProcessingTriggers || this.isPreviewMode) return 0;
+      if (!this.canQueue()) return 0;
       if (typeof path !== 'string') {
         logger.warn('vq_sync_content: invalid arguments', { path });
         return 0;
@@ -214,8 +217,7 @@ export class TriggerFunctions {
         return 0;
       }
       const content = result[0].values[0][0] as string;
-      this.queueAction({ type: 'set_content', params: { path, content } });
-      return 1;
+      return this.queueAction({ type: 'set_content', params: { path, content } }) ? 1 : 0;
     });
 
     // Use in WHEN clause to debounce trigger execution:
@@ -416,9 +418,6 @@ export class TriggerFunctions {
    * Register sync handlers that allow schema triggers to queue file modifications.
    * Used by INSERT INTO table_rows (etc.) to sync changes to markdown files.
    *
-   * None of these handlers check isProcessingTriggers: cascading triggers
-   * (a trigger whose file write fires further triggers) must still be able
-   * to queue while a pass is running.
    */
   private registerSyncHandlers(): void {
     CustomSQLFunctions.registerSyncHandler('add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) => {
@@ -444,15 +443,13 @@ export class TriggerFunctions {
       if (!values) {
         return 0;
       }
-      this.queueAction({
+      return this.queueAction({
         type: 'add_table_row',
         params: { path, tableIndex, values }
-      });
-      return 1;
+      }, { duringProcessing: 'allow', duringPreview: 'allow' }) ? 1 : 0;
     });
 
     CustomSQLFunctions.registerSyncHandler('update_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown, valuesJson: unknown) => {
-      if (this.isPreviewMode) return 0;
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number' || typeof valuesJson !== 'string') {
         return 0;
       }
@@ -461,23 +458,20 @@ export class TriggerFunctions {
         return 0;
       }
       // The schema trigger already handled the database side
-      this.queueAction({
+      return this.queueAction({
         type: 'add_table_row',
         params: { path, tableIndex, values }
-      });
-      return 1;
+      }, { duringProcessing: 'allow' }) ? 1 : 0;
     });
 
     CustomSQLFunctions.registerSyncHandler('delete_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown) => {
-      if (this.isPreviewMode) return 0;
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number') {
         return 0;
       }
-      this.queueAction({
+      return this.queueAction({
         type: 'delete_table_row',
         params: { path, tableIndex, rowIndex }
-      });
-      return 1;
+      }, { duringProcessing: 'allow' }) ? 1 : 0;
     });
   }
 
@@ -512,7 +506,7 @@ export class TriggerFunctions {
         return 4;
 
       default:
-        return 5;
+        return assertNever(action);
     }
   }
 
@@ -634,38 +628,25 @@ export class TriggerFunctions {
     this.isPreviewMode = value;
   }
 
-  public setDirectApplyTarget(target: { path: string; tableIndex: number } | null): void {
-    this.setDirectApplyTargets(target ? [target] : null);
-  }
-
   public setDirectApplyTargets(targets: Array<{ path: string; tableIndex: number }> | null): void {
     this.directApplyTargets = targets
-      ? new Set(targets.map(target => this.formatDirectApplyTargetKey(target.path, target.tableIndex)))
+      ? new Set(targets.map(target => createTableKey(target.path, target.tableIndex)))
       : null;
   }
 
   public isDirectApplyTarget(path: string, tableIndex: number): boolean {
-    return this.directApplyTargets?.has(this.formatDirectApplyTargetKey(path, tableIndex)) ?? false;
-  }
-
-  private formatDirectApplyTargetKey(path: string, tableIndex: number): string {
-    return `${path}\u0000${tableIndex}`;
+    return this.directApplyTargets?.has(createTableKey(path, tableIndex)) ?? false;
   }
 
   public clearPendingActions(): void {
     this.pendingActions = [];
   }
 
-  private queueUnlessProcessing(action: PendingAction): void {
-    if (this.isProcessingTriggers) return;
-    this.pendingActions.push(action);
-  }
-
   public queueSetProperty(path: string, key: string, value: string): void {
-    this.queueUnlessProcessing({
+    this.queueAction({
       type: 'set_property',
       params: { path, key, value }
-    });
+    }, TriggerFunctions.AUTO_SYNC_QUEUE_OPTIONS);
   }
 
   public getPendingPropertyKeys(path: string): Set<string> {
@@ -679,24 +660,24 @@ export class TriggerFunctions {
   }
 
   public queueUpdateTask(path: string, lineNumber: number, status: string, taskText: string): void {
-    this.queueUnlessProcessing({
+    this.queueAction({
       type: 'update_task',
       params: { path, lineNumber, status, taskText }
-    });
+    }, TriggerFunctions.AUTO_SYNC_QUEUE_OPTIONS);
   }
 
   public queueUpdateHeading(path: string, lineNumber: number, level: number, headingText: string): void {
-    this.queueUnlessProcessing({
+    this.queueAction({
       type: 'update_heading',
       params: { path, lineNumber, level, headingText }
-    });
+    }, TriggerFunctions.AUTO_SYNC_QUEUE_OPTIONS);
   }
 
   public queueUpdateListItem(path: string, lineNumber: number, itemText: string): void {
-    this.queueUnlessProcessing({
+    this.queueAction({
       type: 'update_list_item',
       params: { path, lineNumber, itemText }
-    });
+    }, TriggerFunctions.AUTO_SYNC_QUEUE_OPTIONS);
   }
 
   public setOnDeferredReady(callback: () => void): void {

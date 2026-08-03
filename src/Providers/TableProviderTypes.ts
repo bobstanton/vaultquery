@@ -63,7 +63,6 @@ export interface ProviderRefreshContext {
   requestedTables?: string[];
   request?: Record<string, unknown>;
   existingStatus: TableProviderStatus[];
-  signal?: AbortSignal;
 }
 
 export type ProviderRowValue = string | number | boolean | null;
@@ -105,7 +104,6 @@ export interface TableProviderRegistration {
   providerId: string;
   tables: Array<{
     name: string;
-    physicalName: string;
   }>;
 }
 
@@ -113,14 +111,12 @@ export interface TableProviderStatus {
   providerId: string;
   displayName: string;
   tableName: string;
-  physicalName: string;
   rowCount: number;
   definitionId?: string;
   dataAsOf?: number;
   lastRefreshAt?: number;
   expiresAt?: number;
   lastError?: string;
-  schemaHash: string;
   active: boolean;
 }
 

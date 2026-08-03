@@ -1,4 +1,5 @@
 import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
+import { getErrorMessage } from '../utils/ErrorMessages';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import type { RenderContext } from '../generated-help/index.generated';
 
@@ -47,14 +48,23 @@ export class BaseHelpCodeBlockProcessor {
 
   protected renderSchema(container: HTMLElement, loadingMessage: string): void {
     const api = this.plugin.api;
-    if (api) {
-      void api.getSchemaInfo().then(schemaInfo => {
-        void MarkdownRenderer.render(this.app, schemaInfo, container, '', this.component);
+    if (!api) {
+      container.createDiv({
+        text: `${loadingMessage} VaultQuery is still initializing — re-open this note to load the schema.`,
+        cls: 'vaultquery-help-loading'
       });
+      return;
     }
-    else {
-      container.createDiv({ text: loadingMessage, cls: 'vaultquery-help-loading' });
-    }
+
+    void api.getSchemaInfo()
+      .then(schemaInfo => MarkdownRenderer.render(this.app, schemaInfo, container, '', this.component))
+      .catch((error: unknown) => {
+        container.empty();
+        container.createDiv({
+          cls: 'vaultquery-help-error',
+          text: `Failed to load schema: ${getErrorMessage(error)}`
+        });
+      });
   }
 
   public unload(): void {

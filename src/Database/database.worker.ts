@@ -1,23 +1,28 @@
-import initSqlJs, { Database, Statement, type SqlJsStatic } from 'sql.js';
+import initSqlJs from 'sql.js';
+import type { Database, SqlJsStatic, Statement } from 'sql.js';
 import { WorkerSQLFunctions } from './WorkerSQLFunctions';
-import { EnabledFeatures, migrateLinksColumns } from './DatabaseSchema';
+import { migrateLinksColumns } from './DatabaseSchema';
+import type { EnabledFeatures } from './DatabaseSchema';
 import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache, LINKS_MIGRATED_LOG_MESSAGE } from './SchemaOperations';
 import type { IndexCreationState } from './SchemaOperations';
 import { StatementCache } from './StatementCache';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
 import { INDEXING_SQL, PREPARED_STATEMENT_CACHE_LIMIT, MAX_ROWS_PER_INSERT_BATCH } from './IndexingQueries';
 import type { WorkerRequest, WorkerResponse } from './worker-types';
-import type { IndexNoteData } from '../types/types.d.ts';
+import type { IndexNoteData } from '../types';
 import { hashString } from '../utils/StringUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
-import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
+import { queryStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
-import { queryRows } from './QueryRows';
+import { exportWithRuntimeStateRestore, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
+import type { UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
 import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
 import type { IndexingLogger, IndexingDbAdapter } from './IndexingOperations';
 
+// Intentionally duplicates WasmLoader.CDN_URL: the worker bundle cannot import
+// WasmLoader because it depends on 'obsidian'.
 const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 
 let db: Database | null = null;
@@ -31,6 +36,7 @@ const logger: IndexingLogger = {
   error: (message: string, ...data: unknown[]) => console.error(`[Worker] ${message}`, ...data),
 };
 const statementCache = new StatementCache(PREPARED_STATEMENT_CACHE_LIMIT, (message, error) => logger.warn(message, error));
+const registeredCustomFunctionSources = new Map<string, string>();
 const matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
 
 function respond(response: WorkerResponse, transfer?: Transferable[]): void {
@@ -69,18 +75,18 @@ function batchDeleteByIds(tableName: string, ids: number[]): void {
 }
 
 function createSchema(): void {
-  if (!db) return;
+  if (!db) throw new Error('Database not initialized');
   createSchemaCore(db, message => logger.warn(message));
   indexState.indexesCreated = false;
 }
 
 function createIndexes(features?: EnabledFeatures): void {
-  if (!db) return;
+  if (!db) throw new Error('Database not initialized');
   createIndexesCore(db, features, indexState, (message, error) => logger.error(message, error));
 }
 
 function runPragmaStatements(): void {
-  if (!db) return;
+  if (!db) throw new Error('Database not initialized');
   runPragmaStatementsCore(db, error => logger.warn('Some PRAGMA statements not available:', error));
 }
 
@@ -95,9 +101,10 @@ function checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<
 
 function createIndexingAdapter(): IndexingDbAdapter {
   if (!db) throw new Error('Database not initialized');
+  const activeDb = db;
   return {
-    exec: (sql, params) => db!.exec(sql, params as (string | number | null | Uint8Array)[] | undefined),
-    run: (sql, params) => db!.run(sql, params as (string | number | null | Uint8Array)[]),
+    exec: (sql, params) => activeDb.exec(sql, params as (string | number | null | Uint8Array)[] | undefined),
+    run: (sql, params) => activeDb.run(sql, params as (string | number | null | Uint8Array)[]),
     runPrepared: (sql, params) => {
       const stmt = getPreparedStatement(sql);
       runPreparedStatement(stmt, params, resetError => {
@@ -106,7 +113,7 @@ function createIndexingAdapter(): IndexingDbAdapter {
     },
     batchDeleteByIds: (table, ids) => batchDeleteByIds(table, ids),
     runMultiRowInsert: (base, cols, rows) => runMultiRowInsertBatches(multiRowInsertSqlCache, base, cols, rows, MAX_ROWS_PER_INSERT_BATCH, (sql, params) => {
-      db!.run(sql, params);
+      activeDb.run(sql, params);
     }),
   };
 }
@@ -142,8 +149,9 @@ function propertiesMatRefreshSql(): { deleteSql: string; insertSql: string } | n
 }
 
 function registerCustomFunction(name: string, source: string): void {
-  if (!db) return;
+  if (!db) throw new Error('Database not initialized');
   db.create_function(name, createUserSqlFunction(source));
+  registeredCustomFunctionSources.set(name, source);
 }
 
 function performIndexingOperations(data: IndexNoteData, skipDeletes: boolean): void {
@@ -177,8 +185,7 @@ function withTx<T>(fn: () => T): T {
 }
 
 function workerQueryRows<T>(sql: string, mapRow: (row: unknown[]) => T): T[] {
-  if (!db) return [];
-  return queryRows(queryValues, sql, mapRow);
+  return queryValues(sql).map(mapRow);
 }
 
 function getAllPropertyKeys(): string[] {
@@ -193,29 +200,16 @@ function getViewColumns(viewName: string): string[] {
   return schemaManager?.getViewColumns(viewName) ?? [];
 }
 
-function getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
-  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_VIEWS, row => ({
-    view_name: row[0] as string,
-    path: row[1] as string,
-    sql: row[2] as string
-  }));
+function getAllUserViews(): UserViewRow[] {
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_VIEWS, mapUserViewRow);
 }
 
-function getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
-  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, row => ({
-    function_name: row[0] as string,
-    path: row[1] as string,
-    source: row[2] as string
-  }));
+function getAllUserFunctions(): UserFunctionRow[] {
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, mapUserFunctionRow);
 }
 
-function getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
-  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, row => ({
-    trigger_name: row[0] as string,
-    path: row[1] as string,
-    trigger_sql: row[2] as string,
-    enabled: row[3] as number
-  }));
+function getAllUserTriggers(): UserTriggerRow[] {
+  return workerQueryRows(INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, mapUserTriggerRow);
 }
 
 /**
@@ -224,7 +218,7 @@ function getAllUserTriggers(): Array<{trigger_name: string; path: string; trigge
  * Triggers are only activated on the main thread where vq_* functions are available.
  */
 function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
-  if (!db) return;
+  if (!db) throw new Error('Database not initialized');
 
   if (sourcePath) {
     const sqlHash = hashString(triggerSql);
@@ -234,15 +228,8 @@ function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: s
     });
   }
 
-  // Activation happens on the main thread; see registerUserTriggers.
-}
-
-/**
- * No-op in the worker: user triggers call vq_* functions, which are only
- * registered on the main thread, so activation happens there after the
- * database is transferred.
- */
-function registerUserTriggers(): void {
+  // Activation happens on the main thread after the database is transferred:
+  // user triggers call vq_* functions, which are only registered there.
 }
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -274,24 +261,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       case 'query': {
-        if (!db) throw new Error('Database not initialized');
-
         const stmt = getPreparedStatement(request.sql);
-        try {
-          if (request.params.length > 0) {
-            stmt.bind(request.params);
-          }
-
-          const results = collectStatementRows(stmt);
-          stmt.reset();
-
-          respond({ type: 'success', id: request.id, result: results });
-        } catch (error) {
-          try { stmt.reset(); } catch {
-            // Preserve the query error if statement cleanup also fails.
-          }
-          throw error;
-        }
+        const results = queryStatementRows(stmt, request.params);
+        respond({ type: 'success', id: request.id, result: results });
         break;
       }
 
@@ -317,29 +289,16 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           break;
         }
 
-        if (request.isInitialIndexing) {
-          db.run('PRAGMA foreign_keys = OFF');
-        }
-
-        try {
-          withTx(() => {
+        await runBatchIndexing(
+          db,
+          request.isInitialIndexing,
+          () => withTx(() => {
             for (const data of request.notesData) {
               performIndexingOperations(data, request.isInitialIndexing);
             }
-          });
-        } finally {
-          if (request.isInitialIndexing) {
-            db.run('PRAGMA foreign_keys = ON');
-          }
-        }
-
-        if (request.isInitialIndexing) {
-          try {
-            db.run('ANALYZE');
-          } catch {
-            // ANALYZE improves planner statistics but is not required for correctness.
-          }
-        }
+          }),
+          error => logger.warn('ANALYZE failed after batch indexing', error)
+        );
 
         respond({ type: 'success', id: request.id });
         break;
@@ -357,16 +316,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
 
-      case 'deleteNote': {
-        if (!db) throw new Error('Database not initialized');
-        db.run('DELETE FROM notes WHERE path = ?', [request.path]);
-        respond({ type: 'success', id: request.id });
-        break;
-      }
-
       case 'export': {
         if (!db) throw new Error('Database not initialized');
-        const data = db.export();
+        const activeDb = db;
+        const data = exportWithRuntimeStateRestore(activeDb, {
+          statementCache,
+          matRefreshSqlCache,
+          registeredFunctionSources: registeredCustomFunctionSources,
+          runPragmaStatements,
+          registerBuiltinFunctions: () => WorkerSQLFunctions.register(activeDb),
+          registerCustomFunction,
+        });
         // Transfer instead of structured-clone: the database can be tens of
         // megabytes, and export() already returned a fresh buffer we own.
         respond({ type: 'success', id: request.id, result: data.buffer }, [data.buffer]);
@@ -454,19 +414,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
 
-      case 'registerUserTriggers': {
-        registerUserTriggers();
-        respond({ type: 'success', id: request.id });
-        break;
-      }
-
       case 'health': {
         respond({ type: 'success', id: request.id, result: checkHealth() });
         break;
       }
 
       default: {
-        respond({ type: 'error', id: (request as { id: number }).id, error: `Unknown request type` });
+        respond({ type: 'error', id: (request as WorkerRequest).id, error: `Unknown request type` });
       }
     }
   } catch (error) {

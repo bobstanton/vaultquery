@@ -43,7 +43,7 @@ export interface MarkdownFormatOptions extends ResultColumnOptions {
   formatValues?: boolean;
 }
 
-export function getResultColumns(results: Record<string, unknown>[], options: ResultColumnOptions = {}): string[] {
+function getResultColumns(results: Record<string, unknown>[], options: ResultColumnOptions = {}): string[] {
   if (results.length === 0) {
     return [];
   }
@@ -115,12 +115,8 @@ export function formatResultsAsDelimited(results: Record<string, unknown>[], del
   return rows.join('\n');
 }
 
-function stringifyCell(value: unknown): string {
-  return formatUnknownValue(value);
-}
-
 function escapeDelimitedCell(value: unknown, delimiter: ',' | '\t'): string {
-  const str = stringifyCell(value).replace(/\r?\n/g, ' ');
+  const str = formatUnknownValue(value).replace(/\r?\n/g, ' ');
   if (delimiter === '\t') {
     return str.replace(/\t/g, ' ');
   }

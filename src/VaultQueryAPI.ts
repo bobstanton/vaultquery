@@ -6,7 +6,7 @@ import { IndexingService } from './Services/IndexingService';
 import { WriteSyncService } from './Services/WriteSyncService';
 import { TriggerFunctions, TriggerService, TRIGGER_FUNCTION_NAMES } from './Triggers';
 import { resolveQueryTemplate } from './Services/QueryTemplator';
-import { getErrorMessage, ERROR_MESSAGES, CONSOLE_ERRORS } from './utils/ErrorMessages';
+import { getErrorMessage, ERROR_MESSAGES } from './utils/ErrorMessages';
 import { quoteIdentifier } from './utils/SqlIdentifierUtils';
 import { containsBlockedSqlInStripped, parseDroppedSQLObjectName, parseSQLObjectName, stripSqlComments, stripSqlStringLiterals } from './utils/SQLParsingUtils';
 import type { IndexingStats, IndexingStatus, NoteSource } from './types';
@@ -15,6 +15,9 @@ import { TableProviderService } from './Providers/TableProviderService';
 import { QueryRefreshRegistry } from './Renderers/QueryRefreshRegistry';
 import { getIndexedFilesFromDatabase } from './Database/IndexedFiles';
 import { mergeDeclaredProviderTables } from './utils/AutocompleteSchemaUtils';
+import type { AutocompleteSchemaColumnInfo, AutocompleteSchemaRelationInfo, AutocompleteSchemaShape } from './utils/AutocompleteSchemaUtils';
+import { insertRowsChunked, relationExists } from './Database/SqlHelpers';
+import { renderSchemaTableDoc, taskColumnDocs, BLOCKS_COLUMNS, EMBEDS_COLUMNS, HEADINGS_COLUMNS, HEADINGS_VIEW_COLUMNS, LINKS_COLUMNS, LIST_ITEMS_COLUMNS, LIST_ITEMS_VIEW_COLUMNS, NOTES_COLUMNS, PROPERTIES_COLUMNS, TABLE_CELLS_COLUMNS, TABLE_ROWS_COLUMNS, TAGS_COLUMNS, TASKS_VIEW_COLUMNS, UNRESOLVED_LINKS_COLUMNS } from './Database/SchemaDocumentation';
 import { CustomSQLFunctions } from './Database/CustomSQLFunctions';
 import { EventBus } from './utils/EventBus';
 import type { EventRef } from './utils/EventBus';
@@ -87,21 +90,28 @@ export interface QueryResult {
   [key: string]: string | number | boolean | null;
 }
 
-interface AutocompleteSchemaRelation {
-  name: string;
-  type: 'table' | 'view';
+export interface VaultQueryCapabilities {
+  writeEnabled: boolean;
+  fileDeleteEnabled: boolean;
+  thirdPartyProviderTablesEnabled: boolean;
+  indexing: {
+    content: boolean;
+    frontmatter: boolean;
+    tables: boolean;
+    tasks: boolean;
+    headings: boolean;
+    links: boolean;
+    unresolvedLinks: boolean;
+    embeds: boolean;
+    tags: boolean;
+    blocks: boolean;
+    listItems: boolean;
+  };
 }
 
-interface AutocompleteSchemaColumn {
-  relation: string;
-  name: string;
-  type: string;
-}
-
-interface AutocompleteSchemaInfo {
-  relations: AutocompleteSchemaRelation[];
-  columns: AutocompleteSchemaColumn[];
-  functions: string[];
+export interface QueryMirrorStatus {
+  active: boolean;
+  reason?: string;
 }
 
 export interface IVaultQueryAPI {
@@ -110,10 +120,6 @@ export interface IVaultQueryAPI {
    * Pass a note when the query uses `{this.*}` placeholders.
    */
   query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]>;
-
-  isQueryMirrorActive?(): boolean;
-
-  getQueryMirrorStatus?(): { active: boolean; reason?: string };
 
   /**
    * Reindex files that have changed since the last run.
@@ -141,16 +147,11 @@ export interface IVaultQueryAPI {
   getIndexingStatus(): IndexingStatus;
 
   /**
-   * Wait until indexing is idle. Useful before a plugin runs queries that need
-   * the full vault, not a partially built startup index.
+   * Wait until indexing is idle. The canonical way to wait for the index.
+   * Useful before a plugin runs queries that need the full vault, not a
+   * partially built startup index.
    */
   waitForIndexing(timeoutMs?: number): Promise<void>;
-
-  getIndexGeneration(): number;
-
-  isIndexSettled(): boolean;
-
-  whenIndexSettled(timeoutMs?: number): Promise<void>;
 
   /**
    * Check whether the database is currently usable.
@@ -185,7 +186,7 @@ export interface IVaultQueryAPI {
   /**
    * Live schema data for editor autocomplete.
    */
-  getAutocompleteSchema(): Promise<AutocompleteSchemaInfo>;
+  getAutocompleteSchema(): Promise<AutocompleteSchemaShape>;
 
   /**
    * True when a file passes the indexing filters in settings.
@@ -200,7 +201,7 @@ export interface IVaultQueryAPI {
   /**
    * Recreate dynamic markdown-table views from `table_cells`.
    */
-  rebuildTableViews(): void;
+  rebuildTableViews(): Promise<void>;
 
   /**
    * Run a non-query statement. For writes that should sync to files, prefer
@@ -211,24 +212,9 @@ export interface IVaultQueryAPI {
   /**
    * Enabled features and write permissions for the current settings.
    */
-  getCapabilities(): {
-    writeEnabled: boolean;
-    fileDeleteEnabled: boolean;
-    thirdPartyProviderTablesEnabled: boolean;
-    indexing: {
-      content: boolean;
-      frontmatter: boolean;
-      tables: boolean;
-      tasks: boolean;
-      headings: boolean;
-      links: boolean;
-      unresolvedLinks: boolean;
-      embeds: boolean;
-      tags: boolean;
-      blocks: boolean;
-      listItems: boolean;
-    };
-  };
+  getCapabilities(): VaultQueryCapabilities;
+
+  getQueryMirrorStatus(): QueryMirrorStatus;
 
   /**
    * Register or replace a JavaScript-backed SQL function.
@@ -301,11 +287,6 @@ interface VaultQueryEvents {
 
 export type { EventRef };
 
-export interface IndexPipelineStateProvider {
-  hasPendingFileModifications(): boolean;
-  waitForIndexingComplete(maxWaitMs?: number): Promise<void>;
-}
-
 export class VaultQueryAPI implements IVaultQueryAPI {
   private app: App;
   private database: VaultDatabase | WorkerDatabase;
@@ -315,18 +296,15 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private triggerService: TriggerService | null = null;
   private indexingWorker: WorkerDatabase | null = null;
   private queryMirror: WorkerDatabase | null = null;
+  private queryMirrorDisabledReason: string | null = 'not started';
   private providerMirrorSync: Promise<void> | null = null;
   private providerRefreshWave: Promise<void> | null = null;
-  private queryMirrorStatus = 'pending - mirror adopts after initial indexing completes';
   private tableProviderService: TableProviderService;
   private registeredCustomViews = new Map<string, string>();
 
   private eventBus: EventBus<VaultQueryEvents>;
 
   private triggerActionProcessing: Promise<void> | null = null;
-
-  private indexGeneration = 0;
-  private pipelineStateProvider: IndexPipelineStateProvider | null = null;
 
   /**
    * Per-statement analysis (comment/literal stripping + referenced tables),
@@ -346,7 +324,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       'database-lost',
       'database-restored',
       'provider-tables-changed',
-    ]);
+    ], (event, error) => {
+      logger.error(`Error in event listener for '${event}'`, error);
+    });
     this.app = app;
     this.database = database;
     this.indexingService = indexingService;
@@ -427,7 +407,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   /**
-   * Register all user-defined SQLite triggers.
    * Called after indexing completes to activate triggers for future file changes.
    */
   private registerUserTriggers(): void {
@@ -437,9 +416,8 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   /**
-   * Register all user-defined functions from the database.
-   * Called after database transfer from worker to main thread.
-   * Functions need re-registration because create_function is in-memory only.
+   * Called after database transfer from worker to main thread; functions need
+   * re-registration because create_function is in-memory only.
    */
   private registerUserFunctions(): void {
     if (this.settings.enableJavaScriptFunctions && this.database instanceof VaultDatabase) {
@@ -448,9 +426,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   }
 
   /**
-   * Register all third-party custom views remembered from API execute() calls.
-   * CREATE VIEW statements may have been applied to the worker database during
-   * background indexing, so replay them after the main-thread database replaces it.
+   * CREATE VIEW statements from API execute() calls may have been applied to
+   * the worker database during background indexing, so replay them after the
+   * main-thread database replaces it.
+   *
+   * Unlike syncCustomViewsToQueryMirror, per-view errors are swallowed here:
+   * this replays onto the authoritative database, where one broken view should
+   * not stop the remaining views from being restored. The mirror replay
+   * propagates instead, because any divergence there must disable the mirror.
    */
   private async registerCustomViews(): Promise<void> {
     for (const [viewName, sql] of this.registeredCustomViews) {
@@ -599,11 +582,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
    */
   private async adoptQueryMirror(worker: WorkerDatabase, mainThreadDb: VaultDatabase): Promise<void> {
     if (!this.settings.workerQueries) {
-      this.queryMirrorStatus = 'disabled by the Background query execution setting';
       await worker.close();
       return;
     }
-
 
     try {
       // Provider tables refresh against the main database only; serving their
@@ -625,15 +606,19 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
 
       this.queryMirror = worker;
-      this.queryMirrorStatus = 'active';
+      this.queryMirrorDisabledReason = null;
       this.attachMirrorForwarding(mainThreadDb);
       logger.info('Query mirror active - read queries run off the main thread');
     } catch (error) {
       logger.warn('Query mirror setup failed - queries stay on the main thread', error);
-      this.queryMirrorStatus = `setup failed: ${getErrorMessage(error)}`;
       this.queryMirror = null;
-      await worker.close().catch(() => undefined);
+      this.queryMirrorDisabledReason = `setup failed: ${getErrorMessage(error)}`;
+      await VaultQueryAPI.closeQuietly(worker);
     }
+  }
+
+  private static async closeQuietly(mirror: WorkerDatabase): Promise<void> {
+    await mirror.close().catch(() => undefined);
   }
 
   private attachMirrorForwarding(mainThreadDb: VaultDatabase): void {
@@ -683,14 +668,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
       return result;
     };
-  }
-
-  public isQueryMirrorActive(): boolean {
-    return this.queryMirror !== null;
-  }
-
-  public getQueryMirrorStatus(): { active: boolean; reason?: string } {
-    return this.queryMirror !== null ? { active: true } : { active: false, reason: this.queryMirrorStatus };
   }
 
   private async syncMirrorTriggers(): Promise<void> {
@@ -760,17 +737,18 @@ export class VaultQueryAPI implements IVaultQueryAPI {
           if (rows.length > 0) {
             const columns = Object.keys(rows[0]);
             const quotedColumns = columns.map(quoteIdentifier).join(', ');
-            for (let offset = 0; offset < rows.length; offset += 100) {
-              const batch = rows.slice(offset, offset + 100);
-              const placeholders = batch.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-              const params: Array<string | number | null> = batch.flatMap(row => columns.map((column): string | number | null => {
-                const value = row[column];
-                if (value === null) return null;
-                if (typeof value === 'string' || typeof value === 'number') return value;
-                throw new Error(`Unsupported provider mirror value in ${tableName}.${column}`);
-              }));
-              await mirror.run(`INSERT INTO ${quotedTable} (${quotedColumns}) VALUES ${placeholders}`, params);
-            }
+            const paramRows = rows.map(row => columns.map((column): string | number | null => {
+              const value = row[column];
+              if (value === null) return null;
+              if (typeof value === 'string' || typeof value === 'number') return value;
+              throw new Error(`Unsupported provider mirror value in ${tableName}.${column}`);
+            }));
+            await insertRowsChunked(
+              mirror,
+              placeholders => `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES ${placeholders}`,
+              paramRows,
+              columns.length
+            );
           }
 
           for (const indexRow of indexRows) {
@@ -803,9 +781,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     const mirror = this.queryMirror;
     if (!mirror) return;
     this.queryMirror = null;
-    this.queryMirrorStatus = `disabled: ${reason}`;
+    this.queryMirrorDisabledReason = reason;
     logger.warn(`Query mirror disabled - ${reason}; queries run on the main thread`);
-    void mirror.close().catch(() => undefined);
+    void VaultQueryAPI.closeQuietly(mirror);
+  }
+
+  public getQueryMirrorStatus(): QueryMirrorStatus {
+    if (this.queryMirror) return { active: true };
+    return { active: false, reason: this.queryMirrorDisabledReason ?? 'not started' };
   }
 
   private async rebuildBootstrapNotePropertiesView(database: VaultDatabase): Promise<void> {
@@ -848,36 +831,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return this.indexingService.waitForIndexing(timeoutMs);
   }
 
-  public getIndexGeneration(): number {
-    return this.indexGeneration;
-  }
-
-  public isIndexSettled(): boolean {
-    return !this.indexingService.getIndexingStatus().isIndexing
-      && !(this.pipelineStateProvider?.hasPendingFileModifications() ?? false);
-  }
-
-  public async whenIndexSettled(timeoutMs: number = 5000): Promise<void> {
-    if (this.pipelineStateProvider) {
-      return this.pipelineStateProvider.waitForIndexingComplete(timeoutMs);
-    }
-    return this.indexingService.waitForIndexing(timeoutMs);
-  }
-
-  public setPipelineStateProvider(provider: IndexPipelineStateProvider): void {
-    this.pipelineStateProvider = provider;
-  }
-
-  public setIndexingStatus(isIndexing: boolean, promise?: Promise<void>): void {
-    this.indexingService.setIndexingStatus(isIndexing, promise);
+  public setIndexingStatus(isIndexing: boolean): void {
+    this.indexingService.setIndexingStatus(isIndexing);
   }
 
   public async removeNote(notePath: string): Promise<void> {
     await this.indexingService.removeNote(notePath);
-  }
-
-  public async clearAllNotes(): Promise<void> {
-    await this.indexingService.clearAllNotes();
   }
 
   public async saveToDisk(): Promise<void> {
@@ -892,8 +851,8 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return this.indexingService.getPerformanceStats();
   }
 
-  public rebuildTableViews(): void {
-    void this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
+  public async rebuildTableViews(): Promise<void> {
+    await this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
   }
 
   public async execute(sql: string): Promise<number> {
@@ -970,13 +929,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return this.tableProviderService.getRegisteredProviders();
   }
 
-  public unregisterTableProvider(providerId: string): Promise<void> {
+  public async unregisterTableProvider(providerId: string): Promise<void> {
     this.tableProviderService.unregisterProvider(providerId);
-    return Promise.resolve();
   }
 
-  public getTableProviderStatus(providerId?: string): Promise<TableProviderStatus[]> {
-    return Promise.resolve(this.tableProviderService.getStatus(providerId));
+  public async getTableProviderStatus(providerId?: string): Promise<TableProviderStatus[]> {
+    return this.tableProviderService.getStatus(providerId);
   }
 
   public getProviderDefinitionCompletions(language: string): ProviderDefinitionCompletionConfig | null {
@@ -987,24 +945,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     await this.tableProviderService.renderDefinitionBlock(language, source, container, ctx);
   }
 
-  public getCapabilities(): {
-    writeEnabled: boolean;
-    fileDeleteEnabled: boolean;
-    thirdPartyProviderTablesEnabled: boolean;
-    indexing: {
-      content: boolean;
-      frontmatter: boolean;
-      tables: boolean;
-      tasks: boolean;
-      headings: boolean;
-      links: boolean;
-      unresolvedLinks: boolean;
-      embeds: boolean;
-      tags: boolean;
-      blocks: boolean;
-      listItems: boolean;
-    };
-  } {
+  public getCapabilities(): VaultQueryCapabilities {
     return {
       writeEnabled: this.settings.allowWriteOperations,
       fileDeleteEnabled: this.settings.allowDeleteNotes,
@@ -1157,7 +1098,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
     }
     catch (error) {
-      logger.error(CONSOLE_ERRORS.NEEDS_INDEXING_CHECK_ERROR, error);
+      logger.error('Error checking if file needs indexing', error);
       return true;
     }
   }
@@ -1170,33 +1111,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (this.queryMirror) {
         const mirror = this.queryMirror;
         this.queryMirror = null;
-        await mirror.close().catch(() => undefined);
+        this.queryMirrorDisabledReason = 'plugin shutdown';
+        await VaultQueryAPI.closeQuietly(mirror);
       }
       await this.database.close();
     }
     finally {
       CustomSQLFunctions.clearSyncHandlers();
     }
-  }
-
-  /**
-   * Check if the database is still healthy.
-   * Synchronous, so in worker mode it cannot actually probe the database;
-   * it reports healthy and defers to checkDatabaseHealthAsync() for a real check.
-   */
-  public checkDatabaseHealth(): { healthy: boolean; error?: string; diagnostics: Record<string, unknown> } {
-    if (this.database instanceof VaultDatabase) {
-      return this.database.checkHealth();
-    }
-
-    return {
-      healthy: true,
-      diagnostics: {
-        timestamp: new Date().toISOString(),
-        mode: 'worker',
-        note: 'Use checkDatabaseHealthAsync() for worker database health'
-      }
-    };
   }
 
   public async checkDatabaseHealthAsync(): Promise<DatabaseHealth> {
@@ -1206,63 +1128,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public async getSchemaInfo(): Promise<string> {
     const sections: string[] = [];
 
-    type SchemaColumn = { name: string; type: string; description: string; defaultVal?: string };
-
-    const makeTable = (tableName: string, columns: SchemaColumn[], isView = false): string => {
-      const header = `### ${tableName}${isView ? ' (VIEW)' : ''}\n\n`;
-      const hasDefaults = columns.some(c => c.defaultVal);
-      const tableHeader = hasDefaults
-        ? '| Column | Type | Default | Description |\n|--------|------|---------|-------------|\n'
-        : '| Column | Type | Description |\n|--------|------|-------------|\n';
-      const rows = columns.map(c => hasDefaults
-        ? `| \`${c.name}\` | ${c.type} | ${c.defaultVal || ''} | ${c.description} |`
-        : `| \`${c.name}\` | ${c.type} | ${c.description} |`
-      ).join('\n');
-      return header + tableHeader + rows + '\n';
-    };
-
-    const taskColumns = (overrides: Record<string, Partial<SchemaColumn>> = {}): SchemaColumn[] => [
-      { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-      { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-      { name: 'task_text', type: 'TEXT', description: 'Task content' },
-      { name: 'status', type: 'TEXT', description: 'TODO, DONE, IN_PROGRESS, CANCELLED' },
-      { name: 'priority', type: 'TEXT', description: 'highest, high, medium, low, lowest' },
-      { name: 'due_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'scheduled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'start_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'created_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'done_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'cancelled_date', type: 'TEXT', description: 'YYYY-MM-DD format' },
-      { name: 'recurrence', type: 'TEXT', description: 'Recurrence rule' },
-      { name: 'on_completion', type: 'TEXT', description: 'Action on completion' },
-      { name: 'task_id', type: 'TEXT', description: 'Unique task identifier' },
-      { name: 'depends_on', type: 'TEXT', description: 'Task dependencies' },
-      { name: 'tags', type: 'TEXT', description: 'Space-separated tags' },
-      { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-      { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-      { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-      { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-      { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-      { name: 'section_heading', type: 'TEXT', description: 'Parent heading text' },
-    ].map(column => ({ ...column, ...overrides[column.name] }));
-
-    sections.push(makeTable('notes', [
-      { name: 'path', type: 'TEXT', description: 'File path (primary key)' },
-      { name: 'title', type: 'TEXT', description: 'Note name (filename without extension)' },
-      { name: 'content', type: 'TEXT', description: 'Full text content' },
-      { name: 'created', type: 'INTEGER', description: 'Creation timestamp (ms)' },
-      { name: 'modified', type: 'INTEGER', description: 'Last modified timestamp (ms)' },
-      { name: 'size', type: 'INTEGER', description: 'File size in bytes' },
-    ]));
+    sections.push(renderSchemaTableDoc('notes', NOTES_COLUMNS));
 
     if (this.settings.enabledFeatures.indexFrontmatter) {
-      sections.push(makeTable('properties', [
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'key', type: 'TEXT', description: 'Property name' },
-        { name: 'value', type: 'TEXT', description: 'Property value as string' },
-        { name: 'value_type', type: 'TEXT', description: 'Type: string, number, boolean, array, object' },
-        { name: 'array_index', type: 'INTEGER', description: 'Array index (NULL for scalar values)' },
-      ]));
+      sections.push(renderSchemaTableDoc('properties', PROPERTIES_COLUMNS));
 
       const viewColumns = await this.database.schema.getViewColumns('notes_with_properties');
       if (viewColumns.length > 0) {
@@ -1273,7 +1142,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
           description: ['path', 'title', 'content', 'created', 'modified', 'size'].includes(col)
             ? '(from notes)' : '(property column)',
         }));
-        sections.push(makeTable('notes_with_properties', viewCols, true) +
+        sections.push(renderSchemaTableDoc('notes_with_properties', viewCols, true) +
           '\n> Supports INSERT, UPDATE, DELETE (syncs to frontmatter)\n');
       }
 
@@ -1284,167 +1153,53 @@ export class VaultQueryAPI implements IVaultQueryAPI {
           type: 'TEXT',
           description: col === 'path' ? 'File path' : '(property column)',
         }));
-        sections.push(makeTable('note_properties', notePropsViewCols, true) +
+        sections.push(renderSchemaTableDoc('note_properties', notePropsViewCols, true) +
           '\n> Properties only (no notes columns). Supports INSERT (existing notes only), UPDATE, DELETE.\n');
       }
     }
 
     if (this.settings.enabledFeatures.indexTasks) {
-      sections.push(makeTable('tasks', taskColumns()));
-
-      sections.push(makeTable('tasks_view', [
-        ...taskColumns({
-          path: { description: 'File path' },
-          status: { defaultVal: 'TODO' },
-          created_date: { defaultVal: 'today' },
-          line_number: { defaultVal: 'auto', description: 'After last task line, or line 1 if no tasks' },
-        }).filter(column => !['start_offset', 'end_offset', 'anchor_hash'].includes(column.name)),
-        { name: 'status_order', type: 'INTEGER', description: 'Sort order for status (computed)' },
-        { name: 'priority_order', type: 'INTEGER', description: 'Sort order for priority (computed)' },
-        { name: 'is_complete', type: 'INTEGER', description: '1 if DONE/CANCELLED (computed)' },
-        { name: 'is_overdue', type: 'INTEGER', description: '1 if past due (computed)' },
-        { name: 'days_until_due', type: 'INTEGER', description: 'Days until due date (computed)' },
-      ], true) + '\n> Supports INSERT, UPDATE, DELETE. When no tasks exist, new tasks insert at line 1 (beginning of file).\n');
+      sections.push(renderSchemaTableDoc('tasks', taskColumnDocs()));
+      sections.push(renderSchemaTableDoc('tasks_view', TASKS_VIEW_COLUMNS, true) +
+        '\n> Supports INSERT, UPDATE, DELETE. When no tasks exist, new tasks insert at line 1 (beginning of file).\n');
     }
 
     if (this.settings.enabledFeatures.indexHeadings) {
-      sections.push(makeTable('headings', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'level', type: 'INTEGER', description: 'Heading level (1-6)' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-        { name: 'heading_text', type: 'TEXT', description: 'Heading content' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-      ]));
-
-      sections.push(makeTable('headings_view', [
-        { name: 'path', type: 'TEXT', description: 'File path' },
-        { name: 'level', type: 'INTEGER', defaultVal: '1', description: 'Heading level (1-6)' },
-        { name: 'line_number', type: 'INTEGER', defaultVal: 'auto', description: 'After last heading line, or line 1 if no headings' },
-        { name: 'heading_text', type: 'TEXT', description: 'Heading content' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-      ], true) + '\n> Supports INSERT, UPDATE, DELETE. When no headings exist, new headings insert at line 1 (beginning of file).\n');
+      sections.push(renderSchemaTableDoc('headings', HEADINGS_COLUMNS));
+      sections.push(renderSchemaTableDoc('headings_view', HEADINGS_VIEW_COLUMNS, true) +
+        '\n> Supports INSERT, UPDATE, DELETE. When no headings exist, new headings insert at line 1 (beginning of file).\n');
     }
 
     if (this.settings.enabledFeatures.indexTags) {
-      sections.push(makeTable('tags', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'tag_name', type: 'TEXT', description: 'Tag name (with # prefix)' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-        { name: 'insert_position', type: 'TEXT', description: 'Position hint for INSERT: new_line, line_start, or line_end' },
-      ]));
+      sections.push(renderSchemaTableDoc('tags', TAGS_COLUMNS));
     }
 
     if (this.settings.enabledFeatures.indexLinks) {
-      sections.push(makeTable('links', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'link_text', type: 'TEXT', description: 'Display text' },
-        { name: 'link_target', type: 'TEXT', description: 'Target path or URL' },
-        { name: 'link_target_path', type: 'TEXT', description: 'Resolved target file path (NULL when unresolved)' },
-        { name: 'link_type', type: 'TEXT', description: 'internal, external, or frontmatter' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based; NULL for frontmatter links)' },
-        { name: 'insert_position', type: 'TEXT', description: 'Position hint for INSERT: new_line, line_start, or line_end' },
-        { name: 'original', type: 'TEXT', description: 'Raw link markup as written (e.g. [[Target|alias]])' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset where link starts (NULL for frontmatter links)' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset where link ends (NULL for frontmatter links)' },
-        { name: 'frontmatter_key', type: 'TEXT', description: 'Frontmatter property holding the link (NULL for body links)' },
-      ]));
+      sections.push(renderSchemaTableDoc('links', LINKS_COLUMNS));
     }
 
     if (this.settings.enabledFeatures.indexUnresolvedLinks) {
-      sections.push(makeTable('unresolved_links', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'Source file path' },
-        { name: 'link_target', type: 'TEXT', description: 'Unresolved target text' },
-        { name: 'link_count', type: 'INTEGER', description: 'Number of unresolved links to target in path' },
-      ]));
+      sections.push(renderSchemaTableDoc('unresolved_links', UNRESOLVED_LINKS_COLUMNS));
     }
 
     if (this.settings.enabledFeatures.indexEmbeds) {
-      sections.push(makeTable('embeds', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'Source file path' },
-        { name: 'embed_text', type: 'TEXT', description: 'Display text' },
-        { name: 'embed_target', type: 'TEXT', description: 'Embed target' },
-        { name: 'embed_target_path', type: 'TEXT', description: 'Resolved target file path' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-      ]));
+      sections.push(renderSchemaTableDoc('embeds', EMBEDS_COLUMNS));
     }
 
     if (this.settings.enabledFeatures.indexBlocks) {
-      sections.push(makeTable('blocks', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'section_type', type: 'TEXT', description: 'Containing Obsidian section type' },
-      ]));
+      sections.push(renderSchemaTableDoc('blocks', BLOCKS_COLUMNS));
     }
 
     if (this.settings.enabledFeatures.indexListItems) {
-      sections.push(makeTable('list_items', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'list_index', type: 'INTEGER', description: 'List group index (0-based)' },
-        { name: 'item_index', type: 'INTEGER', description: 'Item index within file' },
-        { name: 'parent_index', type: 'INTEGER', description: 'Parent item index' },
-        { name: 'content', type: 'TEXT', description: 'List item text' },
-        { name: 'list_type', type: 'TEXT', description: 'bullet or number' },
-        { name: 'indent_level', type: 'INTEGER', description: 'Nesting depth (0 = top)' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number (1-based)' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-      ]));
-
-      sections.push(makeTable('list_items_view', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path' },
-        { name: 'list_index', type: 'INTEGER', defaultVal: '0', description: 'List group index' },
-        { name: 'item_index', type: 'INTEGER', defaultVal: 'auto', description: 'MAX(item_index)+1 or 0 if none exist' },
-        { name: 'parent_index', type: 'INTEGER', description: 'Parent item index' },
-        { name: 'content', type: 'TEXT', description: 'List item text' },
-        { name: 'list_type', type: 'TEXT', defaultVal: 'bullet', description: 'bullet or number' },
-        { name: 'indent_level', type: 'INTEGER', defaultVal: '0', description: 'Nesting depth' },
-        { name: 'line_number', type: 'INTEGER', defaultVal: 'auto', description: 'After last item line, or line 1 if no items' },
-        { name: 'block_id', type: 'TEXT', description: 'Block reference ID' },
-        { name: 'start_offset', type: 'INTEGER', description: 'Character offset start' },
-        { name: 'end_offset', type: 'INTEGER', description: 'Character offset end' },
-        { name: 'anchor_hash', type: 'TEXT', description: 'Content hash for change detection' },
-        { name: 'parent_content', type: 'TEXT', description: 'Parent item text (computed)' },
-      ], true) + '\n> Supports INSERT, UPDATE, DELETE. When no list items exist, new items insert at line 1 (beginning of file).\n');
+      sections.push(renderSchemaTableDoc('list_items', LIST_ITEMS_COLUMNS));
+      sections.push(renderSchemaTableDoc('list_items_view', LIST_ITEMS_VIEW_COLUMNS, true) +
+        '\n> Supports INSERT, UPDATE, DELETE. When no list items exist, new items insert at line 1 (beginning of file).\n');
     }
 
     if (this.settings.enabledFeatures.indexTables) {
-      sections.push(makeTable('table_cells', [
-        { name: 'id', type: 'INTEGER', description: 'Auto-incrementing ID' },
-        { name: 'path', type: 'TEXT', description: 'File path (foreign key)' },
-        { name: 'table_index', type: 'INTEGER', description: 'Table index (0-based)' },
-        { name: 'table_name', type: 'TEXT', description: 'Table name from heading or block ID' },
-        { name: 'row_index', type: 'INTEGER', description: 'Row index (0-based)' },
-        { name: 'column_name', type: 'TEXT', description: 'Column header' },
-        { name: 'cell_value', type: 'TEXT', description: 'Cell content' },
-        { name: 'value_type', type: 'TEXT', description: 'Value type (default: text)' },
-        { name: 'line_number', type: 'INTEGER', description: 'Line number' },
-      ]));
-
-      sections.push(makeTable('table_rows', [
-        { name: 'path', type: 'TEXT', description: 'File path' },
-        { name: 'table_index', type: 'INTEGER', description: 'Table index' },
-        { name: 'row_index', type: 'INTEGER', defaultVal: 'auto', description: 'MAX(row_index)+1 or 0 if none exist' },
-        { name: 'row_json', type: 'TEXT', description: 'Row data as JSON object' },
-      ], true) + '\n> Supports INSERT, UPDATE, DELETE\n');
+      sections.push(renderSchemaTableDoc('table_cells', TABLE_CELLS_COLUMNS));
+      sections.push(renderSchemaTableDoc('table_rows', TABLE_ROWS_COLUMNS, true) +
+        '\n> Supports INSERT, UPDATE, DELETE\n');
     }
 
     const views = await this.database.schema.getViewNames();
@@ -1463,7 +1218,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
             description: ['path', 'table_index', 'row_index', 'table_name'].includes(col)
               ? '(metadata)' : '(table column)',
           }));
-          sections.push(makeTable(viewName, viewCols, true) + '\n> Supports INSERT, UPDATE, DELETE\n');
+          sections.push(renderSchemaTableDoc(viewName, viewCols, true) + '\n> Supports INSERT, UPDATE, DELETE\n');
         }
       }
     }
@@ -1491,7 +1246,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return sections.join('\n');
   }
 
-  public async getAutocompleteSchema(): Promise<AutocompleteSchemaInfo> {
+  public async getAutocompleteSchema(): Promise<AutocompleteSchemaShape> {
     const relationRows = await this.database.all(
       "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
     ) as Array<{ name?: unknown; type?: unknown }>;
@@ -1517,7 +1272,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
     }));
 
-    const columns: AutocompleteSchemaColumn[] = [];
+    const columns: AutocompleteSchemaColumnInfo[] = [];
     for (const { relationName, pragmaRows } of pragmaResults) {
       for (const row of pragmaRows) {
         if (typeof row.name !== 'string' || !row.name) {
@@ -1551,7 +1306,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return mergeDeclaredProviderTables({ relations, columns, functions }, this.tableProviderService.getDeclaredTables());
   }
 
-  private shouldIncludeAutocompleteRelation(relation: AutocompleteSchemaRelation): boolean {
+  private shouldIncludeAutocompleteRelation(relation: AutocompleteSchemaRelationInfo): boolean {
     if (!relation.name || relation.name.startsWith('_') || relation.name.startsWith('sqlite_')) {
       return false;
     }
@@ -1606,7 +1361,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     for (let remainingMs = PROVIDER_TABLE_RETRY_TIMEOUT_MS; remainingMs > 0; remainingMs -= PROVIDER_TABLE_RETRY_INTERVAL_MS) {
       try {
-        if (await this.tableExists(tableName)) {
+        if (await relationExists(this.database, tableName, { matchViewsCaseInsensitive: true })) {
           return true;
         }
       }
@@ -1619,14 +1374,6 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
 
     return false;
-  }
-
-  private async tableExists(tableName: string): Promise<boolean> {
-    const rows = await this.database.all(
-      "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND lower(name) = ? LIMIT 1",
-      [tableName.toLowerCase()]
-    );
-    return rows.length > 0;
   }
 
   private getFriendlyErrorMessage(errorMessage: string): string {
@@ -1773,7 +1520,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       await this.processPendingTriggerActions();
     }
     catch (error: unknown) {
-      logger.error(CONSOLE_ERRORS.APPLY_PREVIEW_FAILED, error);
+      logger.error('Could not apply preview', error);
       throw new Error(ERROR_MESSAGES.APPLY_FAILED(getErrorMessage(error)));
     }
 
@@ -1830,14 +1577,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     event: EventName,
     data: VaultQueryEvents[EventName]
   ): void {
-    if (event !== 'database-lost') {
-      // database-lost is the only event that does not signal an indexed-data change
-      this.indexGeneration++;
-    }
-    const eventName: string = event;
-    this.eventBus.emit(event, data, error => {
-      logger.error(`Error in event listener for '${eventName}'`, error);
-    });
+    this.eventBus.emit(event, data);
   }
 
 }

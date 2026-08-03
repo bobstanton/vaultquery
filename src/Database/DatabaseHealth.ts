@@ -2,8 +2,8 @@ import type { Database } from 'sql.js';
 import type { DatabaseHealth } from '../VaultQueryAPI';
 import { getErrorMessage } from '../utils/ErrorMessages';
 
-export function checkSqlJsDatabaseHealth(db: Database | null, diagnostics: Record<string, unknown>): DatabaseHealth {
-  diagnostics.hasDb = !!db;
+export function checkSqlJsDatabaseHealth(db: Database | null, baseDiagnostics: Record<string, unknown>): DatabaseHealth {
+  const diagnostics: Record<string, unknown> = { ...baseDiagnostics, hasDb: !!db };
 
   try {
     if (!db) {
@@ -36,10 +36,10 @@ export function checkSqlJsDatabaseHealth(db: Database | null, diagnostics: Recor
 
     return { healthy: true, diagnostics };
   }
-	  catch (error) {
-	    const message = getErrorMessage(error);
-	    diagnostics.exceptionType = error instanceof Error ? error.constructor.name : typeof error;
-	    diagnostics.exceptionMessage = message;
+  catch (error) {
+    const message = getErrorMessage(error);
+    diagnostics.exceptionType = error instanceof Error ? error.constructor.name : typeof error;
+    diagnostics.exceptionMessage = message;
 
     return {
       healthy: false,

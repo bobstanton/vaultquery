@@ -1,4 +1,4 @@
-import { Database } from 'sql.js';
+import type { Database } from 'sql.js';
 import { processEscapeSequences } from '../utils/StringUtils';
 
 type MarkdownLinkGenerator = (path: string, subpath: string, alias: string | null) => string | null;

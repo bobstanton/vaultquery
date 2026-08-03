@@ -122,15 +122,12 @@ interface GridRecord {
   grid?: SlickGrid;
   observer?: IntersectionObserver;
   resizeObserver?: ResizeObserver;
-  domObserver?: MutationObserver;
   data: Record<string, unknown>[];
   columns: Column[];
   options: GridOption;
   openFile: RenderContext['openFile'];
   queryHash?: string;
-  detachedAt?: number;
   disposed?: boolean;
-  detachLogged?: boolean;
   mountFailures?: number;
 }
 
@@ -141,11 +138,9 @@ interface GridHeightConfig {
 }
 
 export class SlickGridRenderer extends BaseRenderer {
-  private static readonly DETACHED_RECORD_TTL_MS = 5 * 60 * 1000;
   private static records = new Map<string, GridRecord>();
   private static resizeTimers = new Map<string, number>();
   private static restoreTimers = new Map<string, number>();
-  private static orphanRefreshElements = new WeakSet<HTMLElement>();
   private static columnWidthCache = new Map<string, Map<string, number>>();
 
   private static readonly COLUMN_WIDTH_CACHE_LIMIT = 200;
@@ -245,6 +240,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
     this.records.set(gridId, record);
     logger.debug(`SlickGrid prepared ${gridId}: rows=${data.length}, columns=${columns.length}, prepareMs=${Math.round(prepareMs)}`);
+    this.attachContainerObservers(record);
     this.scheduleGridEnsure(record, 'initial render');
   }
 
@@ -327,10 +323,9 @@ export class SlickGridRenderer extends BaseRenderer {
     }
 
     if (!record.container.isConnected) {
+      logger.debug(`SlickGrid ${record.id} container detached; holding mount until it reattaches (${reason})`);
       return;
     }
-
-    record.detachedAt = undefined;
 
     if (!record.grid) {
       this.mountGrid(record, reason, false);
@@ -401,7 +396,7 @@ export class SlickGridRenderer extends BaseRenderer {
         message: `SlickGrid rendering failed: ${getErrorMessage(error)}`
       });
 
-      // Stop the periodic restore loop from retrying (and re-rendering this
+      // Stop the observer-driven restore from retrying (and re-rendering this
       // error) forever when mounting fails deterministically.
       record.mountFailures = (record.mountFailures ?? 0) + 1;
       if (record.mountFailures >= 3) {
@@ -411,35 +406,14 @@ export class SlickGridRenderer extends BaseRenderer {
     }
   }
 
-  private static createDomObserver(record: GridRecord): MutationObserver | undefined {
-    const MutationObserverCtor = record.container.ownerDocument.defaultView?.MutationObserver;
-    if (!MutationObserverCtor) {
-      return undefined;
-    }
-
-    const observer = new MutationObserverCtor(() => {
-      if (this.records.get(record.id) !== record || record.disposed || !record.container.isConnected) {
-        return;
-      }
-
-      if (!this.hasUsableGridDimensions(record) || this.hasUsableGridDom(record)) {
-        return;
-      }
-
-      this.scheduleGridEnsure(record, 'grid DOM mutation', 100);
-    });
-
-    observer.observe(record.container, { childList: true, subtree: true });
-    return observer;
-  }
-
   private static attachContainerObservers(record: GridRecord): void {
+    if (record.observer && record.resizeObserver) {
+      return;
+    }
+    this.disconnectContainerObservers(record);
+
     const container = record.container;
     const containerWindow = container.ownerDocument.defaultView || activeWindow;
-
-    if (record.observer || record.resizeObserver || record.domObserver) {
-      this.disconnectContainerObservers(record);
-    }
 
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
@@ -472,17 +446,13 @@ export class SlickGridRenderer extends BaseRenderer {
 
     resizeObserver.observe(container);
     record.resizeObserver = resizeObserver;
-
-    record.domObserver = this.createDomObserver(record);
   }
 
   private static disconnectContainerObservers(record: GridRecord): void {
     record.observer?.disconnect();
     record.resizeObserver?.disconnect();
-    record.domObserver?.disconnect();
     record.observer = undefined;
     record.resizeObserver = undefined;
-    record.domObserver = undefined;
   }
 
   private static hasUsableGridDimensions(record: GridRecord): boolean {
@@ -523,8 +493,6 @@ export class SlickGridRenderer extends BaseRenderer {
       return;
     }
 
-    record.domObserver?.disconnect();
-    record.domObserver = undefined;
     this.cancelActiveColumnResize(record);
 
     const grid = record.grid;
@@ -534,86 +502,6 @@ export class SlickGridRenderer extends BaseRenderer {
     }
     catch {
       // Ignore destruction errors during controlled cleanup/recreate.
-    }
-  }
-
-  static checkAndRestoreGrids(): void {
-    // This runs on a 2s interval and on scroll; skip the per-record checks and
-    // the document-wide orphan scans entirely when there is nothing to restore
-    // (no live grids and no refresh owners that could revive an orphan).
-    if (this.records.size === 0 && !QueryRefreshRegistry.hasEntries()) {
-      return;
-    }
-
-    const now = Date.now();
-
-    for (const [gridId, record] of Array.from(this.records.entries())) {
-      if (record.disposed) {
-        this.records.delete(gridId);
-        continue;
-      }
-
-      if (!record.container.isConnected) {
-        if (!record.detachedAt) {
-          record.detachedAt = now;
-          if (!record.detachLogged) {
-            logger.debug(`SlickGrid ${gridId} container detached; waiting for reconnect`);
-            record.detachLogged = true;
-          }
-        }
-        else if (now - record.detachedAt > this.DETACHED_RECORD_TTL_MS) {
-          logger.debug(`SlickGrid ${gridId} detached record expired; cleaning up`);
-          this.cleanupRecord(record);
-        }
-        continue;
-      }
-
-      record.detachedAt = undefined;
-      record.detachLogged = undefined;
-
-      if (!record.grid || (this.hasUsableGridDimensions(record) && !this.hasUsableGridDom(record))) {
-        this.ensureGridMounted(record, 'periodic restore check');
-      }
-    }
-
-    this.refreshOrphanedGridContainers();
-  }
-
-  private static refreshOrphanedGridContainers(): void {
-    // Orphan recovery works by re-running the owning query; without refresh
-    // owners the querySelectorAll sweep below cannot accomplish anything.
-    if (!QueryRefreshRegistry.hasEntries()) {
-      return;
-    }
-
-    for (const doc of this.getCandidateDocuments(activeWindow.document)) {
-      const grids = Array.from(doc.querySelectorAll('.vaultquery-data-grid'));
-      for (const grid of grids) {
-        if (!grid.instanceOf(HTMLElement) || !grid.isConnected) {
-          continue;
-        }
-
-        const gridId = grid.dataset.gridId || grid.id;
-        if (gridId && this.records.has(gridId)) {
-          continue;
-        }
-
-        if (this.hasUsableGridElementDom(grid) || this.orphanRefreshElements.has(grid)) {
-          continue;
-        }
-
-        this.orphanRefreshElements.add(grid);
-        logger.debug(`Refreshing orphaned SlickGrid container ${gridId || '(unknown id)'}`);
-        void QueryRefreshRegistry.refreshForElement(grid)
-          .then(refreshed => {
-            if (!refreshed) {
-              logger.debug(`Orphaned SlickGrid container ${gridId || '(unknown id)'} has no refresh owner`);
-            }
-          })
-          .finally(() => {
-            this.orphanRefreshElements.delete(grid);
-          });
-      }
     }
   }
 
@@ -664,7 +552,7 @@ export class SlickGridRenderer extends BaseRenderer {
           field: key,
           sortable: true,
           resizable: true,
-          ...this.getColumnConfig(key, context)
+          ...this.getColumnConfig(key)
         };
 
         if (queryHash) {
@@ -742,7 +630,7 @@ export class SlickGridRenderer extends BaseRenderer {
     }
   }
 
-  private static getColumnConfig(key: string, context: RenderContext): Partial<Column> {
+  private static getColumnConfig(key: string): Partial<Column> {
     const config: Partial<Column> = {};
 
     const width = this.getColumnWidth(key);
@@ -750,7 +638,7 @@ export class SlickGridRenderer extends BaseRenderer {
     config.minWidth = 50;
     // No maxWidth - allow columns to be resized as large as needed
 
-    const formatter = this.getColumnFormatter(key, context);
+    const formatter = this.getColumnFormatter(key);
     if (formatter) {
       config.formatter = formatter;
     }
@@ -813,7 +701,7 @@ export class SlickGridRenderer extends BaseRenderer {
     }
   }
 
-  private static getColumnFormatter(key: string, context: RenderContext) {
+  private static getColumnFormatter(key: string) {
     if (key.includes('(current)')) {
       return this.createCurrentFormatter();
     }
@@ -823,7 +711,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
     switch (key) {
       case 'path':
-        return this.createPathFormatter(context.openFile);
+        return this.createPathFormatter();
       case 'created':
       case 'modified':
         return this.createTimestampFormatter();
@@ -835,13 +723,13 @@ export class SlickGridRenderer extends BaseRenderer {
       case 'cancelled_date':
         return this.createDateStringFormatter();
       case 'content':
-        return this.createContentFormatter(context);
+        return this.createContentFormatter();
       default:
         return null;
     }
   }
 
-  private static createPathFormatter(_openFile: (path: string) => void) {
+  private static createPathFormatter() {
     return (_row: number, _cell: number, value: unknown, _columnDef: Column, _dataContext: Record<string, unknown>) => {
       if (!value) return '';
       const escapedPath = escapeHTML(formatUnknownValue(value));
@@ -870,7 +758,7 @@ export class SlickGridRenderer extends BaseRenderer {
     return content.replace(/```vaultquery[^\n]*/g, '```sql');
   }
 
-  private static createContentFormatter(_context: RenderContext) {
+  private static createContentFormatter() {
     // Plain-text placeholder; in rendered-markdown mode the real rendering
     // happens in the asyncPostRender callback, which can await
     // MarkdownRenderer and append actual DOM nodes.

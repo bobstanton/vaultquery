@@ -2,15 +2,14 @@ import { App, TFile, Notice, normalizePath } from 'obsidian';
 import { VaultDatabase } from '../Database/DatabaseService';
 import { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import { VaultQuerySettings } from '../Settings/Settings';
-import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, INFO_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
-import type { PreviewResult } from '../WriteSync';
+import { getErrorMessage, ERROR_MESSAGES, INFO_MESSAGES } from '../utils/ErrorMessages';
 import { ObsidianEditApplier } from '../WriteSync/ObsidianEditApplier';
 import { createDirectlyApplicableIntents } from '../WriteSync/ObsidianEditIntentFactory';
-import { expandListItemViewDeletes } from '../WriteSync/ListItemDescendants';
+import { expandListItemViewDeletesAsync } from '../WriteSync/ListItemDescendants';
 import { transformDynamicViewToTableCells, transformDynamicViewToTableRows } from '../WriteSync/DynamicTableViewTransform';
 import { logger as rootLogger } from '../utils/logger';
 
-import type { PreviewResult as ServicePreviewResult } from './PreviewService';
+import type { PreviewResult } from './PreviewService';
 
 const logger = rootLogger.scope('WriteSync');
 
@@ -48,13 +47,13 @@ export class WriteSyncService {
   }
 
   private async queryListItemDescendants(rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
-    return await expandListItemViewDeletes(rows, this.queryDatabase.bind(this));
+    return await expandListItemViewDeletesAsync(rows, this.queryDatabase.bind(this));
   }
 
-  public async syncChanges(previewResult: ServicePreviewResult): Promise<string[]> {
+  public async syncChanges(previewResult: PreviewResult): Promise<string[]> {
     try {
       const directPreviewResult = this.normalizeDirectPreviewResult(previewResult);
-      const directIntents = await createDirectlyApplicableIntents(
+      const creationResult = await createDirectlyApplicableIntents(
         directPreviewResult,
         this.settings.allowDeleteNotes,
         this.queryListItemDescendants.bind(this),
@@ -62,18 +61,21 @@ export class WriteSyncService {
         this.readFileContent.bind(this)
       );
 
-      if (!directIntents) {
+      if (!creationResult) {
         throw new WriteOperationError(`Unsupported write target: ${previewResult.table}`, 'syncChanges');
       }
 
-      const affectedPaths = await this.intentApplier.applyIntents(directIntents);
-      if (affectedPaths.length > 0) {
-        new Notice("VaultQuery: " + INFO_MESSAGES.FILES_UPDATED(affectedPaths.length), 3000);
+      const { affectedPaths, warnings: applyWarnings } = await this.intentApplier.applyIntents(creationResult.intents);
+      const warnings = [...creationResult.warnings, ...applyWarnings];
+      if (warnings.length > 0) {
+        logger.warn('Write sync skipped changes', warnings);
       }
+
+      this.showSyncNotice(affectedPaths.length, warnings.length);
       return affectedPaths;
     } catch (error: unknown) {
       const message = getErrorMessage(error);
-      logger.error(CONSOLE_ERRORS.WRITE_SYNC_ERROR, message);
+      logger.error('WriteSyncService error', message);
 
       const contextualError = error instanceof WriteOperationError
         ? error
@@ -91,6 +93,19 @@ export class WriteSyncService {
     }
   }
 
+  private showSyncNotice(updatedFileCount: number, skippedChangeCount: number): void {
+    const parts: string[] = [];
+    if (updatedFileCount > 0) {
+      parts.push(INFO_MESSAGES.FILES_UPDATED(updatedFileCount));
+    }
+    if (skippedChangeCount > 0) {
+      parts.push(INFO_MESSAGES.CHANGES_SKIPPED(skippedChangeCount));
+    }
+    if (parts.length > 0) {
+      new Notice('VaultQuery: ' + parts.join('; '), skippedChangeCount > 0 ? 8000 : 3000);
+    }
+  }
+
   private normalizeDirectPreviewResult(previewResult: PreviewResult): PreviewResult {
     if (previewResult.op === 'multi') {
       return {
@@ -99,9 +114,7 @@ export class WriteSyncService {
       };
     }
 
-    const syncTables = ['notes', 'properties', 'tasks', 'table_cells', 'headings', 'table_rows', 'headings_view', 'list_items', 'list_items_view', 'tags', 'links'];
-    const isDynamicTableView = previewResult.table.endsWith('_table') && !syncTables.includes(previewResult.table);
-    if (!isDynamicTableView) {
+    if (!previewResult.table.endsWith('_table')) {
       return previewResult;
     }
 
@@ -119,7 +132,7 @@ export class WriteSyncService {
       return await this.app.vault.read(file);
     }
     catch (error: unknown) {
-      logger.warn(WARNING_MESSAGES.FILE_READ_FAILED(path, getErrorMessage(error)));
+      logger.warn(`Could not read file ${path}: ${getErrorMessage(error)}`);
       return null;
     }
   }

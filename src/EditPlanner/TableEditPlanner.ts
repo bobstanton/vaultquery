@@ -1,13 +1,10 @@
 import { markdownTable } from 'markdown-table';
 import { ContentLocationService } from '../Services/ContentLocationService';
-import type { TableLocationInfo, Range } from '../Services/ContentLocationService';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { createTableKey, parseTableKey } from '../utils/StringUtils';
 import type { TableCellRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext, TableRowGroup } from './types';
 
 export class TableEditPlanner {
-  public constructor(private readonly contentLocationService: ContentLocationService, private readonly discoverTableRange?: (content: string, tableIndex: number) => Range | null) {}
-
   public planTableEdits(ctx: EntityPlannerContext, tableCells: TableCellRow[]): EntityPlanResult {
     const edits: ReplaceRangeEdit[] = [];
     const warnings: string[] = [];
@@ -15,26 +12,14 @@ export class TableEditPlanner {
     const tables = this.groupCellsToTables(tableCells);
 
     for (const t of tables) {
-      const tableLocationInfo: TableLocationInfo = {
-        path: t.path,
-        block_id: t.block_id,
-        table_start: t.table_start,
-        table_end: t.table_end
-      };
-      let blockRange = this.contentLocationService.locateTableRange(ctx.content, tableLocationInfo);
-      if (!blockRange && this.discoverTableRange) {
-        blockRange = this.discoverTableRange(ctx.content, t.table_index);
-      }
-      if (!blockRange) {
-        blockRange = MarkdownTableUtils.findTableByIndex(ctx.content, t.table_index);
-      }
+      const blockRange = MarkdownTableUtils.findTableByIndex(ctx.content, t.table_index);
 
       if (!blockRange) {
         const newTable = this.buildMarkdownTable(t.header, t.rows);
 
         const insertionPoint = t.line_number != null && t.line_number > 0
           ? ContentLocationService.findInsertionPointAtLine(ctx.content, t.line_number)
-          : ContentLocationService.findTableInsertionPoint(ctx.content);
+          : ContentLocationService.findEndInsertionPoint(ctx.content);
 
         const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
         const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
@@ -51,7 +36,7 @@ export class TableEditPlanner {
 
       const existingTableMd = ctx.content.slice(blockRange.start, blockRange.end);
       const existingTable = MarkdownTableUtils.parseMarkdownTable(existingTableMd);
-      const mergedTable = this.mergeTableContent(existingTable, t);
+      const mergedTable = this.replaceTableRows(existingTable, t);
       const rebuilt = this.buildMarkdownTable(mergedTable.header, mergedTable.rows);
 
       edits.push({ type: "replaceRange", path: ctx.path, range: blockRange, text: rebuilt + '\n', reason: "rewrite table" });
@@ -104,14 +89,14 @@ export class TableEditPlanner {
 
   public buildMarkdownTable(header: string[], rows: Array<Record<string, string>>): string {
     const tableData = [
-      header,
-      ...rows.map(row => header.map(h => row[h] ?? ''))
+      header.map(h => MarkdownTableUtils.escapeTableCell(h)),
+      ...rows.map(row => header.map(h => MarkdownTableUtils.escapeTableCell(row[h] ?? '')))
     ];
 
     return markdownTable(tableData);
   }
 
-  private mergeTableContent(existingTable: { header: string[]; rows: string[][] } | null, newTable: TableRowGroup): { header: string[]; rows: Array<Record<string, string>> } {
+  private replaceTableRows(existingTable: { header: string[]; rows: string[][] } | null, newTable: TableRowGroup): { header: string[]; rows: Array<Record<string, string>> } {
     let header: string[];
     if (existingTable?.header && existingTable.header.length > 0) {
       header = [...existingTable.header];

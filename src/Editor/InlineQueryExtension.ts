@@ -11,13 +11,18 @@ import { waitForInlineVaultQueryReady } from './InlineVaultQueryReadiness';
 
 const logger = rootLogger.scope('InlineQueries');
 const INLINE_QUERY_CLASS = 'vaultquery-inline-query';
+
+const INLINE_QUERY_PATTERN = String.raw`vq\{([^\`\n]+)\}`;
+
 const INLINE_QUERY_SYNTAX: InlineSyntax<string> = {
-  regex: /`vq\{([^`\n]+)\}`/g,
+  regex: new RegExp(`\`${INLINE_QUERY_PATTERN}\``, 'g'),
   parseMatch: (match) => match[1].trim(),
 };
 
+const INLINE_QUERY_TEXT_REGEX = new RegExp(`^${INLINE_QUERY_PATTERN}$`);
+
 function parseInlineQueryText(text: string): string | null {
-  const match = text.match(/^vq\{([^`\n]+)\}$/);
+  const match = text.match(INLINE_QUERY_TEXT_REGEX);
   return match?.[1].trim() || null;
 }
 

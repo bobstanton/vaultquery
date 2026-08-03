@@ -1,4 +1,5 @@
 import { logger as rootLogger } from './logger';
+import { parseBooleanOption } from './ConfigParsingUtils';
 
 import type { FrontmatterValue } from '../EditPlanner';
 
@@ -42,12 +43,8 @@ export function parseFrontmatterValue(value: string | null, type: string | null)
       return isNaN(num) ? value : num;
     }
 
-    case 'boolean': {
-      const lower = value.toLowerCase();
-      if (lower === 'true' || lower === '1' || lower === 'yes') return true;
-      if (lower === 'false' || lower === '0' || lower === 'no') return false;
-      return value;
-    }
+    case 'boolean':
+      return parseBooleanOption(value) ?? value;
 
     case 'date':
     case 'datetime':

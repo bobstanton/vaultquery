@@ -1,5 +1,6 @@
-import { Database } from 'sql.js';
-import { App, TFile } from 'obsidian';
+import type { Database } from 'sql.js';
+import { TFile } from 'obsidian';
+import type { App } from 'obsidian';
 import { SharedSQLFunctions } from './SharedSQLFunctions';
 
 type SyncHandler = (...args: unknown[]) => number;

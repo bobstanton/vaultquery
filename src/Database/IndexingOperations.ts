@@ -3,12 +3,14 @@
  * Uses adapter pattern to abstract away database access differences.
  */
 
-import { INDEXING_SQL, noteToParams, noteToUpdateParams, tagsToRows, linksToRows, unresolvedLinksToRows, embedsToRows, tableCellsToRows, blocksToRows, tasksToRows, headingsToRows, listItemsToRows, propertyToParams, userViewToParams, userFunctionToParams, userTriggerToParams } from './IndexingQueries';
+import { INDEXING_SQL, noteToParams, noteToUpdateParams, propertyToParams, userViewToParams, userFunctionToParams, userTriggerToParams } from './IndexingQueries';
 import type { InputPropertyData } from './IndexingQueries';
 import { hashString } from '../utils/StringUtils';
-import { detectTagChanges, detectLinkChanges, detectTableCellChanges, detectTaskChanges, detectHeadingChanges, detectListItemChanges, detectPropertyChanges, toDbTableCell, toDbTask, toDbHeading, toDbListItem, parseTaskRows, parseListItemRows, TASK_SELECT_COLUMNS, LIST_ITEM_SELECT_COLUMNS } from './ChangeDetection';
-import type { TagData, TagRow, LinkData, LinkRow, DbTableCellData, TableCellRow, DbTaskData, DbListItemData, HeadingData, HeadingRow, InputHeadingData, PropertyData, PropertyChanges, SqlResult } from './ChangeDetection';
-import type { TableCellData as InputTableCellData, IndexNoteData, TaskData, ListItemData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
+import { TASKS_ENTITY, HEADINGS_ENTITY, LIST_ITEMS_ENTITY, LINKS_ENTITY, TAGS_ENTITY, TABLE_CELLS_ENTITY, EMBEDS_ENTITY, BLOCKS_ENTITY, UNRESOLVED_LINKS_ENTITY, TABLES_SQL, detectEntityChanges, entityInsertRow, entityUpdatePlan, mapEntityRow } from './EntityDescriptors';
+import type { EntityDescriptor, InsertEntityDescriptor, SqlParam, SqlResult } from './EntityDescriptors';
+import { detectPropertyChanges } from './ChangeDetection';
+import type { PropertyData, PropertyChanges } from './ChangeDetection';
+import type { IndexNoteData, UserViewData, UserFunctionData, UserTriggerData } from '../types';
 
 export interface IndexingLogger {
   debug(message: string, ...data: unknown[]): void;
@@ -84,15 +86,15 @@ export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: 
       }
     }],
     [tables, () => replaceTablesCore(adapter, note.path, tables, skipDeletes)],
-    [tableCells, () => replaceTableCellsCore(adapter, note.path, tableCells, skipDeletes)],
+    [tableCells, () => replaceEntityCore(adapter, TABLE_CELLS_ENTITY, note.path, tableCells, skipDeletes)],
     [tasks, () => handlers.replaceTasks(note.path, tasks, skipDeletes)],
     [headings, () => handlers.replaceHeadings(note.path, headings, skipDeletes)],
-    [links, () => replaceLinksCore(adapter, note.path, links, skipDeletes)],
-    [unresolvedLinks, () => replaceUnresolvedLinksCore(adapter, note.path, unresolvedLinks, skipDeletes)],
-    [embeds, () => replaceEmbedsCore(adapter, note.path, embeds, skipDeletes)],
-    [tags, () => replaceTagsCore(adapter, note.path, tags, skipDeletes)],
+    [links, () => replaceEntityCore(adapter, LINKS_ENTITY, note.path, links, skipDeletes)],
+    [unresolvedLinks, () => replaceInsertEntityCore(adapter, UNRESOLVED_LINKS_ENTITY, note.path, unresolvedLinks, skipDeletes)],
+    [embeds, () => replaceInsertEntityCore(adapter, EMBEDS_ENTITY, note.path, embeds, skipDeletes)],
+    [tags, () => replaceEntityCore(adapter, TAGS_ENTITY, note.path, tags, skipDeletes)],
     [listItems, () => handlers.replaceListItems(note.path, listItems, skipDeletes)],
-    [blocks, () => replaceBlocksCore(adapter, note.path, blocks, skipDeletes)],
+    [blocks, () => replaceInsertEntityCore(adapter, BLOCKS_ENTITY, note.path, blocks, skipDeletes)],
   ];
 
   for (const [value, replace] of replacements) {
@@ -104,163 +106,72 @@ export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: 
   handlers.replaceUserTriggers(note.path, userTriggers, skipDeletes);
 }
 
-function replaceUnresolvedLinksCore(adapter: IndexingDbAdapter, path: string, unresolvedLinks: IndexNoteData['unresolvedLinks'], skipDeletes: boolean): void {
-  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_UNRESOLVED_LINKS, [path]);
-  if (unresolvedLinks?.length) {
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_UNRESOLVED_LINKS_BASE, INDEXING_SQL.UNRESOLVED_LINKS_COLUMNS, unresolvedLinksToRows(path, unresolvedLinks));
-  }
-}
-
-function replaceEmbedsCore(adapter: IndexingDbAdapter, path: string, embeds: IndexNoteData['embeds'], skipDeletes: boolean): void {
-  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_EMBEDS, [path]);
-  if (embeds?.length) {
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_EMBEDS_BASE, INDEXING_SQL.EMBEDS_COLUMNS, embedsToRows(path, embeds));
-  }
-}
-
-function replaceBlocksCore(adapter: IndexingDbAdapter, path: string, blocks: IndexNoteData['blocks'], skipDeletes: boolean): void {
-  if (!skipDeletes) adapter.runPrepared(INDEXING_SQL.DELETE_BLOCKS, [path]);
-  if (blocks?.length) {
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_BLOCKS_BASE, INDEXING_SQL.BLOCKS_COLUMNS, blocksToRows(path, blocks));
-  }
-}
-
-function replaceTagsCore(adapter: IndexingDbAdapter, path: string, tags: TagData[] | undefined, skipDeletes: boolean): void {
-  if (!tags?.length) {
+export function replaceEntityCore<TInput, TRow extends Record<string, SqlParam>>(
+  adapter: IndexingDbAdapter,
+  entity: EntityDescriptor<TInput, TRow>,
+  path: string,
+  items: TInput[] | undefined,
+  skipDeletes: boolean
+): void {
+  if (!items?.length) {
     if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_TAGS, [path]);
+      adapter.runPrepared(entity.deleteByPathSql, [path]);
     }
     return;
   }
 
-  const existing: TagRow[] = execRows(
-    adapter,
-    'SELECT id, tag_name, line_number FROM tags WHERE path = ?',
-    [path],
-    row => ({
-      id: row[0] as number,
-      tag_name: row[1] as string,
-      line_number: row[2] as number
-    })
-  );
+  const existing = execRows(adapter, entity.selectSql, [path], row => mapEntityRow(entity, row));
+  const file = items.map(entity.normalize);
 
-  const changes = detectTagChanges(tags, existing);
+  const changes = detectEntityChanges(entity, file, existing);
 
   if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('tags', changes.deleted);
+    adapter.batchDeleteByIds(entity.table, changes.deleted);
   }
 
-  for (const { id, new: tag } of changes.updated) {
-    adapter.run('UPDATE tags SET line_number = ? WHERE id = ?', [tag.line_number, id]);
+  for (const { id, old, new: row } of changes.updated) {
+    const plan = entityUpdatePlan(entity, old, row);
+    adapter.run(plan.sql, [...plan.params, id]);
   }
 
   if (changes.inserted.length > 0) {
     adapter.runMultiRowInsert(
-      INDEXING_SQL.INSERT_TAGS_BASE,
-      INDEXING_SQL.TAGS_COLUMNS,
-      tagsToRows(path, changes.inserted)
+      entity.insertBaseSql,
+      entity.insertColumnCount,
+      changes.inserted.map(row => entityInsertRow(entity, path, row))
     );
   }
 }
 
-function replaceLinksCore(adapter: IndexingDbAdapter, path: string, links: LinkData[] | undefined, skipDeletes: boolean): void {
-  if (!links?.length) {
-    if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_LINKS, [path]);
-    }
-    return;
+function replaceInsertEntityCore<TInput, TRow extends Record<string, SqlParam>>(
+  adapter: IndexingDbAdapter,
+  entity: InsertEntityDescriptor<TInput, TRow>,
+  path: string,
+  items: TInput[] | undefined,
+  skipDeletes: boolean
+): void {
+  if (!skipDeletes) {
+    adapter.runPrepared(entity.deleteByPathSql, [path]);
   }
-
-  const existing: LinkRow[] = execRows(
-    adapter,
-    'SELECT id, link_text, link_target, link_target_path, link_type, line_number, original, start_offset, end_offset, frontmatter_key FROM links WHERE path = ?',
-    [path],
-    row => ({
-      id: row[0] as number,
-      link_text: row[1] as string,
-      link_target: row[2] as string,
-      link_target_path: row[3] as string | null,
-      link_type: row[4] as string,
-      line_number: row[5] as number | null,
-      original: row[6] as string | null,
-      start_offset: row[7] as number | null,
-      end_offset: row[8] as number | null,
-      frontmatter_key: row[9] as string | null,
-    })
-  );
-
-  const changes = detectLinkChanges(links, existing);
-
-  if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('links', changes.deleted);
-  }
-
-  for (const { id, new: link } of changes.updated) {
-    adapter.run(
-      'UPDATE links SET link_text = ?, link_target = ?, link_target_path = ?, link_type = ?, line_number = ?, original = ?, start_offset = ?, end_offset = ?, frontmatter_key = ? WHERE id = ?',
-      [link.link_text, link.link_target, link.link_target_path, link.link_type, link.line_number, link.original, link.start_offset, link.end_offset, link.frontmatter_key, id]
-    );
-  }
-
-  if (changes.inserted.length > 0) {
+  if (items?.length) {
     adapter.runMultiRowInsert(
-      INDEXING_SQL.INSERT_LINKS_BASE,
-      INDEXING_SQL.LINKS_COLUMNS,
-      linksToRows(path, changes.inserted)
+      entity.insertBaseSql,
+      entity.insertColumnCount,
+      items.map(item => entityInsertRow(entity, path, entity.normalize(item)))
     );
   }
 }
 
-function replaceTableCellsCore(adapter: IndexingDbAdapter, path: string, tableCells: InputTableCellData[] | undefined, skipDeletes: boolean): void {
-  if (!tableCells?.length) {
-    if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_TABLE_CELLS, [path]);
-    }
-    return;
-  }
+export function replaceTasksCore(adapter: IndexingDbAdapter, path: string, tasks: IndexNoteData['tasks'], skipDeletes: boolean): void {
+  replaceEntityCore(adapter, TASKS_ENTITY, path, tasks, skipDeletes);
+}
 
-  const existing: TableCellRow[] = execRows(
-    adapter,
-    'SELECT id, table_index, table_name, row_index, column_name, cell_value, line_number FROM table_cells WHERE path = ?',
-    [path],
-    row => ({
-      id: row[0] as number,
-      table_index: row[1] as number,
-      table_name: row[2] as string | null,
-      row_index: row[3] as number,
-      column_name: row[4] as string,
-      cell_value: row[5] as string,
-      line_number: row[6] as number | null
-    })
-  );
+export function replaceHeadingsCore(adapter: IndexingDbAdapter, path: string, headings: IndexNoteData['headings'], skipDeletes: boolean): void {
+  replaceEntityCore(adapter, HEADINGS_ENTITY, path, headings, skipDeletes);
+}
 
-  const file: DbTableCellData[] = tableCells.map(toDbTableCell);
-
-  const changes = detectTableCellChanges(file, existing);
-
-  if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('table_cells', changes.deleted);
-  }
-
-  for (const { id, old, new: cell } of changes.updated) {
-    const contentChanged = old.table_name !== cell.table_name || old.cell_value !== cell.cell_value;
-    if (contentChanged) {
-      adapter.run(
-        'UPDATE table_cells SET table_name = ?, cell_value = ?, line_number = ? WHERE id = ?',
-        [cell.table_name, cell.cell_value, cell.line_number, id]
-      );
-    } else {
-      adapter.run('UPDATE table_cells SET line_number = ? WHERE id = ?', [cell.line_number, id]);
-    }
-  }
-
-  if (changes.inserted.length > 0) {
-    adapter.runMultiRowInsert(
-      INDEXING_SQL.INSERT_TABLE_CELLS_BASE,
-      INDEXING_SQL.TABLE_CELLS_COLUMNS,
-      tableCellsToRows(path, changes.inserted)
-    );
-  }
+export function replaceListItemsCore(adapter: IndexingDbAdapter, path: string, listItems: IndexNoteData['listItems'], skipDeletes: boolean): void {
+  replaceEntityCore(adapter, LIST_ITEMS_ENTITY, path, listItems, skipDeletes);
 }
 
 /** Input table data format from IndexNoteData */
@@ -276,18 +187,17 @@ interface TableDbRow {
   line_number: number | null;
 }
 
-/** Uses position-based matching by table_index. */
 function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: IndexNoteData['tables'], skipDeletes: boolean): void {
   if (!tables?.length) {
     if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_TABLES, [path]);
+      adapter.runPrepared(TABLES_SQL.DELETE_BY_PATH, [path]);
     }
     return;
   }
 
   const existingRows: TableDbRow[] = execRows(
     adapter,
-    'SELECT table_index, table_name, block_id, start_offset, end_offset, line_number FROM tables WHERE path = ? ORDER BY table_index',
+    TABLES_SQL.SELECT,
     [path],
     row => ({
       table_index: row[0] as number,
@@ -337,12 +247,12 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
 
   if (deleteIndices.length > 0) {
     const placeholders = deleteIndices.map(() => '?').join(',');
-    adapter.run(`DELETE FROM tables WHERE path = ? AND table_index IN (${placeholders})`, [path, ...deleteIndices]);
+    adapter.run(`${TABLES_SQL.DELETE_BY_INDEX_IN}(${placeholders})`, [path, ...deleteIndices]);
   }
 
   for (const { tableIndex, table } of updates) {
     adapter.run(
-      'UPDATE tables SET table_index = ?, table_name = ?, block_id = ?, start_offset = ?, end_offset = ?, line_number = ? WHERE path = ? AND table_index = ?',
+      TABLES_SQL.UPDATE,
       [
         table.table_index,
         table.table_name || null,
@@ -366,193 +276,7 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
       table.end_offset ?? null,
       table.line_number
     ]);
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_TABLES_BASE, INDEXING_SQL.TABLES_COLUMNS, rows);
-  }
-}
-
-/** Auto-sync logic is handled by DatabaseService, not this shared function. */
-export function replaceTasksCore(adapter: IndexingDbAdapter, path: string, tasks: TaskData[] | undefined, skipDeletes: boolean): void {
-  if (!tasks?.length) {
-    if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_TASKS, [path]);
-    }
-    return;
-  }
-
-  const result = adapter.exec(`SELECT ${TASK_SELECT_COLUMNS} FROM tasks WHERE path = ?`, [path]);
-  const existing = parseTaskRows(result);
-  const file = tasks.map(toDbTask);
-
-  const changes = detectTaskChanges(file, existing);
-
-  if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('tasks', changes.deleted);
-  }
-
-  for (const { id, new: task } of changes.updated) {
-    adapter.run(INDEXING_SQL.UPDATE_TASK, [
-      task.task_text,
-      task.status,
-      task.priority,
-      task.due_date,
-      task.scheduled_date,
-      task.start_date,
-      task.created_date,
-      task.done_date,
-      task.cancelled_date,
-      task.recurrence,
-      task.on_completion,
-      task.task_id,
-      task.depends_on,
-      task.tags,
-      task.line_number,
-      task.block_id,
-      task.start_offset,
-      task.end_offset,
-      task.anchor_hash,
-      task.section_heading,
-      id
-    ]);
-  }
-
-  if (changes.inserted.length > 0) {
-    const tasksData = changes.inserted.map((task: DbTaskData) => ({
-      task_text: task.task_text,
-      status: task.status,
-      priority: task.priority ?? undefined,
-      due_date: task.due_date ?? undefined,
-      scheduled_date: task.scheduled_date ?? undefined,
-      start_date: task.start_date ?? undefined,
-      created_date: task.created_date ?? undefined,
-      done_date: task.done_date ?? undefined,
-      cancelled_date: task.cancelled_date ?? undefined,
-      recurrence: task.recurrence ?? undefined,
-      on_completion: task.on_completion ?? undefined,
-      task_id: task.task_id ?? undefined,
-      depends_on: task.depends_on ?? undefined,
-      tags: task.tags ?? undefined,
-      line_number: task.line_number,
-      block_id: task.block_id ?? undefined,
-      anchor_hash: task.anchor_hash ?? undefined,
-      start_offset: task.start_offset ?? undefined,
-      end_offset: task.end_offset ?? undefined,
-      section_heading: task.section_heading ?? undefined
-    }));
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_TASKS_BASE, INDEXING_SQL.TASKS_COLUMNS, tasksToRows(path, tasksData));
-  }
-}
-
-/** Auto-sync logic is handled by DatabaseService, not this shared function. */
-export function replaceHeadingsCore(adapter: IndexingDbAdapter, path: string, headings: InputHeadingData[] | undefined, skipDeletes: boolean): void {
-  if (!headings?.length) {
-    if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_HEADINGS, [path]);
-    }
-    return;
-  }
-
-  const existing: HeadingRow[] = execRows(
-    adapter,
-    'SELECT id, level, heading_text, line_number, block_id, anchor_hash, start_offset, end_offset FROM headings WHERE path = ?',
-    [path],
-    row => ({
-      id: row[0] as number,
-      level: row[1] as number,
-      heading_text: row[2] as string,
-      line_number: row[3] as number,
-      block_id: row[4] as string | null,
-      anchor_hash: row[5] as string | null,
-      start_offset: row[6] as number | null,
-      end_offset: row[7] as number | null
-    })
-  );
-
-  const file: HeadingData[] = headings.map(toDbHeading);
-
-  const changes = detectHeadingChanges(file, existing);
-
-  if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('headings', changes.deleted);
-  }
-
-  for (const { id, new: heading } of changes.updated) {
-    adapter.run(INDEXING_SQL.UPDATE_HEADING, [
-      heading.level,
-      heading.heading_text,
-      heading.line_number,
-      heading.block_id,
-      heading.start_offset,
-      heading.end_offset,
-      heading.anchor_hash,
-      id
-    ]);
-  }
-
-  if (changes.inserted.length > 0) {
-    const headingsData = changes.inserted.map(heading => ({
-      level: heading.level,
-      heading_text: heading.heading_text,
-      line_number: heading.line_number,
-      block_id: heading.block_id ?? undefined,
-      anchor_hash: heading.anchor_hash ?? undefined,
-      start_offset: heading.start_offset ?? undefined,
-      end_offset: heading.end_offset ?? undefined
-    }));
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_HEADINGS_BASE, INDEXING_SQL.HEADINGS_COLUMNS, headingsToRows(path, headingsData));
-  }
-}
-
-/** Auto-sync logic is handled by DatabaseService, not this shared function. */
-export function replaceListItemsCore(adapter: IndexingDbAdapter, path: string, listItems: ListItemData[] | undefined, skipDeletes: boolean): void {
-  if (!listItems?.length) {
-    if (!skipDeletes) {
-      adapter.runPrepared(INDEXING_SQL.DELETE_LIST_ITEMS, [path]);
-    }
-    return;
-  }
-
-  const result = adapter.exec(`SELECT ${LIST_ITEM_SELECT_COLUMNS} FROM list_items WHERE path = ?`, [path]);
-  const existing = parseListItemRows(result);
-  const file = listItems.map(toDbListItem);
-
-  const changes = detectListItemChanges(file, existing);
-
-  if (!skipDeletes && changes.deleted.length > 0) {
-    adapter.batchDeleteByIds('list_items', changes.deleted);
-  }
-
-  for (const { id, new: item } of changes.updated) {
-    adapter.run(INDEXING_SQL.UPDATE_LIST_ITEM, [
-      item.list_index,
-      item.item_index,
-      item.parent_index,
-      item.content,
-      item.list_type,
-      item.indent_level,
-      item.line_number,
-      item.block_id,
-      item.anchor_hash,
-      item.start_offset,
-      item.end_offset,
-      id
-    ]);
-  }
-
-  if (changes.inserted.length > 0) {
-    const listItemsData = changes.inserted.map((item: DbListItemData) => ({
-      list_index: item.list_index,
-      item_index: item.item_index,
-      parent_index: item.parent_index,
-      content: item.content,
-      list_type: item.list_type,
-      indent_level: item.indent_level,
-      line_number: item.line_number,
-      block_id: item.block_id ?? undefined,
-      anchor_hash: item.anchor_hash ?? undefined,
-      start_offset: item.start_offset ?? undefined,
-      end_offset: item.end_offset ?? undefined
-    }));
-    adapter.runMultiRowInsert(INDEXING_SQL.INSERT_LIST_ITEMS_BASE, INDEXING_SQL.LIST_ITEMS_COLUMNS, listItemsToRows(path, listItemsData));
+    adapter.runMultiRowInsert(TABLES_SQL.INSERT_BASE, TABLES_SQL.INSERT_COLUMNS, rows);
   }
 }
 
@@ -576,7 +300,7 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
 
   const existing: PropertyData[] = execRows(
     adapter,
-    'SELECT key, value, value_type, array_index FROM properties WHERE path = ?',
+    INDEXING_SQL.SELECT_PROPERTIES_FOR_PATH,
     [path],
     row => ({
       key: row[0] as string,
@@ -597,7 +321,7 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
 
   for (const { id, new: prop } of changes.updated) {
     adapter.run(
-      'UPDATE properties SET key = ?, value = ?, value_type = ?, array_index = ? WHERE path = ? AND key = ? AND COALESCE(array_index, -1) = ?',
+      INDEXING_SQL.UPDATE_PROPERTY_BY_KEY,
       [prop.key, prop.value, prop.value_type, prop.array_index, path, id.key, id.array_index ?? -1]
     );
   }
@@ -611,7 +335,8 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
         arrayIndex: prop.array_index
       }));
     } catch (error) {
-      if (!/constraint/i.test(error instanceof Error ? error.message : String(error))) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/UNIQUE constraint failed: properties/.test(message)) {
         throw error;
       }
     }
@@ -621,7 +346,7 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
   if (!skipDeletes && changes.deleted.length > 0) {
     for (const id of changes.deleted) {
       adapter.run(
-        'DELETE FROM properties WHERE path = ? AND key = ? AND COALESCE(array_index, -1) = ?',
+        INDEXING_SQL.DELETE_PROPERTY_BY_KEY,
         [path, id.key, id.array_index ?? -1]
       );
     }
@@ -632,20 +357,12 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
 
 interface UserEntityKind<T> {
   label: string;
-  selectForPathSql: string;
   deleteForPathSql: string;
-  dropExisting(name: string): void;
+  dropStep?: {
+    selectForPathSql: string;
+    dropExisting(name: string): void;
+  };
   reinsert(items: T[]): void;
-}
-
-function getUserEntityNamesForPathCore<T>(adapter: IndexingDbAdapter, path: string, kind: UserEntityKind<T>, logger: IndexingLogger): string[] {
-  try {
-    const results = adapter.exec(kind.selectForPathSql, [path]);
-    return results[0]?.values?.map(row => row[0] as string) ?? [];
-  } catch (error) {
-    logger.error(`Failed to load ${kind.label}s for "${path}"`, error);
-    throw error;
-  }
 }
 
 function replaceUserEntitiesCore<T>(adapter: IndexingDbAdapter, path: string, items: T[] | undefined, skipDeletes: boolean, kind: UserEntityKind<T>, logger: IndexingLogger): void {
@@ -654,12 +371,14 @@ function replaceUserEntitiesCore<T>(adapter: IndexingDbAdapter, path: string, it
   }
 
   if (!skipDeletes) {
-    const existingNames = getUserEntityNamesForPathCore(adapter, path, kind, logger);
+    const existingNames = kind.dropStep
+      ? adapter.exec(kind.dropStep.selectForPathSql, [path])[0]?.values?.map(row => row[0] as string) ?? []
+      : [];
     adapter.runPrepared(kind.deleteForPathSql, [path]);
 
     for (const name of existingNames) {
       try {
-        kind.dropExisting(name);
+        kind.dropStep?.dropExisting(name);
       } catch (error) {
         logger.debug(`Failed to drop ${kind.label} "${name}"`, error);
       }
@@ -674,9 +393,11 @@ function replaceUserEntitiesCore<T>(adapter: IndexingDbAdapter, path: string, it
 function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userViews: UserViewData[] | undefined, skipDeletes: boolean, logger: IndexingLogger): void {
   replaceUserEntitiesCore(adapter, path, userViews, skipDeletes, {
     label: 'view',
-    selectForPathSql: INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH,
     deleteForPathSql: INDEXING_SQL.DELETE_USER_VIEWS,
-    dropExisting: (viewName) => adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []),
+    dropStep: {
+      selectForPathSql: INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH,
+      dropExisting: (viewName) => adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []),
+    },
     reinsert: (views) => {
       for (const view of views) {
         const sqlHash = hashString(view.sql);
@@ -698,24 +419,24 @@ function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userView
 type RegisterFunctionHook = (name: string, source: string) => void;
 
 export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: string, userFunctions: UserFunctionData[] | undefined, skipDeletes: boolean, registerFunction: RegisterFunctionHook, logger: IndexingLogger): void {
-  if (!skipDeletes) {
-    adapter.runPrepared(INDEXING_SQL.DELETE_USER_FUNCTIONS, [path]);
-  }
-
-  if (userFunctions?.length) {
-    for (const func of userFunctions) {
-      const sourceHash = hashString(func.source);
-      adapter.runPrepared(INDEXING_SQL.INSERT_USER_FUNCTION, userFunctionToParams(path, func, sourceHash));
-    }
-
-    for (const { function_name, source } of userFunctions) {
-      try {
-        registerFunction(function_name, source);
-      } catch (error) {
-        logger.error(`Failed to register function "${function_name}"`, error);
+  replaceUserEntitiesCore(adapter, path, userFunctions, skipDeletes, {
+    label: 'function',
+    deleteForPathSql: INDEXING_SQL.DELETE_USER_FUNCTIONS,
+    reinsert: (functions) => {
+      for (const func of functions) {
+        const sourceHash = hashString(func.source);
+        adapter.runPrepared(INDEXING_SQL.INSERT_USER_FUNCTION, userFunctionToParams(path, func, sourceHash));
       }
-    }
-  }
+
+      for (const { function_name, source } of functions) {
+        try {
+          registerFunction(function_name, source);
+        } catch (error) {
+          logger.error(`Failed to register function "${function_name}"`, error);
+        }
+      }
+    },
+  }, logger);
 }
 
 type ActivateTriggerHook = (triggerName: string, triggerSql: string, path: string) => void;
@@ -723,9 +444,11 @@ type ActivateTriggerHook = (triggerName: string, triggerSql: string, path: strin
 export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string, userTriggers: UserTriggerData[] | undefined, skipDeletes: boolean, activateTrigger: ActivateTriggerHook | null, logger: IndexingLogger): void {
   replaceUserEntitiesCore(adapter, path, userTriggers, skipDeletes, {
     label: 'trigger',
-    selectForPathSql: INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH,
     deleteForPathSql: INDEXING_SQL.DELETE_USER_TRIGGERS,
-    dropExisting: (triggerName) => adapter.run(`DROP TRIGGER IF EXISTS "_vq_user_${triggerName}"`, []),
+    dropStep: {
+      selectForPathSql: INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH,
+      dropExisting: (triggerName) => adapter.run(`DROP TRIGGER IF EXISTS "_vq_user_${triggerName}"`, []),
+    },
     reinsert: (triggers) => {
       for (const trigger of triggers) {
         const sqlHash = hashString(trigger.trigger_sql);

@@ -1,4 +1,5 @@
-import initSqlJs, { Database, Statement } from 'sql.js';
+import initSqlJs from 'sql.js';
+import type { Database, Statement } from 'sql.js';
 import { App } from 'obsidian';
 import { getDatabaseDir, getDatabasePath } from '../Settings/Settings';
 import type { WasmSettings } from '../Settings/Settings';
@@ -8,7 +9,8 @@ import { createSchema as createSchemaCore, createIndexes as createIndexesCore, r
 import type { IndexCreationState } from './SchemaOperations';
 import { StatementCache } from './StatementCache';
 import { escapeSqlString } from '../utils/SqlIdentifierUtils';
-import { queryRows } from './QueryRows';
+import { DbLock, exportWithRuntimeStateRestore, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
+import type { ExportRuntimeState, UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
 import { INDEXING_SQL, PREPARED_STATEMENT_CACHE_LIMIT, MAX_ROWS_PER_INSERT_BATCH } from './IndexingQueries';
 import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
 import type { IndexingDbAdapter } from './IndexingOperations';
@@ -17,9 +19,9 @@ import { DatabaseSchemaManager } from './DatabaseSchemaManager';
 import type { VaultFileAdapter } from './DatabaseInterface';
 import { loadWasmBinary, cacheWasmBinaryIfNeeded, CDN_URL } from './WasmLoader';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
-import { collectStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
+import { queryStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
-import { getErrorMessage, ERROR_MESSAGES, WARNING_MESSAGES, CONSOLE_ERRORS } from '../utils/ErrorMessages';
+import { getErrorMessage, ERROR_MESSAGES } from '../utils/ErrorMessages';
 import { rewriteTriggerWithPrefix } from '../utils/SQLParsingUtils';
 import { hashString } from '../utils/StringUtils';
 import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
@@ -30,6 +32,8 @@ import { logger as rootLogger } from '../utils/logger';
 
 
 const logger = rootLogger.scope('Database');
+
+const STATEMENT_RESET_ERROR = 'Error resetting statement';
 
 /** Options for creating a VaultDatabase instance */
 interface DatabaseOptions {
@@ -42,6 +46,7 @@ interface DatabaseOptions {
 }
 
 export class VaultDatabase {
+  private app: App;
   private db: Database;
   private fileAdapter: VaultFileAdapter | null;
   private databasePath: string;
@@ -54,10 +59,15 @@ export class VaultDatabase {
   public readonly schema: DatabaseSchemaManager;
   private triggerFunctions: TriggerFunctions | null = null;
 
-  private dbLock: Promise<void> = Promise.resolve();
+  private readonly dbLock = new DbLock();
   private indexState: IndexCreationState = { indexesCreated: false, enabledFeatures: null };
 
-  private constructor(db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
+  private registeredFunctionHashes = new Map<string, string>();
+  private registeredFunctionSources = new Map<string, string>();
+  private matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
+
+  private constructor(app: App, db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
+    this.app = app;
     this.db = db;
     this.fileAdapter = fileAdapter;
     this.useMemoryStorage = useMemoryStorage;
@@ -82,7 +92,7 @@ export class VaultDatabase {
 
     const db = new sqlJs.Database(new Uint8Array(data));
 
-    const instance = new VaultDatabase(db, fileAdapter, useMemoryStorage, actualDatabasePath, configDir);
+    const instance = new VaultDatabase(app, db, fileAdapter, useMemoryStorage, actualDatabasePath, configDir);
 
     instance.runPragmaStatements();
     CustomSQLFunctions.register(db, app);
@@ -96,7 +106,7 @@ export class VaultDatabase {
     const adapter = wasmAdapter || fileAdapter;
 
     const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
-    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings, 'VaultQuery');
+    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
     const { wasmBinary } = wasmLoadResult;
 
     const sqlJs = await initSqlJs({
@@ -122,7 +132,7 @@ export class VaultDatabase {
       }
     }
 
-    const instance = new VaultDatabase(db, fileAdapter, useMemoryStorage, actualDatabasePath, configDir);
+    const instance = new VaultDatabase(app, db, fileAdapter, useMemoryStorage, actualDatabasePath, configDir);
 
     instance.runPragmaStatements();
     CustomSQLFunctions.register(db, app);
@@ -132,7 +142,7 @@ export class VaultDatabase {
       instance.db.run('PRAGMA optimize');
     }
     catch (error) {
-      logger.warn(WARNING_MESSAGES.PRAGMA_OPTIMIZE_UNAVAILABLE, error);
+      logger.warn('PRAGMA optimize not available', error);
     }
 
     return instance;
@@ -148,7 +158,7 @@ export class VaultDatabase {
 
     try {
       const exportStartedAt = performance.now();
-      const array = this.db.export();
+      const array = exportWithRuntimeStateRestore(this.db, this.exportRuntimeState());
       const exportMs = performance.now() - exportStartedAt;
       const databaseDir = getDatabaseDir(this.configDir);
       if (!(await this.fileAdapter.exists(databaseDir))) {
@@ -165,31 +175,37 @@ export class VaultDatabase {
       });
     }
     catch (error) {
-      logger.error(CONSOLE_ERRORS.DATABASE_SAVE_FAILED, error);
+      logger.error('Could not save database to disk', error);
     }
   }
 
   private runPragmaStatements(): void {
-    runPragmaStatementsCore(this.db, error => logger.warn(WARNING_MESSAGES.DATABASE_OPTIMIZATIONS_UNAVAILABLE, error));
+    runPragmaStatementsCore(this.db, error => logger.warn('Some database optimizations are not available', error));
   }
 
-  public async acquireDbLock(): Promise<() => void> {
-    let releaseLock: () => void;
-    const lockPromise = new Promise<void>(resolve => { releaseLock = resolve; });
-    const previousLock = this.dbLock;
-    this.dbLock = lockPromise;
-    await previousLock;
-    return releaseLock!;
+  private exportRuntimeState(): ExportRuntimeState {
+    return {
+      statementCache: this.statementCache,
+      matRefreshSqlCache: this.matRefreshSqlCache,
+      registeredFunctionSources: this.registeredFunctionSources,
+      runPragmaStatements: () => this.runPragmaStatements(),
+      registerBuiltinFunctions: () => CustomSQLFunctions.register(this.db, this.app),
+      registerCustomFunction: (name, source) => {
+        this.registeredFunctionHashes.delete(name);
+        this.registerCustomFunction(name, source);
+      },
+    };
+  }
+
+  public acquireDbLock(): Promise<() => void> {
+    return this.dbLock.acquire();
   }
 
   /**
    * Run `fn` inside a transaction, serialized behind the database lock.
    *
    * Nested calls are NOT supported: `fn` must not call `withTx` again (it would
-   * deadlock on the lock). The previous savepoint-based nesting detection used
-   * `txDepth`, which conflated "nested in the same call chain" with "another
-   * caller arrived while a transaction was open" — a concurrent caller would
-   * skip the lock and interleave its statements with the open transaction.
+   * deadlock on the lock).
    */
   public async withTx<T>(fn: () => T | Promise<T>, opts: { deferFK?: boolean } = {}): Promise<T> {
     const releaseLock = await this.acquireDbLock();
@@ -215,7 +231,7 @@ export class VaultDatabase {
           this.db.run('ROLLBACK');
         }
         catch (rollbackError) {
-          logger.error(CONSOLE_ERRORS.DATABASE_ROLLBACK_FAILED, rollbackError);
+          logger.error('Transaction rollback failed - database may be in inconsistent state', rollbackError);
         }
         throw error;
       }
@@ -281,15 +297,6 @@ export class VaultDatabase {
 
   private insertNote(note: NoteRecord): void {
     insertNoteCore(this.createIndexingAdapter(), note);
-
-    // NOTE: Auto-sync for notes.content is DISABLED.
-    // Direct SQL changes to notes.content (like `UPDATE notes SET content = ...`) will NOT sync to files.
-    // Avoids conflicts when both direct SQL triggers and vq_* functions are used in the same indexing pass.
-    // To sync content changes to files, use vq_set_content() or vq_replace_content() instead.
-    //
-    // The issue: Direct SQL triggers (like replace_today_db) queue set_content actions,
-    // while vq_* triggers (like archive_completed_task) queue line-based actions (update_task).
-    // When set_content runs first, it can shift line numbers, causing line-based actions to fail.
   }
 
   private replaceProperties(path: string, propertiesData?: Array<{key: string; value: string; valueType: string; arrayIndex: number | null}>, skipDeletes: boolean = false, skipAutoSync: boolean = false): void {
@@ -379,9 +386,6 @@ export class VaultDatabase {
     };
   }
 
-  // Cache of registered function source hashes to avoid re-registering unchanged functions
-  private registeredFunctionHashes = new Map<string, string>();
-
   public registerCustomFunction(name: string, source: string): void {
     const newHash = hashString(source);
     const existingHash = this.registeredFunctionHashes.get(name);
@@ -391,6 +395,7 @@ export class VaultDatabase {
 
     this.db.create_function(name, createUserSqlFunction(source));
     this.registeredFunctionHashes.set(name, newHash);
+    this.registeredFunctionSources.set(name, source);
   }
 
   /**
@@ -438,26 +443,10 @@ export class VaultDatabase {
   public all(sql: string, params: (string | number | null)[] = []): Promise<Record<string, unknown>[]> {
     try {
       const stmt = this.getPreparedStatement(sql);
-
-      try {
-        if (params.length > 0) {
-          stmt.bind(params);
-        }
-
-        const results = collectStatementRows(stmt);
-        stmt.reset();
-
-        return Promise.resolve(results);
-      }
-      catch (error) {
-        try {
-          stmt.reset();
-        }
-        catch (resetError) {
-          logger.warn(WARNING_MESSAGES.STATEMENT_RESET_ERROR, resetError);
-        }
-        throw error;
-      }
+      const results = queryStatementRows(stmt, params, resetError => {
+        logger.warn(STATEMENT_RESET_ERROR, resetError);
+      });
+      return Promise.resolve(results);
     }
     catch (error: unknown) {
       return Promise.reject(new Error(ERROR_MESSAGES.SQL_QUERY_FAILED(getErrorMessage(error))));
@@ -468,7 +457,7 @@ export class VaultDatabase {
     try {
       const stmt = this.getPreparedStatement(sql);
       runPreparedStatement(stmt, params, resetError => {
-        logger.warn(WARNING_MESSAGES.STATEMENT_RESET_ERROR, resetError);
+        logger.warn(STATEMENT_RESET_ERROR, resetError);
       });
     }
     catch (error: unknown) {
@@ -485,26 +474,12 @@ export class VaultDatabase {
   public async indexNotesBatch(notesData: IndexNoteData[], isInitialIndexing: boolean = false, skipDiskSave: boolean = false): Promise<void> {
     if (notesData.length === 0) return;
 
-    if (isInitialIndexing) {
-      this.db.run('PRAGMA foreign_keys = OFF');
-    }
-
-    try {
-      await this.withTx(() => this.performBatchIndexing(notesData, isInitialIndexing));
-    } finally {
-      if (isInitialIndexing) {
-        this.db.run('PRAGMA foreign_keys = ON');
-      }
-    }
-
-    if (isInitialIndexing) {
-      try {
-        this.db.run('ANALYZE');
-      }
-      catch (error) {
-        logger.warn('ANALYZE failed after batch indexing', error);
-      }
-    }
+    await runBatchIndexing(
+      this.db,
+      isInitialIndexing,
+      () => this.withTx(() => this.performBatchIndexing(notesData, isInitialIndexing)),
+      error => logger.warn('ANALYZE failed after batch indexing', error)
+    );
 
     if (!skipDiskSave) {
       await this.saveToDisk();
@@ -524,7 +499,7 @@ export class VaultDatabase {
     }
 
     if (duplicates.length > 0) {
-      logger.warn(WARNING_MESSAGES.DUPLICATE_NOTES_IN_BATCH(duplicates.length, duplicates));
+      logger.warn(`Found ${duplicates.length} duplicate notes in batch: ${duplicates.join(', ')}`);
     }
 
     // Skip auto-sync during batch indexing - triggers will process all changes after batch completes
@@ -625,7 +600,7 @@ export class VaultDatabase {
     for (const { sql, params } of previewResult.sqlToApply) {
       const stmt = this.db.prepare(sql);
       try {
-        stmt.run(params as (string | number | null)[] || []);
+        stmt.run((params ?? []) as (string | number | null)[]);
       } finally {
         stmt.free();
       }
@@ -651,7 +626,7 @@ export class VaultDatabase {
       return true;
     }
     catch (error) {
-      logger.error(CONSOLE_ERRORS.DATABASE_CLOSE_ERROR, error);
+      logger.error('Error closing database', error);
       return false;
     }
   }
@@ -764,7 +739,7 @@ export class VaultDatabase {
         }
       }
     } catch (error) {
-      logger.warn(WARNING_MESSAGES.AUTO_SYNC_COMPARISON_ERROR, error);
+      logger.warn('Error during auto-sync comparison', error);
     }
   }
 
@@ -786,7 +761,7 @@ export class VaultDatabase {
 
   private queryCatalogRows<T>(label: string, sql: string, mapRow: (row: unknown[]) => T): T[] {
     try {
-      return queryRows(s => this.db.exec(s)[0]?.values ?? [], sql, mapRow);
+      return (this.db.exec(sql)[0]?.values ?? []).map(mapRow);
     }
     catch (error) {
       logger.warn(`DatabaseService.${label}: Query failed`, error);
@@ -794,13 +769,8 @@ export class VaultDatabase {
     }
   }
 
-  public getAllUserTriggers(): Array<{trigger_name: string; path: string; trigger_sql: string; enabled: number}> {
-    return this.queryCatalogRows('getAllUserTriggers', INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, row => ({
-      trigger_name: row[0] as string,
-      path: row[1] as string,
-      trigger_sql: row[2] as string,
-      enabled: row[3] as number
-    }));
+  public getAllUserTriggers(): UserTriggerRow[] {
+    return this.queryCatalogRows('getAllUserTriggers', INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, mapUserTriggerRow);
   }
 
   public registerUserTriggers(): void {
@@ -815,8 +785,6 @@ export class VaultDatabase {
       }
     }
   }
-
-  private matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
 
   public invalidatePropertiesMatRefreshSql(): void {
     this.matRefreshSqlCache.invalidate();
@@ -880,29 +848,14 @@ export class VaultDatabase {
 
     logger.debug(`Activating trigger ${prefixedName}`, prefixedSql);
     this.db.run(prefixedSql);
-
-    const verify = this.db.exec(`SELECT name FROM sqlite_master WHERE type='trigger' AND name=?`, [prefixedName]);
-    if (verify.length > 0 && verify[0].values.length > 0) {
-      logger.debug(`Trigger ${prefixedName} verified in sqlite_master`);
-    } else {
-      logger.error(`Trigger ${prefixedName} NOT FOUND in sqlite_master after creation`);
-    }
   }
 
-  public getAllUserViews(): Array<{view_name: string; path: string; sql: string}> {
-    return this.queryCatalogRows('getAllUserViews', INDEXING_SQL.SELECT_ALL_USER_VIEWS, row => ({
-      view_name: row[0] as string,
-      path: row[1] as string,
-      sql: row[2] as string
-    }));
+  public getAllUserViews(): UserViewRow[] {
+    return this.queryCatalogRows('getAllUserViews', INDEXING_SQL.SELECT_ALL_USER_VIEWS, mapUserViewRow);
   }
 
-  public getAllUserFunctions(): Array<{function_name: string; path: string; source: string}> {
-    return this.queryCatalogRows('getAllUserFunctions', INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, row => ({
-      function_name: row[0] as string,
-      path: row[1] as string,
-      source: row[2] as string
-    }));
+  public getAllUserFunctions(): UserFunctionRow[] {
+    return this.queryCatalogRows('getAllUserFunctions', INDEXING_SQL.SELECT_ALL_USER_FUNCTIONS, mapUserFunctionRow);
   }
 
   /**

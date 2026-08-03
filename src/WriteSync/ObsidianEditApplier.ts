@@ -1,7 +1,6 @@
 import { App, TFile, normalizePath } from 'obsidian';
 import { ContentLocationService } from '../Services/ContentLocationService';
 import { HeadingEditPlanner, ListItemEditPlanner, TableEditPlanner, TaskEditPlanner } from '../EditPlanner';
-import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { parseFrontmatterValue } from '../utils/FrontmatterValueParser';
 import { createNoteWithFolders } from '../utils/VaultUtils';
 import { logger as rootLogger } from '../utils/logger';
@@ -29,6 +28,11 @@ interface PathIntentGroup {
 /** Re-plan attempts when a concurrent edit lands between planning and applying. */
 const MAX_CONTENT_APPLY_ATTEMPTS = 3;
 
+export interface ApplyIntentsResult {
+  affectedPaths: string[];
+  warnings: string[];
+}
+
 export class ObsidianEditApplier {
   private readonly taskPlanner: TaskEditPlanner;
   private readonly headingPlanner: HeadingEditPlanner;
@@ -40,11 +44,12 @@ export class ObsidianEditApplier {
     this.taskPlanner = new TaskEditPlanner(contentLocationService);
     this.headingPlanner = new HeadingEditPlanner(contentLocationService);
     this.listItemPlanner = new ListItemEditPlanner(contentLocationService);
-    this.tablePlanner = new TableEditPlanner(contentLocationService, (content, tableIndex) => MarkdownTableUtils.findTableByIndex(content, tableIndex));
+    this.tablePlanner = new TableEditPlanner();
   }
 
-  public async applyIntents(intents: ObsidianEditIntent[]): Promise<string[]> {
+  public async applyIntents(intents: ObsidianEditIntent[]): Promise<ApplyIntentsResult> {
     const affectedPaths = new Set<string>();
+    const warnings: string[] = [];
     const pathGroups = new Map<string, PathIntentGroup>();
 
     for (const intent of intents) {
@@ -63,11 +68,11 @@ export class ObsidianEditApplier {
       this.addPathIntent(pathGroups, intent);
     }
 
-    for (const path of await this.applyPathGroups(pathGroups)) {
+    for (const path of await this.applyPathGroups(pathGroups, warnings)) {
       affectedPaths.add(path);
     }
 
-    return Array.from(affectedPaths);
+    return { affectedPaths: Array.from(affectedPaths), warnings };
   }
 
   private intentPath(intent: PathIntent): string {
@@ -121,12 +126,12 @@ export class ObsidianEditApplier {
     await this.app.fileManager.processFrontMatter(file, mutate);
   }
 
-  private async applyPathGroups(groups: Map<string, PathIntentGroup>): Promise<string[]> {
+  private async applyPathGroups(groups: Map<string, PathIntentGroup>, warnings: string[]): Promise<string[]> {
     const affectedPaths: string[] = [];
 
     for (const [path, group] of groups) {
       const file = this.getFile(path);
-      const contentChanged = await this.applyContentIntentsAtomically(file, path, group);
+      const contentChanged = await this.applyContentIntentsAtomically(file, path, group, warnings);
 
       if (group.properties.length > 0) {
         await this.updateProperty(path, fm => {
@@ -150,17 +155,19 @@ export class ObsidianEditApplier {
    * same note - triggers a re-plan against the new content instead of being
    * silently overwritten by a write based on a stale read.
    */
-  private async applyContentIntentsAtomically(file: TFile, path: string, group: PathIntentGroup): Promise<boolean> {
+  private async applyContentIntentsAtomically(file: TFile, path: string, group: PathIntentGroup, warnings: string[]): Promise<boolean> {
     for (let attempt = 0; attempt < MAX_CONTENT_APPLY_ATTEMPTS; attempt++) {
+      const attemptWarnings: string[] = [];
       const snapshot = await this.app.vault.read(file);
       let planned = this.applyWholeNoteIntents(file, snapshot, group.ordered);
-      const rangeEdits = await this.planRangeEdits(path, planned, group);
+      const rangeEdits = await this.planRangeEdits(path, planned, group, attemptWarnings);
 
       if (rangeEdits.length > 0) {
         planned = this.applyRangeEdits(planned, rangeEdits);
       }
 
       if (planned === snapshot) {
+        warnings.push(...attemptWarnings);
         return false;
       }
 
@@ -174,6 +181,7 @@ export class ObsidianEditApplier {
       });
 
       if (!conflicted) {
+        warnings.push(...attemptWarnings);
         return true;
       }
 
@@ -181,6 +189,7 @@ export class ObsidianEditApplier {
     }
 
     logger.warn('Gave up applying write intents after repeated concurrent edits', { path });
+    warnings.push(`${path}: gave up applying changes after repeated concurrent edits`);
     return false;
   }
 
@@ -192,17 +201,14 @@ export class ObsidianEditApplier {
         content = content.slice(0, this.getBodyStartOffset(file, content)) + intent.content;
       }
       else if (intent.type === 'replaceNoteContent') {
-        content = intent.mode === 'patch' && intent.baselineContent != null
-          ? this.applyContentPatch(content, intent.baselineContent, intent.content)
-          : intent.content;
+        content = this.applyContentPatch(content, intent.baselineContent, intent.content);
       }
     }
 
     return content;
   }
 
-  private async planRangeEdits(path: string, content: string, group: PathIntentGroup): Promise<ReplaceRangeEdit[]> {
-    const warnings: string[] = [];
+  private async planRangeEdits(path: string, content: string, group: PathIntentGroup, warnings: string[]): Promise<ReplaceRangeEdit[]> {
     const ctx = { content, path, warnings };
     const edits: ReplaceRangeEdit[] = [];
 
@@ -232,7 +238,7 @@ export class ObsidianEditApplier {
       logger.warn('Write intent warnings', warnings);
     }
 
-    return this.sortAndValidateEdits(edits);
+    return this.sortAndValidateEdits(edits, warnings);
   }
 
   private partitionIntentRows<TIntent, TRow>(intents: TIntent[], isDelete: (intent: TIntent) => boolean,
@@ -258,19 +264,23 @@ export class ObsidianEditApplier {
     }
   }
 
-  private sortAndValidateEdits(edits: ReplaceRangeEdit[]): ReplaceRangeEdit[] {
+  private sortAndValidateEdits(edits: ReplaceRangeEdit[], warnings: string[]): ReplaceRangeEdit[] {
     const sorted = edits.slice().sort((a, b) => b.range.start - a.range.start);
     const ok: ReplaceRangeEdit[] = [];
     let previousStart = Number.POSITIVE_INFINITY;
 
     for (const edit of sorted) {
       if (edit.range.start > edit.range.end || edit.range.start < 0) {
-        logger.warn(`Invalid edit range [${edit.range.start}, ${edit.range.end}) for ${edit.path}`);
+        const warning = `${edit.path}: skipped edit with invalid range [${edit.range.start}, ${edit.range.end})${edit.reason ? ` (${edit.reason})` : ''}`;
+        logger.warn(warning);
+        warnings.push(warning);
         continue;
       }
 
       if (edit.range.end > previousStart) {
-        logger.warn(`Overlapping edit range [${edit.range.start}, ${edit.range.end}) for ${edit.path}`);
+        const warning = `${edit.path}: skipped edit with overlapping range [${edit.range.start}, ${edit.range.end})${edit.reason ? ` (${edit.reason})` : ''}`;
+        logger.warn(warning);
+        warnings.push(warning);
         continue;
       }
 

@@ -7,14 +7,14 @@ interface SqlScanState {
   inBracket: boolean;
 }
 
-export interface SqlScanContext extends SqlScanState {
+interface SqlScanContext extends SqlScanState {
   index: number;
   char: string;
   next: string;
   inQuotedToken: boolean;
 }
 
-export function scanSql(sql: string, visit: (context: SqlScanContext) => number | void): void {
+function scanSql(sql: string, visit: (context: SqlScanContext) => number | void): void {
   const state: SqlScanState = {
     inSingleQuote: false,
     inDoubleQuote: false,
@@ -137,10 +137,6 @@ export function containsSqlKeywords(sql: string, keywords: string[]): boolean {
   return keywords.some(keyword => new RegExp(`\\b${keyword}\\b`, 'i').test(queryWithoutStrings));
 }
 
-export function containsBlockedSql(sql: string, allowSchemaChanges: boolean = false): boolean {
-  return containsBlockedSqlInStripped(stripSqlStringLiterals(stripSqlComments(sql)), allowSchemaChanges);
-}
-
 /**
  * Blocklist check against SQL that has already had comments and string
  * literals stripped. Callers that analyze the same statement repeatedly can
@@ -230,11 +226,11 @@ export function stripTrailingSemicolon(sql: string): string {
   return sql.replace(/;\s*$/, "");
 }
 
-export function normalizeSqlStatement(sql: string): string {
+function normalizeSqlStatement(sql: string): string {
   return stripTrailingSemicolon(stripSqlComments(sql));
 }
 
-export function stripSqlClause(sql: string, keyword: string): string {
+function stripSqlClause(sql: string, keyword: string): string {
   const statement = normalizeSqlStatement(sql);
   const keywordPos = findKeywordOutsideStrings(statement, keyword);
   return keywordPos >= 0 ? statement.substring(0, keywordPos).replace(/\s+$/, '') : statement;
@@ -286,7 +282,7 @@ export function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
-export function findKeywordOutsideStrings(sql: string, keyword: string): number {
+function findKeywordOutsideStrings(sql: string, keyword: string): number {
   const keywordUpper = keyword.toUpperCase();
   const keywordLen = keyword.length;
   let found = -1;

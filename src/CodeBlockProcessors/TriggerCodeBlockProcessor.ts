@@ -1,5 +1,4 @@
-import { App, MarkdownPostProcessorContext } from 'obsidian';
-import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { MarkdownPostProcessorContext } from 'obsidian';
 import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
 import { parseSQLObjectName, validateSQLObjectStart } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
@@ -9,10 +8,6 @@ import { getErrorMessage } from '../utils/ErrorMessages';
  * and display registration status.
  */
 export class TriggerCodeBlockProcessor extends BaseUserDefinedProcessor {
-  public constructor(app: App, plugin: VaultQueryPluginContext) {
-    super(app, plugin);
-  }
-
   protected getContainerClass(): string {
     return 'vaultquery-container vaultquery-trigger';
   }
@@ -37,8 +32,9 @@ export class TriggerCodeBlockProcessor extends BaseUserDefinedProcessor {
     }
 
     try {
-      if (this.plugin.api.triggerNeedsRecreation(triggerName, sql)) {
-        await this.plugin.api.registerTrigger(triggerName, sql, ctx.sourcePath);
+      const api = this.requireApi();
+      if (api.triggerNeedsRecreation(triggerName, sql)) {
+        await api.registerTrigger(triggerName, sql, ctx.sourcePath);
       }
       this.renderSuccess(container, triggerName);
     }

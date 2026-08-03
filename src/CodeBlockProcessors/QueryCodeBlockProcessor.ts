@@ -1,15 +1,9 @@
-import { App } from 'obsidian';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
-import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { containsSqlKeywords } from '../utils/SQLParsingUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import { BaseReadQueryCodeBlockProcessor } from './BaseReadQueryCodeBlockProcessor';
 
 export class QueryCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
-  public constructor(app: App, plugin: VaultQueryPluginContext) {
-    super(app, plugin);
-  }
-
   protected getBlockType(): string {
     return 'vaultquery';
   }

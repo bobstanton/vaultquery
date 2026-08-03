@@ -2,7 +2,12 @@ import { requestUrl } from 'obsidian';
 import type { VaultFileAdapter } from './DatabaseInterface';
 import type { WasmSettings } from '../Settings/Settings';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { logger as rootLogger } from '../utils/logger';
 
+const logger = rootLogger.scope('WasmLoader');
+
+// Intentionally duplicated in database.worker.ts: the worker bundle cannot
+// import this module because it depends on 'obsidian'.
 export const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 const DEFAULT_WASM_FILENAME = 'sql-wasm.wasm';
 
@@ -72,7 +77,7 @@ export async function loadWasmBinary(adapter: VaultFileAdapter | null, pluginDir
   }
 }
 
-export async function cacheWasmBinaryIfNeeded(result: WasmLoadResult, adapter: VaultFileAdapter | null, pluginDir: string | undefined, wasmSettings: WasmSettings | undefined, logPrefix: string): Promise<void> {
+export async function cacheWasmBinaryIfNeeded(result: WasmLoadResult, adapter: VaultFileAdapter | null, pluginDir: string | undefined, wasmSettings: WasmSettings | undefined): Promise<void> {
   if (!result.fromCdn || !result.wasmBinary || !wasmSettings?.cacheLocally || !adapter || !pluginDir) {
     return;
   }
@@ -80,9 +85,9 @@ export async function cacheWasmBinaryIfNeeded(result: WasmLoadResult, adapter: V
   try {
     const cachePath = `${pluginDir}/${DEFAULT_WASM_FILENAME}`;
     await adapter.writeBinary(cachePath, result.wasmBinary);
-    console.debug(`[${logPrefix}] Cached WASM binary to:`, cachePath);
+    logger.debug('Cached WASM binary to:', cachePath);
   }
   catch (error) {
-    console.warn(`[${logPrefix}] Failed to cache WASM binary:`, getErrorMessage(error));
+    logger.warn('Failed to cache WASM binary:', getErrorMessage(error));
   }
 }

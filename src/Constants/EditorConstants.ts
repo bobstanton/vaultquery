@@ -24,13 +24,16 @@ export function registerProviderDefinitionLanguage(language: string): void {
   PROVIDER_DEFINITION_LANGUAGES.add(normalized);
 }
 
-export const SQL_HIGHLIGHTED_LANGUAGES = [
+export const CONFIG_CAPABLE_LANGUAGES = new Set([
   'vaultquery',
+  'vaultquery-chart',
+  'vaultquery-markdown',
+  'vaultquery-calendar',
+]);
+
+export const SQL_EDITOR_LANGUAGES = new Set([
+  ...CONFIG_CAPABLE_LANGUAGES,
   'vaultquery-write',
   'vaultquery-view',
   'vaultquery-trigger',
-] as const;
-
-export const JS_HIGHLIGHTED_LANGUAGES = [
-  'vaultquery-function',
-] as const;
+]);

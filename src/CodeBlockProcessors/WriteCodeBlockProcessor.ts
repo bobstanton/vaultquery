@@ -1,5 +1,4 @@
-import { App, MarkdownPostProcessorContext, TFile, normalizePath, setIcon } from 'obsidian';
-import { VaultQuerySettings } from '../Settings/Settings';
+import { App, MarkdownPostProcessorContext, setIcon } from 'obsidian';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { checkIndexingAndWait, createLoadingIndicator } from '../utils/IndexingUtils';
 import { parseQueryBlock } from '../utils/QueryParsingUtils';
@@ -7,7 +6,8 @@ import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { PreviewGridRenderer } from '../Renderers/PreviewGridRenderer';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
-import { createVaultQueryCodeBlockContainer } from './ProcessorUtils';
+import { addFloatingButtons } from '../Renderers/OutputChrome';
+import { createOpenFileHandler, createVaultQueryCodeBlockContainer, RenderVersionGuard } from './ProcessorUtils';
 import type { PendingBlock } from '../utils/IndexingUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import type { PreviewRenderContext } from '../Renderers/PreviewGridRenderer';
@@ -19,9 +19,9 @@ const logger = rootLogger.scope('WriteBlocks');
 
 export class WriteCodeBlockProcessor {
   private pendingBlocks = new Set<PendingBlock>();
-  private activeRequests = new WeakMap<HTMLElement, number>();
+  private renderGuard = new RenderVersionGuard();
 
-  public constructor(private app: App, private plugin: VaultQueryPluginContext, private settings: VaultQuerySettings) {}
+  public constructor(private app: App, private plugin: VaultQueryPluginContext) {}
 
   async process(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void> {
     const container = createVaultQueryCodeBlockContainer(el);
@@ -40,7 +40,7 @@ export class WriteCodeBlockProcessor {
         return;
       }
 
-      if (!this.settings.allowWriteOperations) {
+      if (!this.plugin.settings.allowWriteOperations) {
         const warningDiv = container.createDiv({ cls: 'vaultquery-write-warning' });
         const header = warningDiv.createDiv({ cls: 'vaultquery-message-header' });
         const icon = header.createSpan({ cls: 'vaultquery-message-icon' });
@@ -78,8 +78,7 @@ export class WriteCodeBlockProcessor {
     const api = this.plugin.api;
     if (!api) return;
 
-    const requestId = Date.now() + Math.random();
-    this.activeRequests.set(container, requestId);
+    const renderVersion = this.renderGuard.begin(container);
 
     SlickGridRenderer.cleanupContainer(container);
 
@@ -93,7 +92,7 @@ export class WriteCodeBlockProcessor {
     try {
       currentPreviewResult = await api.previewQuery(parsed.query, [], sourcePath);
 
-      if (this.activeRequests.get(container) !== requestId) {
+      if (!this.renderGuard.isCurrent(container, renderVersion)) {
         return;
       }
 
@@ -108,14 +107,9 @@ export class WriteCodeBlockProcessor {
         container: previewContainer,
         app: this.app,
         pluginContext: this.plugin,
-        settings: this.settings,
+        settings: this.plugin.settings,
         parsed: parsed,
-        openFile: (path: string) => {
-          const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-          if (file instanceof TFile) {
-            void this.app.workspace.getLeaf().openFile(file);
-          }
-        },
+        openFile: createOpenFileHandler(this.app),
         onApply: () => {
           void this.applyPreview(currentPreviewResult!, previewContainer!, parsed, sourcePath);
         },
@@ -139,23 +133,16 @@ export class WriteCodeBlockProcessor {
     catch (error: unknown) {
       loading.remove();
 
-      const errorMsg = getErrorMessage(error);
-      const isSqlMistake = errorMsg.includes('syntax error') ||
-                           errorMsg.includes('incomplete input') ||
-                           errorMsg.includes('no such column') ||
-                           errorMsg.includes('no such table');
-
       BaseRenderer.renderError(writeContainer, {
-        title: isSqlMistake ? 'Query Error' : 'Preview Error',
-        message: errorMsg
+        title: 'Preview Error',
+        message: getErrorMessage(error)
       });
 
-      if (!isSqlMistake) {
-        const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-        BaseRenderer.addRefreshButton(buttonContainer, async () => {
+      addFloatingButtons(container, {
+        onRefresh: async () => {
           await this.refreshWritePreview(writeContainer, parsed, sourcePath);
-        });
-      }
+        }
+      });
     }
   }
 
@@ -260,9 +247,10 @@ export class WriteCodeBlockProcessor {
       });
 
       if (parentContainer && parentContainer.hasClass('vaultquery-container')) {
-        const buttonContainer = parentContainer.createDiv('vaultquery-floating-buttons');
-        BaseRenderer.addRefreshButton(buttonContainer, async () => {
-          await this.refreshWritePreview(writeContainer, parsed, sourcePath);
+        addFloatingButtons(parentContainer, {
+          onRefresh: async () => {
+            await this.refreshWritePreview(writeContainer, parsed, sourcePath);
+          }
         });
       }
     }

@@ -30,7 +30,22 @@ export function runPreparedStatement(stmt: Statement, params: StatementParam[] =
   }
 }
 
-export function getCachedMultiRowInsertSql(cache: Map<string, string>, baseSQL: string, columnsCount: number, rowCount: number): string {
+export function queryStatementRows(stmt: Statement, params: StatementParam[] = [], onResetError?: (error: unknown) => void): StatementRow[] {
+  try {
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+    const results = collectStatementRows(stmt);
+    stmt.reset();
+    return results;
+  }
+  catch (error) {
+    resetStatement(stmt, onResetError);
+    throw error;
+  }
+}
+
+function getCachedMultiRowInsertSql(cache: Map<string, string>, baseSQL: string, columnsCount: number, rowCount: number): string {
   const cacheKey = `${baseSQL}\0${columnsCount}\0${rowCount}`;
   const cached = cache.get(cacheKey);
   if (cached) {

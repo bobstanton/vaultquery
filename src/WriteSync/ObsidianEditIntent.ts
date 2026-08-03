@@ -18,32 +18,31 @@ export type ObsidianEditIntent =
   | InsertListItemIntent
   | RewriteTableIntent;
 
-export type CreateNoteIntent = {
+type CreateNoteIntent = {
   type: 'createNote';
   path: string;
   content: string;
 };
 
-export type DeleteNoteIntent = {
+type DeleteNoteIntent = {
   type: 'deleteNote';
   path: string;
 };
 
-export type ReplaceNoteBodyIntent = {
+type ReplaceNoteBodyIntent = {
   type: 'replaceNoteBody';
   path: string;
   content: string;
 };
 
-export type ReplaceNoteContentIntent = {
+type ReplaceNoteContentIntent = {
   type: 'replaceNoteContent';
   path: string;
   content: string;
-  baselineContent?: string;
-  mode?: 'replace' | 'patch';
+  baselineContent: string;
 };
 
-export type SetPropertyIntent = {
+type SetPropertyIntent = {
   type: 'setProperty';
   path: string;
   key: string;
@@ -51,7 +50,7 @@ export type SetPropertyIntent = {
   valueType: string | null;
 };
 
-export type DeletePropertyIntent = {
+type DeletePropertyIntent = {
   type: 'deleteProperty';
   path: string;
   key: string;
@@ -65,64 +64,64 @@ export type ObsidianEntityLocation = {
   lineNumber?: number | null;
 };
 
-export type ReplaceTaskIntent = {
+type ReplaceTaskIntent = {
   type: 'replaceTask';
   location: ObsidianEntityLocation;
   task: TaskRow;
 };
 
-export type DeleteTaskIntent = {
+type DeleteTaskIntent = {
   type: 'deleteTask';
   location: ObsidianEntityLocation;
   task: TaskRow;
 };
 
-export type InsertTaskIntent = {
+type InsertTaskIntent = {
   type: 'insertTask';
   path: string;
   lineNumber?: number | null;
   task: TaskRow;
 };
 
-export type ReplaceHeadingIntent = {
+type ReplaceHeadingIntent = {
   type: 'replaceHeading';
   location: ObsidianEntityLocation;
   heading: HeadingRow;
 };
 
-export type DeleteHeadingIntent = {
+type DeleteHeadingIntent = {
   type: 'deleteHeading';
   location: ObsidianEntityLocation;
   heading: HeadingRow;
 };
 
-export type InsertHeadingIntent = {
+type InsertHeadingIntent = {
   type: 'insertHeading';
   path: string;
   lineNumber?: number | null;
   heading: HeadingRow;
 };
 
-export type ReplaceListItemIntent = {
+type ReplaceListItemIntent = {
   type: 'replaceListItem';
   location: ObsidianEntityLocation;
   listItem: ListItemRow;
 };
 
-export type DeleteListItemIntent = {
+type DeleteListItemIntent = {
   type: 'deleteListItem';
   location: ObsidianEntityLocation;
   listItem: ListItemRow;
 };
 
-export type InsertListItemIntent = {
+type InsertListItemIntent = {
   type: 'insertListItem';
   path: string;
   lineNumber?: number | null;
   listItem: ListItemRow;
 };
 
-export type RewriteTableIntent = {
+type RewriteTableIntent = {
   type: 'rewriteTable';
   path: string;
   tableCells: TableCellRow[];

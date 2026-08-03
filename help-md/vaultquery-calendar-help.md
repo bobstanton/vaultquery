@@ -50,6 +50,8 @@ Return `backgroundColor`, `borderColor`, and `color` to match CSS-style naming f
 | `slotMaxTime`       | Latest visible time in week/day views, e.g. `18:00:00` |
 | `slotDuration`      | Time slot interval in week/day views, e.g. `00:30:00` |
 
+Calendar blocks also accept `autoRefresh`, shared by every query block: set it to `true` or `false` to re-run this calendar when indexed files change, overriding the global setting.
+
 On narrow screens, the Month button stays available. Use `mobileVisibleDays` with `visibleWeeks` to create a horizontally scrollable compact grid. For example, `mobileVisibleDays: 3` and `visibleWeeks: 3` gives an approximately 3-by-3 viewport on portrait phones, and the Month/Week prev/next paging advances by 3 days at a time.
 
 If the result set only contains all-day events, the Week and Day toolbar buttons switch to day-grid views so the hour axis does not waste space. If any event has a time component, Week and Day use FullCalendar time-grid views.

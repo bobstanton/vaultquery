@@ -134,7 +134,7 @@ export class IndexingStateManager {
         this.scheduleDiskSave();
 
         if (this.plugin.settings.enableDynamicTableViews) {
-          this.plugin.api.rebuildTableViews();
+          void this.plugin.api.rebuildTableViews();
         }
 
         // Deliberately unscoped: a single note save rewrites rows in essentially

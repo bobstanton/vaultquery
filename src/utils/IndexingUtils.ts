@@ -72,13 +72,37 @@ interface IndexingCheckOptions {
 }
 
 export function waitForIndexingWithProgress(getApi: () => VaultQueryAPI | null, container: HTMLElement, onReady: () => void | Promise<void>): boolean {
-  return waitForIndexingAndRender({
-    getApi,
-    container,
-    onReady: async () => { await Promise.resolve(onReady()); },
-    clearContainerOnReady: false,
-    removeLoadingOnReady: true,
-  }).ready;
+  const loadingDiv = createLoadingDivUnlessReady(getApi(), container);
+  if (!loadingDiv) {
+    return true;
+  }
+
+  const checkInterval = window.setInterval(() => {
+    if (!container.isConnected) {
+      window.clearInterval(checkInterval);
+      return;
+    }
+
+    const polledApi = getApi();
+    if (!polledApi) {
+      return;
+    }
+
+    const status = polledApi.getIndexingStatus();
+
+    if (!status.isIndexing) {
+      window.clearInterval(checkInterval);
+      loadingDiv.remove();
+      void Promise.resolve(onReady()).catch((error: unknown) => {
+        logger.error('Indexing onReady callback failed', error);
+      });
+    }
+    else if (status.progress) {
+      renderIndexingProgress(loadingDiv, status.progress);
+    }
+  }, 500);
+
+  return false;
 }
 
 function createLoadingDivUnlessReady(api: VaultQueryAPI | null, container: HTMLElement): HTMLElement | null {
@@ -100,51 +124,6 @@ export function checkIndexingAndWait(options: IndexingCheckOptions): IndexingChe
   }
 
   pendingBlocks.add(blockInfo);
-
-  return { ready: false };
-}
-
-function waitForIndexingAndRender(options: {
-  getApi: () => VaultQueryAPI | null;
-  container: HTMLElement;
-  onReady: () => Promise<void>;
-  clearContainerOnReady: boolean;
-  removeLoadingOnReady: boolean;
-}): IndexingCheckResult {
-  const loadingDiv = createLoadingDivUnlessReady(options.getApi(), options.container);
-  if (!loadingDiv) {
-    return { ready: true };
-  }
-
-  const checkInterval = window.setInterval(() => {
-    if (!options.container.isConnected) {
-      window.clearInterval(checkInterval);
-      return;
-    }
-
-    const polledApi = options.getApi();
-    if (!polledApi) {
-      return;
-    }
-
-    const status = polledApi.getIndexingStatus();
-
-    if (!status.isIndexing) {
-      window.clearInterval(checkInterval);
-      if (options.clearContainerOnReady) {
-        options.container.empty();
-      }
-      else if (options.removeLoadingOnReady) {
-        loadingDiv.remove();
-      }
-      void options.onReady().catch((error: unknown) => {
-        logger.error('Indexing onReady callback failed', error);
-      });
-    }
-    else if (status.progress) {
-      renderIndexingProgress(loadingDiv, status.progress);
-    }
-  }, 500);
 
   return { ready: false };
 }

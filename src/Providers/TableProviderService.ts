@@ -6,13 +6,13 @@ import { logger as rootLogger } from '../utils/logger';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { quoteValidatedIdentifier } from '../utils/SqlIdentifierUtils';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
+import { insertRowsChunked, relationExists } from '../Database/SqlHelpers';
 import type { VaultDatabase } from '../Database/DatabaseService';
 import type { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderTableDefinition, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './TableProviderTypes';
 
 const logger = rootLogger.scope('ProviderTables');
 const RECENT_REFRESH_SKIP_MS = 5000;
-const PROVIDER_UPSERT_BATCH_SIZE = 100;
 const PROVIDER_REFRESH_CONCURRENCY = 3;
 
 type ProviderDatabase = VaultDatabase | WorkerDatabase;
@@ -29,21 +29,7 @@ interface RuntimeRefreshDefinition {
   error?: string;
 }
 
-interface RuntimeTableStatus {
-  providerId: string;
-  displayName: string;
-  tableName: string;
-  physicalName: string;
-  definitionId?: string;
-  definitionBlockHash?: string;
-  rowCount: number;
-  dataAsOf?: number;
-  lastRefreshAt?: number;
-  expiresAt?: number;
-  lastError?: string;
-  schemaHash: string;
-  active: boolean;
-}
+type RuntimeTableStatus = TableProviderStatus & { definitionBlockHash?: string };
 
 interface RenderedProviderBlock {
   language: string;
@@ -54,19 +40,9 @@ interface RenderedProviderBlock {
   definitionId?: string;
 }
 
+
 export class TableProviderService {
   private providers = new Map<string, VaultQueryTableProvider>();
-
-  public getRegisteredTableNames(): string[] {
-    const names: string[] = [];
-    for (const provider of this.providers.values()) {
-      for (const table of provider.tables) {
-        names.push(table.name);
-      }
-    }
-    return names;
-  }
-
   private providersByLanguage = new Map<string, VaultQueryTableProvider>();
   private indexedBlocksByPath = new Map<string, IndexedProviderDefinitionBlock[]>();
   private definitions = new Map<string, RuntimeRefreshDefinition>();
@@ -82,6 +58,16 @@ export class TableProviderService {
   private onProviderTablesChanged?: (event: ProviderTablesChangedEvent) => void;
 
   public constructor(private database: ProviderDatabase, private enabled = true) {}
+
+  public getRegisteredTableNames(): string[] {
+    const names: string[] = [];
+    for (const provider of this.providers.values()) {
+      for (const table of provider.tables) {
+        names.push(table.name);
+      }
+    }
+    return names;
+  }
 
   public setRefreshDeferred(deferred: boolean): void {
     if (this.refreshDeferred === deferred) return;
@@ -115,6 +101,7 @@ export class TableProviderService {
     this.enabled = enabled;
     if (!enabled) {
       this.clearProviderDefinitionBlocks();
+      void this.rerenderProviderBlocksWhere(() => true);
     }
   }
 
@@ -133,7 +120,6 @@ export class TableProviderService {
   }
 
   public async registerProvider(provider: VaultQueryTableProvider): Promise<TableProviderRegistration> {
-    logger.debug(`registerTableProvider called: provider=${provider.id}, enabled=${this.enabled}, language=${provider.definitionBlock.language}, tables=${provider.tables.map(table => table.name).join(',')}`);
     if (!this.enabled) {
       logger.warn(`registerTableProvider rejected because feature is disabled: provider=${provider.id}`);
       throw new Error('Third-party provider tables are disabled in VaultQuery settings.');
@@ -156,7 +142,7 @@ export class TableProviderService {
 
     this.providers.set(provider.id, provider);
     this.providersByLanguage.set(language, provider);
-    logger.info(`Provider registered: provider=${provider.id}, language=${language}`);
+    logger.info(`Provider registered: provider=${provider.id}, language=${language}, tables=${provider.tables.map(table => table.name).join(',')}`);
     this.registerBlockLanguage?.(language);
 
     await this.reprocessIndexedBlocksForLanguage(language);
@@ -165,7 +151,6 @@ export class TableProviderService {
       providerId: provider.id,
       tables: provider.tables.map(table => ({
         name: table.name,
-        physicalName: table.name,
       })),
     };
   }
@@ -279,11 +264,14 @@ export class TableProviderService {
     this.indexedBlocksByPath.clear();
     this.definitions.clear();
     this.duplicateDefinitionKeys.clear();
-    this.renderedBlocks.clear();
   }
 
   public async renderDefinitionBlock(language: string, source: string, container: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void> {
-    logger.debug(`renderTableProviderDefinitionBlock called: language=${language}, sourcePath=${ctx.sourcePath}, enabled=${this.enabled}, providerRegistered=${this.providersByLanguage.has(language)}`);
+    for (const [trackedContainer, tracked] of this.renderedBlocks) {
+      if (trackedContainer !== container && tracked.sourcePath === ctx.sourcePath && tracked.language === language && !trackedContainer.isConnected) {
+        this.renderedBlocks.delete(trackedContainer);
+      }
+    }
     this.renderedBlocks.set(container, {
       language,
       source,
@@ -311,7 +299,6 @@ export class TableProviderService {
 
     const blockHash = hashString(source);
     const blockIndex = this.findBlockIndex(ctx.sourcePath, language, blockHash);
-    logger.debug(`Provider definition block lookup: language=${language}, sourcePath=${ctx.sourcePath}, blockIndex=${blockIndex ?? 'not-indexed'}, blockHash=${blockHash}`);
     const context: ProviderDefinitionBlockContext = {
       path: ctx.sourcePath,
       blockIndex: blockIndex ?? -1,
@@ -321,7 +308,6 @@ export class TableProviderService {
     let definition: ProviderRefreshDefinition;
     try {
       definition = await provider.definitionBlock.parse(source, context);
-      logger.debug(`Provider definition parsed: provider=${provider.id}, definition=${definition.id}, requestedTables=${definition.requestedTables?.join(',') ?? '(default)'}`);
     } catch (error) {
       logger.error(`Provider definition parse failed: provider=${provider.id}, language=${language}, sourcePath=${ctx.sourcePath}`, error);
       this.renderProviderError(container, `${provider.displayName} definition error`, error, async () => {
@@ -346,11 +332,11 @@ export class TableProviderService {
       this.recomputeDuplicateDefinitions();
     }
 
+    logger.debug(`Provider definition block rendered: provider=${runtime.providerId}, language=${language}, sourcePath=${ctx.sourcePath}, connected=${container.isConnected}`);
     this.renderRuntimeDefinition(container, runtime);
   }
 
   public async refreshDefinition(providerId: string, definitionId: string): Promise<string[]> {
-    logger.debug(`refreshTableProviderDefinition called: provider=${providerId}, definition=${definitionId}, enabled=${this.enabled}`);
     if (!this.enabled) {
       throw new Error('Third-party provider tables are disabled in VaultQuery settings.');
     }
@@ -476,12 +462,12 @@ export class TableProviderService {
   private async createProviderTables(provider: VaultQueryTableProvider): Promise<void> {
     for (const table of provider.tables) {
       this.validateTable(table);
-      if (await this.tableExists(table.name)) {
+      if (await relationExists(this.database, table.name)) {
         try {
           await this.ensureCompatibleTableSchema(provider, table);
         } catch (error) {
           logger.warn(`Recreating incompatible provider table: provider=${provider.id}, table=${table.name}`, error);
-          await this.database.run(`DROP TABLE IF EXISTS ${this.quoteIdentifier(table.name)}`);
+          await this.database.run(`DROP TABLE IF EXISTS ${quoteValidatedIdentifier(table.name)}`);
           await this.createProviderTable(table);
         }
       } else {
@@ -494,32 +480,24 @@ export class TableProviderService {
           this.ensureTableColumn(table, column);
         }
         const unique = index.unique ? 'UNIQUE ' : '';
-        const columns = index.columns.map(column => this.quoteIdentifier(column)).join(', ');
-        await this.database.run(`CREATE ${unique}INDEX IF NOT EXISTS ${this.quoteIdentifier(index.name)} ON ${this.quoteIdentifier(table.name)} (${columns})`);
+        const columns = index.columns.map(column => quoteValidatedIdentifier(column)).join(', ');
+        await this.database.run(`CREATE ${unique}INDEX IF NOT EXISTS ${quoteValidatedIdentifier(index.name)} ON ${quoteValidatedIdentifier(table.name)} (${columns})`);
       }
 
       this.updateStatus(provider, undefined, table, { active: true });
     }
   }
 
-  private async tableExists(tableName: string): Promise<boolean> {
-    const rows = await this.database.all(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-      [tableName]
-    );
-    return rows.length > 0;
-  }
-
   private async createProviderTable(table: ProviderTableDefinition): Promise<void> {
     const columnsSql = table.columns.map(column => this.columnSql(column)).join(', ');
     const primaryKeySql = table.primaryKey.length > 0
-      ? `, PRIMARY KEY (${table.primaryKey.map(column => this.quoteIdentifier(column)).join(', ')})`
+      ? `, PRIMARY KEY (${table.primaryKey.map(column => quoteValidatedIdentifier(column)).join(', ')})`
       : '';
-    await this.database.run(`CREATE TABLE ${this.quoteIdentifier(table.name)} (${columnsSql}${primaryKeySql})`);
+    await this.database.run(`CREATE TABLE ${quoteValidatedIdentifier(table.name)} (${columnsSql}${primaryKeySql})`);
   }
 
   private async ensureCompatibleTableSchema(provider: VaultQueryTableProvider, table: ProviderTableDefinition): Promise<void> {
-    const existingRows = await this.database.all(`PRAGMA table_info(${this.quoteIdentifier(table.name)})`);
+    const existingRows = await this.database.all(`PRAGMA table_info(${quoteValidatedIdentifier(table.name)})`);
     const existingByName = new Map(existingRows.map(row => [String(row.name), row]));
     const errors: string[] = [];
 
@@ -559,9 +537,9 @@ export class TableProviderService {
     }
   }
 
-	private async materializeRefreshResult(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, result: ProviderRefreshResult): Promise<void> {
-		const tableByName = new Map(provider.tables.map(table => [table.name, table]));
-		const refreshedAt = Date.now();
+  private async materializeRefreshResult(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, result: ProviderRefreshResult): Promise<void> {
+    const tableByName = new Map(provider.tables.map(table => [table.name, table]));
+    const refreshedAt = Date.now();
 
     await this.database.withTx(async () => {
       for (const [tableName, tableRows] of Object.entries(result.tables)) {
@@ -573,23 +551,23 @@ export class TableProviderService {
         if (tableRows.replaceWhere) {
           await this.deleteRows(table, tableRows.replaceWhere);
         }
-	
-			await this.upsertRows(table, tableRows.rows);
-			const dataAsOf = typeof tableRows.asOf === 'number' && Number.isFinite(tableRows.asOf)
-				? tableRows.asOf
-				: undefined;
-			const expiresAt = typeof tableRows.expiresAt === 'number' && Number.isFinite(tableRows.expiresAt)
-				? tableRows.expiresAt
-				: table.defaultStaleAfterMs ? refreshedAt + table.defaultStaleAfterMs : undefined;
-			this.updateStatus(provider, runtime.definition.id, table, {
-				definitionBlockHash: runtime.blockHash,
-				rowCount: tableRows.rows.length,
-				dataAsOf,
-				lastRefreshAt: refreshedAt,
-				expiresAt,
-				lastError: undefined,
-				active: true,
-			});
+
+        await this.upsertRows(table, tableRows.rows);
+        const dataAsOf = typeof tableRows.asOf === 'number' && Number.isFinite(tableRows.asOf)
+          ? tableRows.asOf
+          : undefined;
+        const expiresAt = typeof tableRows.expiresAt === 'number' && Number.isFinite(tableRows.expiresAt)
+          ? tableRows.expiresAt
+          : table.defaultStaleAfterMs ? refreshedAt + table.defaultStaleAfterMs : undefined;
+        this.updateStatus(provider, runtime.definition.id, table, {
+          definitionBlockHash: runtime.blockHash,
+          rowCount: tableRows.rows.length,
+          dataAsOf,
+          lastRefreshAt: refreshedAt,
+          expiresAt,
+          lastError: undefined,
+          active: true,
+        });
       }
     });
   }
@@ -622,19 +600,19 @@ export class TableProviderService {
     }
 
     for (const { columns, params } of rowsByColumnShape.values()) {
-      const quotedColumns = columns.map(column => this.quoteIdentifier(column)).join(', ');
+      const quotedColumns = columns.map(column => quoteValidatedIdentifier(column)).join(', ');
       const updateColumns = columns.filter(column => !table.primaryKey.includes(column));
-      const conflictColumns = table.primaryKey.map(column => this.quoteIdentifier(column)).join(', ');
+      const conflictColumns = table.primaryKey.map(column => quoteValidatedIdentifier(column)).join(', ');
       const conflictAction = updateColumns.length > 0
-        ? `DO UPDATE SET ${updateColumns.map(column => `${this.quoteIdentifier(column)} = excluded.${this.quoteIdentifier(column)}`).join(', ')}`
+        ? `DO UPDATE SET ${updateColumns.map(column => `${quoteValidatedIdentifier(column)} = excluded.${quoteValidatedIdentifier(column)}`).join(', ')}`
         : 'DO NOTHING';
 
-      for (let offset = 0; offset < params.length; offset += PROVIDER_UPSERT_BATCH_SIZE) {
-        const batch = params.slice(offset, offset + PROVIDER_UPSERT_BATCH_SIZE);
-        const placeholders = batch.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-        const sql = `INSERT INTO ${this.quoteIdentifier(table.name)} (${quotedColumns}) VALUES ${placeholders} ON CONFLICT (${conflictColumns}) ${conflictAction}`;
-        await this.database.run(sql, batch.flat());
-      }
+      await insertRowsChunked(
+        this.database,
+        placeholders => `INSERT INTO ${quoteValidatedIdentifier(table.name)} (${quotedColumns}) VALUES ${placeholders} ON CONFLICT (${conflictColumns}) ${conflictAction}`,
+        params,
+        columns.length
+      );
     }
   }
 
@@ -647,9 +625,9 @@ export class TableProviderService {
       throw new Error(`Provider replacement for ${table.name} must specify at least one declared column.`);
     }
 
-    const whereSql = whereColumns.map(column => `${this.quoteIdentifier(column)} = ?`).join(' AND ');
+    const whereSql = whereColumns.map(column => `${quoteValidatedIdentifier(column)} = ?`).join(' AND ');
     const params = whereColumns.map(column => this.toSqlParam(where[column]));
-    await this.database.run(`DELETE FROM ${this.quoteIdentifier(table.name)} WHERE ${whereSql}`, params);
+    await this.database.run(`DELETE FROM ${quoteValidatedIdentifier(table.name)} WHERE ${whereSql}`, params);
   }
 
   private async reprocessIndexedBlocksForLanguage(language: string): Promise<void> {
@@ -681,14 +659,12 @@ export class TableProviderService {
     }
 
     try {
-      logger.debug(`Processing indexed provider definition block: provider=${provider.id}, language=${block.language}, path=${block.path}, blockIndex=${block.blockIndex}, blockHash=${block.blockHash}`);
       const context: ProviderDefinitionBlockContext = {
         path: block.path,
         blockIndex: block.blockIndex,
         blockHash: block.blockHash,
       };
       const definition = await provider.definitionBlock.parse(block.source, context);
-      logger.debug(`Indexed provider definition parsed: provider=${provider.id}, definition=${definition.id}, path=${block.path}, blockIndex=${block.blockIndex}`);
       return this.storeRuntimeDefinition(provider, block.source, context, definition);
     } catch (error) {
       logger.error(`Indexed provider definition parse failed: provider=${provider.id}, language=${block.language}, path=${block.path}, blockIndex=${block.blockIndex}`, error);
@@ -712,9 +688,6 @@ export class TableProviderService {
   }
 
   private async refreshIndexedDefinitions(runtimes: RuntimeRefreshDefinition[]): Promise<void> {
-    if (runtimes.length > 0) {
-      logger.debug(`Refreshing indexed provider definition runtime(s): count=${runtimes.length}`);
-    }
     if (this.refreshDeferred) {
       if (runtimes.length > 0) {
         logger.debug(`Queued provider definition refresh runtime(s) until vault indexing completes: count=${runtimes.length}`);
@@ -725,23 +698,16 @@ export class TableProviderService {
 
     for (const runtime of runtimes) {
       const provider = this.providers.get(runtime.providerId);
-      if (!provider) {
-        logger.debug(`Indexed provider definition refresh skipped because provider is missing: provider=${runtime.providerId}, definition=${runtime.definition.id}`);
-        continue;
-      }
-      if (runtime.error) {
-        logger.debug(`Indexed provider definition refresh skipped because runtime has parse error: provider=${runtime.providerId}, definition=${runtime.definition.id}, error=${runtime.error}`);
+      if (!provider || runtime.error) {
         continue;
       }
 
       const duplicateKey = this.definitionDuplicateKey(runtime.providerId, runtime.definition.id);
       if (this.duplicateDefinitionKeys.has(duplicateKey)) {
-        logger.debug(`Indexed provider definition refresh skipped because definition id is duplicated: provider=${runtime.providerId}, definition=${runtime.definition.id}`);
         continue;
       }
 
       if (!this.shouldRefreshRuntimeDefinition(provider, runtime, now)) {
-        logger.debug(`Indexed provider definition refresh skipped because status is current: provider=${runtime.providerId}, definition=${runtime.definition.id}`);
         continue;
       }
 
@@ -768,16 +734,13 @@ export class TableProviderService {
   private async rerenderProviderBlocksWhere(predicate: (block: RenderedProviderBlock) => boolean): Promise<void> {
     const blocks = Array.from(this.renderedBlocks.entries())
       .filter(([, block]) => predicate(block));
+    if (blocks.length === 0) return;
 
+    logger.debug(`Rerendering provider blocks: matched=${blocks.length} of ${this.renderedBlocks.size} tracked${blocks.map(([container, block]) => `; ${block.language} in ${block.sourcePath} connected=${container.isConnected}`).join('')}`);
     await Promise.all(blocks.map(([container, block]) => this.rerenderProviderBlock(container, block)));
   }
 
   private async rerenderProviderBlock(container: HTMLElement, block: RenderedProviderBlock): Promise<void> {
-    if (!container.parentNode) {
-      this.renderedBlocks.delete(container);
-      return;
-    }
-
     const currentBlock = this.findCurrentIndexedBlock(block);
     const source = currentBlock?.source ?? block.source;
     await this.renderDefinitionBlock(block.language, source, container, block.ctx);
@@ -786,7 +749,6 @@ export class TableProviderService {
   private shouldRefreshRuntimeDefinition(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, now: number): boolean {
     const recent = this.recentRefreshes.get(this.definitionDuplicateKey(runtime.providerId, runtime.definition.id));
     if (recent && recent.blockHash === runtime.blockHash && now - recent.refreshedAt < RECENT_REFRESH_SKIP_MS) {
-      logger.debug(`Indexed provider definition refresh skipped because it refreshed recently: provider=${runtime.providerId}, definition=${runtime.definition.id}, ageMs=${now - recent.refreshedAt}`);
       return false;
     }
 
@@ -798,20 +760,19 @@ export class TableProviderService {
       if (!table) continue;
 
       const status = this.tableStatus.get(this.statusKey(provider.id, runtime.definition.id, table.name));
+      let reason: string | null = null;
       if (!status?.lastRefreshAt) {
-        logger.debug(`Indexed provider definition refresh needed because status is missing: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}`);
-        return true;
+        reason = 'no refresh recorded';
+      } else if (status.definitionBlockHash !== runtime.blockHash) {
+        reason = 'definition block changed';
+      } else if (status.expiresAt && status.expiresAt <= now) {
+        reason = 'data expired';
+      } else if (table.defaultStaleAfterMs && !status.expiresAt) {
+        reason = 'stale policy without recorded expiry';
       }
-      if (status.definitionBlockHash !== runtime.blockHash) {
-        logger.debug(`Indexed provider definition refresh needed because block hash changed: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}, statusHash=${status.definitionBlockHash}, runtimeHash=${runtime.blockHash}`);
-        return true;
-      }
-      if (status.expiresAt && status.expiresAt <= now) {
-        logger.debug(`Indexed provider definition refresh needed because status expired: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}, expiresAt=${status.expiresAt}, now=${now}`);
-        return true;
-      }
-      if (table.defaultStaleAfterMs && !status.expiresAt) {
-        logger.debug(`Indexed provider definition refresh needed because table has stale policy without expiresAt: provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}`);
+
+      if (reason) {
+        logger.debug(`Provider refresh needed (${reason}): provider=${runtime.providerId}, definition=${runtime.definition.id}, table=${tableName}`);
         return true;
       }
     }
@@ -857,7 +818,6 @@ export class TableProviderService {
   }
 
   private renderRuntimeDefinition(container: HTMLElement, runtime: RuntimeRefreshDefinition): void {
-    logger.debug(`Rendering provider definition status: provider=${runtime.providerId}, definition=${runtime.definition.id}, sourcePath=${runtime.sourcePath}, blockIndex=${runtime.blockIndex}, hasError=${Boolean(runtime.error)}, isDuplicate=${this.isDuplicateRuntimeDefinition(runtime)}`);
     container.removeClass('vaultquery-provider-definition-container');
 
     if (this.isDuplicateRuntimeDefinition(runtime)) {
@@ -910,14 +870,14 @@ export class TableProviderService {
         headerRow.createEl('th', { text: heading });
       }
 
-		const tbody = table.createEl('tbody');
-		for (const status of statuses) {
-			const asOf = status.dataAsOf ?? status.lastRefreshAt;
-			const row = tbody.createEl('tr');
-			row.createEl('td', { text: status.tableName });
-			row.createEl('td', { text: String(status.rowCount) });
-			row.createEl('td', { text: asOf ? new Date(asOf).toLocaleString() : '-' });
-			row.createEl('td', { text: status.expiresAt ? new Date(status.expiresAt).toLocaleString() : '-' });
+      const tbody = table.createEl('tbody');
+      for (const status of statuses) {
+        const asOf = status.dataAsOf ?? status.lastRefreshAt;
+        const row = tbody.createEl('tr');
+        row.createEl('td', { text: status.tableName });
+        row.createEl('td', { text: String(status.rowCount) });
+        row.createEl('td', { text: asOf ? new Date(asOf).toLocaleString() : '-' });
+        row.createEl('td', { text: status.expiresAt ? new Date(status.expiresAt).toLocaleString() : '-' });
         const statusCell = row.createEl('td');
         statusCell.createSpan({
           cls: status.lastError ? 'vaultquery-provider-status-badge is-error' : 'vaultquery-provider-status-badge is-ok',
@@ -1072,10 +1032,8 @@ export class TableProviderService {
       providerId: provider.id,
       displayName: provider.displayName,
       tableName: table.name,
-      physicalName: table.name,
       definitionId,
       rowCount: 0,
-      schemaHash: this.schemaHash(table),
       active: true,
       ...existing,
       ...updates,
@@ -1084,7 +1042,7 @@ export class TableProviderService {
   }
 
   private columnSql(column: ProviderColumnDefinition): string {
-    return `${this.quoteIdentifier(column.name)} ${column.type}${column.nullable === false ? ' NOT NULL' : ''}`;
+    return `${quoteValidatedIdentifier(column.name)} ${column.type}${column.nullable === false ? ' NOT NULL' : ''}`;
   }
 
   private validateProvider(provider: VaultQueryTableProvider): void {
@@ -1117,23 +1075,10 @@ export class TableProviderService {
     }
   }
 
-  private quoteIdentifier(identifier: string): string {
-    return quoteValidatedIdentifier(identifier);
-  }
-
   private toSqlParam(value: ProviderRowValue | undefined): SqlParam {
     if (value === undefined || value === null) return null;
     if (typeof value === 'boolean') return value ? 1 : 0;
     return value;
-  }
-
-  private schemaHash(table: ProviderTableDefinition): string {
-    return hashString(JSON.stringify({
-      name: table.name,
-      columns: table.columns,
-      primaryKey: table.primaryKey,
-      indexes: table.indexes ?? [],
-    }));
   }
 
   private statusKey(providerId: string, definitionId: string | undefined, tableName: string): string {

@@ -1,8 +1,28 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
+import { TASK_PRIORITY_EMOJIS, TASK_DATE_REGEXES, TASK_RECURRENCE_TERMINATORS, TASK_ON_COMPLETION_REGEX, TASK_ID_REGEX, TASK_DEPENDS_ON_REGEX, TASK_TAGS_REGEX } from '../utils/TaskMetadataParser';
 import type { TaskRow, EntityPlanResult, EntityPlannerContext } from './types';
 import { getBlockIdSuffix, planLineEntityEdits } from './types';
 
 interface TaskStyle { bullet: "-" | "*" | "+"; indent: string; }
+
+function globalStrip(re: RegExp): RegExp {
+  return new RegExp(re.source, `g${re.flags}`);
+}
+
+const TASK_TEXT_STRIP_PATTERNS: readonly RegExp[] = [
+  new RegExp(TASK_PRIORITY_EMOJIS.map(({ emoji }) => emoji).join('|'), 'g'),
+  globalStrip(TASK_DATE_REGEXES.createdDate),
+  globalStrip(TASK_DATE_REGEXES.scheduledDate),
+  globalStrip(TASK_DATE_REGEXES.startDate),
+  globalStrip(TASK_DATE_REGEXES.dueDate),
+  globalStrip(TASK_DATE_REGEXES.doneDate),
+  globalStrip(TASK_DATE_REGEXES.cancelledDate),
+  new RegExp(`🔁\\s*[^${TASK_RECURRENCE_TERMINATORS}]*`, 'gu'),
+  globalStrip(TASK_ON_COMPLETION_REGEX),
+  globalStrip(TASK_ID_REGEX),
+  globalStrip(TASK_DEPENDS_ON_REGEX),
+  TASK_TAGS_REGEX,
+];
 
 export class TaskEditPlanner {
   public constructor(private readonly contentLocationService: ContentLocationService) {}
@@ -51,18 +71,9 @@ export class TaskEditPlanner {
 
     let text = base.task_text ?? "";
 
-    text = text.replace(/🔺|⏫|🔼|🔽|⏬/g, '');
-    text = text.replace(/➕\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/⏳\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/🛫\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/📅\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/✅\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/❌\s*\d{4}-\d{2}-\d{2}/g, '');
-    text = text.replace(/🔁\s*[^📅⏳🛫➕✅❌🔺⏫🔼🔽⏬🆔⛔🏁#]*/gu, '');
-    text = text.replace(/🏁\s*\w+/g, '');
-    text = text.replace(/🆔\s*[\w-]+/g, '');
-    text = text.replace(/⛔\s*[\w,-]+/g, '');
-    text = text.replace(/#[\w-]+/g, '');
+    for (const pattern of TASK_TEXT_STRIP_PATTERNS) {
+      text = text.replace(pattern, '');
+    }
     text = text.replace(/\s+\^[\w-]+\s*$/, '');
     text = text.trim();
 
@@ -79,11 +90,7 @@ export class TaskEditPlanner {
 
     if (base.priority) {
       const priority = base.priority.toLowerCase();
-      const emoji = priority === 'highest' ? '🔺' :
-                    priority === 'high' ? '⏫' :
-                    priority === 'medium' ? '🔼' :
-                    priority === 'low' ? '🔽' :
-                    priority === 'lowest' ? '⏬' : '';
+      const emoji = TASK_PRIORITY_EMOJIS.find(p => p.priority === priority)?.emoji ?? '';
       if (emoji) parts.push(emoji);
     }
 

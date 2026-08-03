@@ -1,63 +1,51 @@
-export interface EventRef<EventName extends string = string> {
-  /** @internal */
-  _event: EventName;
-  /** @internal */
-  _listener: EventListener;
-}
+import { Events } from 'obsidian';
+import type { EventRef } from 'obsidian';
+
+export type { EventRef };
 
 type EventCallback<Payload> = (event: Payload) => void;
 
-export class EventBus<Events extends object> {
-  private target = new EventTarget();
-  private eventNames = new Set<keyof Events & string>();
-  private currentErrorHandler: ((error: unknown) => void) | null = null;
+export class EventBus<EventMap extends object> {
+  private events = new Events();
+  private eventNames: Set<string>;
 
-  public constructor(eventNames: Array<keyof Events & string>) {
-    for (const eventName of eventNames) {
-      this.eventNames.add(eventName);
-    }
+  public constructor(
+    eventNames: Array<keyof EventMap & string>,
+    private onListenerError?: (event: string, error: unknown) => void
+  ) {
+    this.eventNames = new Set(eventNames);
   }
 
-  public on<EventName extends keyof Events & string>(
+  public on<EventName extends keyof EventMap & string>(
     event: EventName,
-    callback: EventCallback<Events[EventName]>
-  ): EventRef<EventName> {
-    const eventName: string = event;
+    callback: EventCallback<EventMap[EventName]>
+  ): EventRef {
     if (!this.eventNames.has(event)) {
-      throw new Error(`Unknown event: ${eventName}`);
+      throw new Error(`Unknown event: ${event}`);
     }
 
-    const listener: EventListener = (domEvent) => {
+    return this.events.on(event, (...data: unknown[]) => {
       try {
-        callback((domEvent as CustomEvent<Events[EventName]>).detail);
+        callback(data[0] as EventMap[EventName]);
       }
       catch (error) {
-        this.currentErrorHandler?.(error);
+        this.onListenerError?.(event, error);
       }
-    };
-    this.target.addEventListener(event, listener);
-    return { _event: event, _listener: listener };
+    });
   }
 
   public off(ref: EventRef): void {
-    this.target.removeEventListener(ref._event, ref._listener);
+    this.events.offref(ref);
   }
 
-  public emit<EventName extends keyof Events & string>(
+  public emit<EventName extends keyof EventMap & string>(
     event: EventName,
-    data: Events[EventName],
-    onError?: (error: unknown) => void
+    data: EventMap[EventName]
   ): void {
     if (!this.eventNames.has(event)) {
       return;
     }
 
-    this.currentErrorHandler = onError ?? null;
-    try {
-      this.target.dispatchEvent(new CustomEvent(event, { detail: data }));
-    }
-    finally {
-      this.currentErrorHandler = null;
-    }
+    this.events.trigger(event, data);
   }
 }

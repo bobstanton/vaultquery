@@ -1,17 +1,18 @@
 import { Database } from 'sql.js';
-import { ERROR_MESSAGES, WARNING_MESSAGES, friendlySqliteError } from '../utils/ErrorMessages';
+import { ERROR_MESSAGES, friendlySqliteError } from '../utils/ErrorMessages';
 import { collectStatementRows } from '../Database/StatementRows';
 import { logger as rootLogger } from '../utils/logger';
 import { appendOrReplaceReturning, detectDmlOperation, extractDmlTargetTable, splitSqlStatements, stripLeadingCte, stripReturningClause, stripTrailingSemicolon } from '../utils/SQLParsingUtils';
 import type { DmlOperation } from '../utils/SQLParsingUtils';
 import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
-import { expandListItemViewDeletes } from '../WriteSync/ListItemDescendants';
+import { expandListItemViewDeletesSync } from '../WriteSync/ListItemDescendants';
 
 const logger = rootLogger.scope('Preview');
 
 type Row = Record<string, unknown>;
 type SqlAndParams = { sql: string; params?: unknown[] };
+type ValidatedStatement = { sql: string; op: DmlOperation; table: string; pkCols: string[] };
 
 export type PreviewResult = {
   op: "insert" | "update" | "delete" | "multi";
@@ -64,16 +65,11 @@ export class PreviewService {
     if (!table) throw new Error(ERROR_MESSAGES.DML_TABLE_NOT_FOUND);
 
     const pkCols = getPrimaryKeyCols(this.db, table);
-    return this.previewStatementWithSavepoint({ sql, op, table, pkCols }, params, {
-      savepoint: "preview",
-      applyChanges: false,
-      wrapErrors: true,
-      logRollbackFailures: false
-    });
+    return this.previewStatementReadOnly({ sql, op, table, pkCols }, params);
   }
 
   private previewMultiStatementDml(statements: string[], params: unknown[] = []): PreviewResult {
-    const validatedStatements: Array<{ sql: string; op: DmlOperation; table: string; pkCols: string[] }> = [];
+    const validatedStatements: ValidatedStatement[] = [];
     
     for (const stmt of statements) {
       const op = detectDmlOperation(stripLeadingCte(stmt));
@@ -132,22 +128,18 @@ export class PreviewService {
     }
   }
 
-  private previewStatementAndApplyToTransaction(statement: { sql: string; op: DmlOperation; table: string; pkCols: string[] }, params: unknown[]): PreviewResult {
-    return this.previewStatementWithSavepoint(statement, params, {
-      savepoint: "statement_preview",
-      applyChanges: true,
-      wrapErrors: false,
-      logRollbackFailures: true
-    });
+  private previewStatementReadOnly(statement: ValidatedStatement, params: unknown[]): PreviewResult {
+    return this.previewStatementWithSavepoint(statement, params, 'read-only');
   }
 
-  private previewStatementWithSavepoint(
-    statement: { sql: string; op: DmlOperation; table: string; pkCols: string[] },
-    params: unknown[],
-    options: { savepoint: string; applyChanges: boolean; wrapErrors: boolean; logRollbackFailures: boolean }
-  ): PreviewResult {
+  private previewStatementAndApplyToTransaction(statement: ValidatedStatement, params: unknown[]): PreviewResult {
+    return this.previewStatementWithSavepoint(statement, params, 'apply-to-transaction');
+  }
+
+  private previewStatementWithSavepoint(statement: ValidatedStatement, params: unknown[], mode: 'read-only' | 'apply-to-transaction'): PreviewResult {
+    const applyChanges = mode === 'apply-to-transaction';
+    const savepoint = applyChanges ? 'statement_preview' : 'preview';
     const { sql, op, table, pkCols } = statement;
-    const { savepoint } = options;
     this.db.exec(`SAVEPOINT ${savepoint}`);
     try {
       if (op === "delete") {
@@ -159,7 +151,7 @@ export class PreviewService {
         const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
         this.db.exec(`RELEASE ${savepoint}`);
 
-        if (options.applyChanges) {
+        if (applyChanges) {
           this.db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
         }
 
@@ -194,7 +186,7 @@ export class PreviewService {
 
       this.db.exec(`RELEASE ${savepoint}`);
 
-      if (options.applyChanges) {
+      if (applyChanges) {
         this.db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
       }
 
@@ -211,11 +203,11 @@ export class PreviewService {
       }
       catch (rollbackError) {
         // Savepoint rollback is best-effort; preserve the original error below.
-        if (options.logRollbackFailures) {
+        if (applyChanges) {
           logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
         }
       }
-      if (options.wrapErrors) {
+      if (!applyChanges) {
         throw new Error(friendlySqliteError(error, { sql, table }));
       }
       throw error;
@@ -260,7 +252,7 @@ export class PreviewService {
   private expandListItemsViewDeletes(rows: Row[]): Row[] {
     const deletableRows = rows.filter(row =>
       typeof row.path === 'string' && typeof row.list_index === 'number' && typeof row.item_index === 'number');
-    return expandListItemViewDeletes(deletableRows, (sql, params) => selectRows(this.db, sql, params), 'list_items_view');
+    return expandListItemViewDeletesSync(deletableRows, (sql, params) => selectRows(this.db, sql, params), 'list_items_view');
   }
 
   private resetDeferredForeignKeys(): void {
@@ -416,9 +408,8 @@ function qMarks(n: number): string {
 
 function extractTargetTableViaExplain(db: Database, sql: string): string | null {
   const s = stripTrailingSemicolon(sql).trim();
-  
   const syntaxTarget = extractDmlTargetTable(sql);
-  
+
   if (syntaxTarget) {
     try {
       const viewCheck = selectRows(db, `SELECT type FROM sqlite_schema WHERE name = ? AND type = 'view' LIMIT 1`, [syntaxTarget])[0];
@@ -427,49 +418,43 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
       }
     }
     catch (error) {
-      logger.warn(WARNING_MESSAGES.VIEW_CHECK_FAILED, error);
+      logger.warn('Could not check whether the target is a view', error);
     }
   }
+
   try {
     const rows = selectRows(db, `EXPLAIN ${s}`);
-    
+
     for (const row of rows) {
       const opcode = formatUnknownValue(row.opcode).toUpperCase();
       if (opcode !== "OPENWRITE") continue;
 
       const rootpage = Number(row.p2);
-      
       if (!Number.isFinite(rootpage)) {
         continue;
       }
 
       const hit = selectRows(db, `SELECT type, name, tbl_name FROM sqlite_schema WHERE rootpage = ? LIMIT 1`, [rootpage])[0];
-
       if (!hit) {
         continue;
       }
 
       if (String(hit.type).toLowerCase() === "table") {
         const tableName = String(hit.name);
-        
         if (tableName === 'sqlite_sequence' && syntaxTarget) {
           return syntaxTarget;
         }
-        
         return tableName;
       }
       if (String(hit.type).toLowerCase() === "index") {
-        const tableName = String(hit.tbl_name);
-        return tableName;
+        return String(hit.tbl_name);
       }
     }
-    
   }
-    
   catch (error) {
-    logger.warn(WARNING_MESSAGES.EXPLAIN_ROOTPAGE_FAILED, error);
+    logger.warn('Could not map target table with EXPLAIN; trying SQL text parsing', error);
   }
-  
+
   return syntaxTarget;
 }
 

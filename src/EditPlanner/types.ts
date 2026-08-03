@@ -1,7 +1,9 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
-import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, Range, InsertionPoint } from '../Services/ContentLocationService';
+import type { TaskRow, HeadingRow, ListItemRow, TableCellRow, LocatedRange, Range, InsertionPoint } from '../Services/ContentLocationService';
 
-export type { TaskRow, HeadingRow, ListItemRow, TableCellRow };
+export type { TaskRow, HeadingRow, ListItemRow, TableCellRow, LocatedRange };
+
+export const INSERT_NEW_LINE = -1;
 
 export type FrontmatterValue = string | number | boolean | null | undefined | Date | FrontmatterValue[] | { [key: string]: FrontmatterValue };
 
@@ -16,9 +18,6 @@ export type ReplaceRangeEdit = {
 export interface TableRowGroup {
   path: string;
   table_index: number;
-  block_id?: string | null;
-  table_start?: number | null;
-  table_end?: number | null;
   line_number?: number | null;
   header: string[];
   rows: Array<Record<string, string>>;
@@ -35,8 +34,6 @@ export interface EntityPlanResult {
   warnings: string[];
 }
 
-export type LocatedRange = { kind: "ok"; range: Range } | { kind: "miss"; reason: string };
-
 export interface LineEntityPlannerOptions<T extends { line_number?: number | null; block_id?: string | null }> {
   entityName: string;
   insertAtLineReason: string;
@@ -50,12 +47,11 @@ export interface LineEntityPlannerOptions<T extends { line_number?: number | nul
 }
 
 export function validateLineNumberBatch<T extends { line_number?: number | null }>(
-  items: T[],
+  items: readonly T[],
   entityName: string,
   warnings: string[]
 ): number {
-  items.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
-  const lineNumbers = items.map(x => x.line_number!);
+  const lineNumbers = items.map(x => x.line_number ?? 0).sort((a, b) => a - b);
   const minLineNumber = lineNumbers[0];
   const maxLineNumber = lineNumbers[lineNumbers.length - 1];
   const isConsecutive = (maxLineNumber - minLineNumber) <= (items.length - 1);
@@ -89,7 +85,7 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
   const rowsWithLineNumber: T[] = [];
 
   for (const row of rows) {
-    if (row.line_number === -1) {
+    if (row.line_number === INSERT_NEW_LINE) {
       newRows.push(row);
       continue;
     }
@@ -113,6 +109,7 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
   }
 
   if (rowsWithLineNumber.length > 0) {
+    rowsWithLineNumber.sort((a, b) => (a.line_number ?? 0) - (b.line_number ?? 0));
     const minLineNumber = validateLineNumberBatch(rowsWithLineNumber, options.entityName, warnings);
     const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
     const combinedText = rowsWithLineNumber.map(row => options.emit(row)).join('\n');

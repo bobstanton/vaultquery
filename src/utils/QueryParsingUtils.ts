@@ -13,84 +13,52 @@ export interface ParseQueryBlockOptions {
 
 export type { ParsedQuery };
 
-function findSectionStart(lines: string[], sectionName: 'template' | 'config'): number {
-  return lines.findIndex(line => line.trim().toLowerCase() === `${sectionName}:`);
+interface SectionMarker {
+  lineIndex: number;
+  sameLineText: string;
 }
 
-function parseInlineSection(content: string, sectionName: 'template' | 'config'): { before: string; after: string } | null {
+function findSectionMarker(lines: string[], sectionName: 'template' | 'config'): SectionMarker | null {
   const marker = `${sectionName}:`;
-  const normalized = content.trim();
-  const lower = normalized.toLowerCase();
-  const markerIndex = lower.indexOf(`\n${marker}`);
 
-  if (markerIndex !== -1) {
-    return {
-      before: normalized.substring(0, markerIndex).trim(),
-      after: normalized.substring(markerIndex + marker.length + 1).trim()
-    };
-  }
-
-  if (lower.startsWith(marker)) {
-    return {
-      before: '',
-      after: normalized.substring(marker.length).trim()
-    };
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (line.toLowerCase().startsWith(marker)) {
+      return { lineIndex, sameLineText: line.slice(marker.length) };
+    }
+    if (line.trim().toLowerCase() === marker) {
+      return { lineIndex, sameLineText: '' };
+    }
   }
 
   return null;
 }
 
 export function splitQuerySections(source: string): ParsedQuerySections {
-  const content = source.trim();
-  const hasTemplateMarker = /^template:\s*|\ntemplate:\s*/im.test(content);
-  const hasConfigMarker = /^config:\s*|\nconfig:\s*/im.test(content);
+  const lines = source.trim().split('\n');
+  const templateMarker = findSectionMarker(lines, 'template');
+  const configMarker = findSectionMarker(lines, 'config');
 
-  if (hasTemplateMarker && hasConfigMarker) {
+  if (templateMarker && configMarker) {
     throw new Error('Use either template: or config:, not both in the same query block.');
   }
 
-  const inlineTemplate = parseInlineSection(content, 'template');
-  if (inlineTemplate) {
+  const marker = templateMarker ?? configMarker;
+  if (!marker) {
     return {
-      sqlQuery: stripTrailingSemicolon(inlineTemplate.before).trim(),
-      templateConfigText: inlineTemplate.after,
+      sqlQuery: lines.join('\n'),
+      templateConfigText: null,
       configSection: null
     };
   }
 
-  const inlineConfig = parseInlineSection(content, 'config');
-  if (inlineConfig) {
-    return {
-      sqlQuery: stripTrailingSemicolon(inlineConfig.before).trim(),
-      templateConfigText: null,
-      configSection: inlineConfig.after
-    };
-  }
-
-  const lines = content.split('\n');
-  const templateLineIndex = findSectionStart(lines, 'template');
-  const configLineIndex = findSectionStart(lines, 'config');
-
-  if (templateLineIndex !== -1) {
-    return {
-      sqlQuery: stripTrailingSemicolon(lines.slice(0, templateLineIndex).join('\n').trim()).trim(),
-      templateConfigText: lines.slice(templateLineIndex + 1).join('\n').trim(),
-      configSection: null
-    };
-  }
-
-  if (configLineIndex !== -1) {
-    return {
-      sqlQuery: stripTrailingSemicolon(lines.slice(0, configLineIndex).join('\n').trim()).trim(),
-      templateConfigText: null,
-      configSection: lines.slice(configLineIndex + 1).join('\n').trim()
-    };
-  }
+  const sqlQuery = stripTrailingSemicolon(lines.slice(0, marker.lineIndex).join('\n').trim()).trim();
+  const sectionText = [marker.sameLineText, ...lines.slice(marker.lineIndex + 1)].join('\n').trim();
 
   return {
-    sqlQuery: content,
-    templateConfigText: null,
-    configSection: null
+    sqlQuery,
+    templateConfigText: templateMarker ? sectionText : null,
+    configSection: templateMarker ? null : sectionText
   };
 }
 

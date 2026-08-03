@@ -1,7 +1,6 @@
-import { Database } from 'sql.js';
+import type { Database } from 'sql.js';
 import { generateDynamicPropertiesView, generateNotePropertiesView, generateDynamicTableViews } from './DatabaseSchema';
 import { SQL_QUERIES, getViewColumnsPragma, processTableStructureResults } from './SchemaQueries';
-import { CONSOLE_ERRORS } from '../utils/ErrorMessages';
 import { hashString } from '../utils/StringUtils';
 import type { TableStructure } from './DatabaseSchema';
 import { logger as rootLogger } from '../utils/logger';
@@ -51,7 +50,7 @@ export class DatabaseSchemaManager {
     }
 
     catch (error) {
-      logger.error(CONSOLE_ERRORS.PROPERTIES_VIEW_REBUILD_ERROR, error);
+      logger.error('Error rebuilding properties view', error);
       throw error;
     }
   }
@@ -68,7 +67,7 @@ export class DatabaseSchemaManager {
     }
 
     catch (error) {
-      logger.error(CONSOLE_ERRORS.TABLE_STRUCTURES_DISCOVER_ERROR, error);
+      logger.error('Error discovering table structures', error);
       return [];
     }
   }
@@ -101,7 +100,7 @@ export class DatabaseSchemaManager {
     }
 
     catch (error) {
-      logger.error(CONSOLE_ERRORS.TABLE_VIEWS_REBUILD_ERROR, error);
+      logger.error('Error rebuilding table views', error);
     }
   }
 }

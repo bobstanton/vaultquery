@@ -5,23 +5,13 @@ import { SlickGridRenderer } from './SlickGridRenderer';
 import { JavaScriptRenderer } from './JavaScriptRenderer';
 import { BaseRenderer } from './BaseRenderer';
 import { QueryRefreshRegistry, resolveAutoRefreshSetting } from './QueryRefreshRegistry';
-import { cleanupRenderedOutput } from './RendererCleanup';
+import { addFloatingButtons } from './OutputChrome';
 import type { ChartContext } from './ChartRenderer';
 import type { RenderContext } from './BaseRenderer';
 
 export type { RenderContext };
 
 export class QueryRenderer {
-  private static floatingControls = new WeakMap<HTMLElement, {
-    buttonContainer: HTMLElement;
-    results: Record<string, unknown>[];
-    onRefresh?: (force?: boolean) => Promise<void>;
-  }>();
-
-  static resetContainer(container: HTMLElement): void {
-    cleanupRenderedOutput(container);
-  }
-
   static async render(context: RenderContext): Promise<void> {
     const { parsed, onRefresh, container } = context;
     const outputKind = parsed.output?.kind ?? 'table';
@@ -37,7 +27,7 @@ export class QueryRenderer {
       };
       ChartRenderer.renderChart(chartContext);
 
-      this.addFloatingButtons(container, context.results, onRefresh);
+      addFloatingButtons(container, { results: context.results, onRefresh });
       return;
     }
 
@@ -51,7 +41,7 @@ export class QueryRenderer {
       this.prepareNonGridRender(context);
       CalendarRenderer.render(context, CalendarRenderer.parseConfig(parsed.output?.options));
       container.addClass('vaultquery-calendar-output');
-      this.addFloatingButtons(container, context.results, onRefresh);
+      addFloatingButtons(container, { results: context.results, onRefresh });
       return;
     }
 
@@ -79,13 +69,13 @@ export class QueryRenderer {
         context.openFile
       );
 
-      this.addFloatingButtons(container, context.results, onRefresh);
+      addFloatingButtons(container, { results: context.results, onRefresh });
       return;
     }
 
     SlickGridRenderer.render(context);
 
-    this.addFloatingButtons(container, context.results, onRefresh);
+    addFloatingButtons(container, { results: context.results, onRefresh });
   }
 
   private static prepareNonGridRender(context: RenderContext): void {
@@ -99,34 +89,6 @@ export class QueryRenderer {
       onRefresh: context.onRefresh,
       autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed, { includeGlobalDefault: false }),
     });
-  }
-
-  private static addFloatingButtons(container: HTMLElement, results: Record<string, unknown>[] | undefined, onRefresh: ((force?: boolean) => Promise<void>) | undefined): void {
-    const existing = this.floatingControls.get(container);
-    if (existing?.buttonContainer.isConnected && existing.buttonContainer.parentElement === container) {
-      existing.results = results ?? [];
-      existing.onRefresh = onRefresh;
-      return;
-    }
-
-    for (const child of Array.from(container.children)) {
-      if (child.classList.contains('vaultquery-floating-buttons')) {
-        child.remove();
-      }
-    }
-    const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-    const state = { buttonContainer, results: results ?? [], onRefresh };
-    this.floatingControls.set(container, state);
-
-    if (results && results.length > 0) {
-      BaseRenderer.addCopyAsMarkdownButton(buttonContainer, () => state.results);
-    }
-
-    if (onRefresh) {
-      BaseRenderer.addRefreshButton(buttonContainer, async force => {
-        await state.onRefresh?.(force);
-      });
-    }
   }
 
 }

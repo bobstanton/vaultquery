@@ -3,7 +3,8 @@ import { checkIndexingAndWait } from '../utils/IndexingUtils';
 import { parseQueryBlock } from '../utils/QueryParsingUtils';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { QueryRenderer, RenderContext } from '../Renderers/QueryRenderer';
-import { createVaultQueryCodeBlockContainer } from './ProcessorUtils';
+import { cleanupRenderedOutput } from '../Renderers/RendererCleanup';
+import { createOpenFileHandler, createVaultQueryCodeBlockContainer, RenderVersionGuard } from './ProcessorUtils';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import type { PendingBlock } from '../utils/IndexingUtils';
 import type { ParsedQuery, ParseQueryBlockOptions } from '../utils/QueryParsingUtils';
@@ -16,10 +17,10 @@ type ReadQueryOutputKind = NonNullable<ParseQueryBlockOptions['forceOutputKind']
 
 export abstract class BaseReadQueryCodeBlockProcessor {
   protected pendingBlocks = new Set<PendingBlock>();
-  private activeRequests = new WeakMap<HTMLElement, number>();
-  private queryExecutionCounts = new Map<string, number>();
+  private renderGuard = new RenderVersionGuard();
+  private renderedContainers = new WeakSet<HTMLElement>();
 
-  protected constructor(protected app: App, protected plugin: VaultQueryPluginContext) {}
+  public constructor(protected app: App, protected plugin: VaultQueryPluginContext) {}
 
   protected abstract getBlockType(): string;
 
@@ -66,7 +67,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       }
     }
     catch (error: unknown) {
-      QueryRenderer.resetContainer(container);
+      cleanupRenderedOutput(container);
       BaseRenderer.renderQueryError(this.app, container, error, source);
     }
   }
@@ -75,18 +76,17 @@ export abstract class BaseReadQueryCodeBlockProcessor {
     const api = this.plugin.api;
     if (!api) return;
 
-    const requestId = Date.now() + Math.random();
-    this.activeRequests.set(container, requestId);
+    const renderVersion = this.renderGuard.begin(container);
 
     try {
       await api.waitForInitialQueryReadiness();
       const queryHash = hashString(parsed.query);
-      const previousExecutions = this.queryExecutionCounts.get(queryHash) ?? 0;
+      const isFirstRender = !this.renderedContainers.has(container);
       const queryStartedAt = performance.now();
       const results = await api.query(parsed.query, ctx.sourcePath);
       const queryMs = performance.now() - queryStartedAt;
 
-      if (this.activeRequests.get(container) !== requestId || !container.isConnected) {
+      if (!this.renderGuard.isCurrent(container, renderVersion) || !container.isConnected) {
         return;
       }
 
@@ -95,7 +95,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
         parsed,
         container,
         app: this.app,
-        openFile: (path: string) => { void this.app.workspace.openLinkText(path, ''); },
+        openFile: createOpenFileHandler(this.app),
         MarkdownRenderer,
         pluginContext: this.plugin,
         settings: this.plugin.settings,
@@ -109,20 +109,20 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       await QueryRenderer.render(renderContext);
       logger.debug('Query refresh phases', {
         queryHash,
-        cacheState: previousExecutions === 0 ? 'cold' : 'warm',
+        cacheState: isFirstRender ? 'cold' : 'warm',
         rows: results.length,
         columns: results.length > 0 ? Object.keys(results[0]).length : 0,
         queryMs: Math.round(queryMs),
         renderMs: Math.round(performance.now() - renderStartedAt),
         sourcePath: ctx.sourcePath,
       });
-      this.queryExecutionCounts.set(queryHash, previousExecutions + 1);
+      this.renderedContainers.add(container);
     }
     catch (error: unknown) {
-      if (this.activeRequests.get(container) !== requestId || !container.isConnected) {
+      if (!this.renderGuard.isCurrent(container, renderVersion) || !container.isConnected) {
         return;
       }
-      QueryRenderer.resetContainer(container);
+      cleanupRenderedOutput(container);
       BaseRenderer.renderQueryError(this.app, container, error, parsed.query);
     }
   }
@@ -138,10 +138,6 @@ export abstract class BaseReadQueryCodeBlockProcessor {
 
 export function createForcedOutputProcessor(blockType: string, outputKind: ReadQueryOutputKind) {
   return class ForcedOutputCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
-    public constructor(app: App, plugin: VaultQueryPluginContext) {
-      super(app, plugin);
-    }
-
     protected getBlockType(): string {
       return blockType;
     }

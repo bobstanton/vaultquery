@@ -7,7 +7,6 @@ interface FunctionDef {
   name: string;
   signature: string;
   description: string;
-  example?: string;
 }
 
 const BUILTIN_FUNCTIONS: Record<string, FunctionDef[]> = {
@@ -15,112 +14,95 @@ const BUILTIN_FUNCTIONS: Record<string, FunctionDef[]> = {
     {
       name: 'regexp',
       signature: 'regexp(pattern, text)',
-      description: 'Returns 1 if text matches regex pattern, 0 otherwise. Enables REGEXP operator.',
-      example: "WHERE title REGEXP '^Daily'"
+      description: 'Returns 1 if text matches regex pattern, 0 otherwise. Enables REGEXP operator.'
     },
     {
       name: 'regexp_replace',
       signature: 'regexp_replace(text, pattern, replacement)',
-      description: 'Replaces all matches of pattern. Supports \\n, \\t, \\r, \\\\ escapes.',
-      example: "regexp_replace(content, '\\\\s+', ' ')"
+      description: 'Replaces all matches of pattern. Supports \\n, \\t, \\r, \\\\ escapes.'
     }
   ],
   'Date Functions': [
     {
       name: 'parse_date',
       signature: 'parse_date(text)',
-      description: 'Extracts date from text, returns YYYY-MM-DD or null.',
-      example: "parse_date('Meeting on Dec 25, 2024')"
+      description: 'Extracts date from text, returns YYYY-MM-DD or null.'
     },
     {
       name: 'format_date',
       signature: 'format_date(date, format)',
-      description: 'Formats ISO YYYY-MM-DD or compact YYYYMMDD dates using specifiers: %Y, %m, %d, %B, %b, %A, %a, etc.',
-      example: "format_date('2024-12-25', '%B %e, %Y')"
+      description: 'Formats ISO YYYY-MM-DD or compact YYYYMMDD dates using specifiers: %Y, %m, %d, %B, %b, %A, %a, etc.'
     }
   ],
   'Link Functions': [
     {
       name: 'link',
       signature: 'link(path) / link(path, display)',
-      description: 'Creates wikilink [[path]] or [[path|display]].',
-      example: "link(path, title)"
+      description: 'Creates wikilink [[path]] or [[path|display]].'
     },
     {
       name: 'link_heading',
       signature: 'link_heading(path, heading) / link_heading(path, heading, display)',
-      description: 'Creates heading link [[path#heading]] or [[path#heading|display]].',
-      example: "link_heading(path, 'Section', 'Go to section')"
+      description: 'Creates heading link [[path#heading]] or [[path#heading|display]].'
     },
     {
       name: 'link_block',
       signature: 'link_block(path, block_id) / link_block(path, block_id, display)',
-      description: 'Creates block link [[path#^id]] or [[path#^id|display]].',
-      example: "link_block(path, block_id, task_text)"
+      description: 'Creates block link [[path#^id]] or [[path#^id|display]].'
     },
     {
       name: 'resolve_link',
       signature: 'resolve_link(wikilink) / resolve_link(wikilink, sourcePath)',
-      description: 'Resolves a wikilink or note name to a vault-relative file path using Obsidian link resolution.',
-      example: "resolve_link(link_text, path)"
+      description: 'Resolves a wikilink or note name to a vault-relative file path using Obsidian link resolution.'
     }
   ],
   'Path Functions': [
     {
       name: 'filename',
       signature: 'filename(path)',
-      description: 'Extracts filename with extension from path.',
-      example: "'folder/note.md' → 'note.md'"
+      description: 'Extracts filename with extension from path.'
     },
     {
       name: 'path_name',
       signature: 'path_name(path)',
-      description: 'Extracts filename with extension (alias for filename).',
-      example: "'folder/note.md' → 'note.md'"
+      description: 'Extracts filename with extension (alias for filename).'
     },
     {
       name: 'path_basename',
       signature: 'path_basename(path)',
-      description: 'Extracts filename without extension.',
-      example: "'folder/note.md' → 'note'"
+      description: 'Extracts filename without extension.'
     },
     {
       name: 'path_extension',
       signature: 'path_extension(path)',
-      description: 'Extracts file extension without dot.',
-      example: "'folder/note.md' → 'md'"
+      description: 'Extracts file extension without dot.'
     },
     {
       name: 'path_parent',
       signature: 'path_parent(path)',
-      description: 'Extracts parent folder path.',
-      example: "'folder/sub/note.md' → 'folder/sub'"
+      description: 'Extracts parent folder path.'
     }
   ],
   'Geolocation Functions': [
     {
       name: 'geo_lat',
       signature: 'geo_lat(text)',
-      description: 'Extracts latitude from coordinate string.',
-      example: "geo_lat('40.7128, -74.0060')"
+      description: 'Extracts latitude from coordinate string.'
     },
     {
       name: 'geo_lng',
       signature: 'geo_lng(text)',
-      description: 'Extracts longitude from coordinate string.',
-      example: "geo_lng('40.7128, -74.0060')"
+      description: 'Extracts longitude from coordinate string.'
     },
     {
       name: 'geo_distance_mi',
       signature: 'geo_distance_mi(lat1, lng1, lat2, lng2)',
-      description: 'Haversine distance between two points in miles.',
-      example: 'geo_distance_mi(40.71, -74.00, 34.05, -118.24)'
+      description: 'Haversine distance between two points in miles.'
     },
     {
       name: 'geo_distance_km',
       signature: 'geo_distance_km(lat1, lng1, lat2, lng2)',
-      description: 'Haversine distance between two points in kilometers.',
-      example: 'geo_distance_km(40.71, -74.00, 34.05, -118.24)'
+      description: 'Haversine distance between two points in kilometers.'
     }
   ]
 };

@@ -73,11 +73,9 @@ export function normalizeSettings(settings: VaultQuerySettings): void {
 
 export const DEFAULT_SETTINGS: VaultQuerySettings = {
   indexingInterval: 'realtime',
-  excludePatterns: [
-
-  ],
-  maxFileSizeKB: 1000, 
-  databaseStorage: 'memory', 
+  excludePatterns: [],
+  maxFileSizeKB: 1000,
+  databaseStorage: 'memory',
   enabledFeatures: {
     indexContent: true,
     indexFrontmatter: true,
@@ -114,3 +112,18 @@ export const DEFAULT_SETTINGS: VaultQuerySettings = {
   backgroundIndexing: true,
   debugConsoleLogLevel: 'warn'
 };
+
+export function mergeSettings(savedData: Partial<VaultQuerySettings>): VaultQuerySettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...savedData,
+    enabledFeatures: {
+      ...DEFAULT_SETTINGS.enabledFeatures,
+      ...savedData.enabledFeatures
+    },
+    wasm: {
+      ...DEFAULT_SETTINGS.wasm,
+      ...savedData.wasm
+    }
+  };
+}

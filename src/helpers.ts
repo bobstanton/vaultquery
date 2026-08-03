@@ -56,13 +56,26 @@ export interface ManagedVaultQueryTableProviderRegistration {
 
 export type VaultQueryAppLike = object & {
   plugins?: {
-    plugins?: Record<string, { api?: IVaultQueryAPI }>;
+    plugins?: Record<string, { api?: IVaultQueryAPI; declareProviderDefinitionBlockLanguages?: (languages: readonly string[]) => void }>;
   };
   workspace?: {
     on(name: string, callback: () => void): unknown;
     offref(ref: unknown): void;
   };
 };
+
+export function getDeclaredProviderBlockLanguages(): Set<string> {
+  const store = globalThis as { __vaultQueryDeclaredProviderBlockLanguages?: Set<string> };
+  return (store.__vaultQueryDeclaredProviderBlockLanguages ??= new Set<string>());
+}
+
+export function declareVaultQueryProviderBlockLanguages(app: VaultQueryAppLike, languages: readonly string[]): void {
+  const declared = getDeclaredProviderBlockLanguages();
+  for (const language of languages) {
+    declared.add(language);
+  }
+  app.plugins?.plugins?.vaultquery?.declareProviderDefinitionBlockLanguages?.(languages);
+}
 
 /**
  * Get the VaultQuery API if the plugin is loaded and enabled.
@@ -166,6 +179,10 @@ function resolveProviders(providers: VaultQueryTableProvider[] | (() => VaultQue
 }
 
 export async function registerVaultQueryTableProviders(app: VaultQueryAppLike, options: RegisterVaultQueryTableProvidersOptions): Promise<ManagedVaultQueryTableProviderRegistration> {
+  if (Array.isArray(options.providers)) {
+    declareVaultQueryProviderBlockLanguages(app, options.providers.map(provider => provider.definitionBlock.language));
+  }
+
   const manager = new VaultQueryTableProviderRegistrationManager(app, options);
   await manager.start();
   return manager;

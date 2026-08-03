@@ -2,9 +2,11 @@ import { syntaxTree } from '@codemirror/language';
 import { RangeSetBuilder, EditorState, Transaction, Prec } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
-import { PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
+import { CONFIG_CAPABLE_LANGUAGES, PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
 import { SQL_KEYWORD_TOKENS as SQL_KEYWORDS, SQL_FUNCTION_TOKENS as SQL_FUNCTIONS, SQL_TYPE_TOKENS as SQL_TYPES } from '../Constants/SqlCatalog';
+import { CHART_TYPES } from '../Constants/BlockConfigCatalog';
 import { consumeSqlSingleQuotedString } from '../utils/SQLParsingUtils';
+import { skipWhitespace } from '../utils/StringUtils';
 
 const SQL_OPERATORS = new Set(['=', '<>', '!=', '<', '>', '<=', '>=', '||', '+', '-', '*', '/', '%']);
 
@@ -16,9 +18,12 @@ const JS_KEYWORDS = new Set([
   'true', 'false', 'null', 'undefined', 'void',
 ]);
 
-const JS_BUILTINS = new Set([
+const JS_GLOBALS = new Set([
   'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number',
   'Date', 'Map', 'Set', 'Promise', 'Error',
+]);
+
+const TEMPLATE_SCOPE_VARIABLES = new Set([
   'results', 'count', 'columns', 'h',
 ]);
 
@@ -68,11 +73,6 @@ function rangeTokenSink(baseOffset: number, ranges: DecorationRange[]): TokenSin
   return {
     add: (start, end, mark) => ranges.push({ from: baseOffset + start, to: baseOffset + end, mark })
   };
-}
-
-function skipWhitespace(text: string, pos: number): number {
-  while (pos < text.length && /\s/.test(text[pos])) pos++;
-  return pos;
 }
 
 function consumeLineComment(text: string, pos: number): number {
@@ -136,7 +136,7 @@ function addJsIdentifier(text: string, start: number, end: number, sink: TokenSi
   if (JS_KEYWORDS.has(word)) {
     sink.add(start, end, keywordMark);
   }
-  else if (JS_BUILTINS.has(word)) {
+  else if (JS_GLOBALS.has(word) || TEMPLATE_SCOPE_VARIABLES.has(word)) {
     sink.add(start, end, typeMark);
   }
   else {
@@ -345,9 +345,7 @@ function tokenizeJavaScript(text: string, baseOffset: number, builder: RangeSetB
   tokenizeJavaScriptTokens(text, builderTokenSink(baseOffset, builder), true);
 }
 
-const CHART_TYPE_VALUES = new Set([
-  'bar', 'line', 'pie', 'doughnut', 'scatter',
-]);
+const CHART_TYPE_VALUES = new Set<string>(CHART_TYPES);
 
 interface YamlEntry {
   key: string;
@@ -386,40 +384,36 @@ function addYamlValue(entry: YamlEntry, baseOffset: number, builder: RangeSetBui
   builder.add(baseOffset + entry.valueStart, baseOffset + entry.valueStart + entry.value.length, mark);
 }
 
-function tokenizeYamlConfig(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
-  const entry = parseYamlEntry(text);
-  if (!entry) return;
+type YamlValueClassifier = (key: string, value: string) => Decoration;
 
-  addYamlEntryScaffold(entry, baseOffset, builder);
-  if (!entry.value) return;
-
-  if (entry.key === 'type' && CHART_TYPE_VALUES.has(entry.value.toLowerCase())) {
-    addYamlValue(entry, baseOffset, builder, keywordMark);
+function classifyConfigYamlValue(key: string, value: string): Decoration {
+  if (key === 'type' && CHART_TYPE_VALUES.has(value.toLowerCase())) {
+    return keywordMark;
   }
-  else if (/^\d+(\.\d+)?$/.test(entry.value)) {
-    addYamlValue(entry, baseOffset, builder, numberMark);
+  if (/^\d+(\.\d+)?$/.test(value)) {
+    return numberMark;
   }
-  else {
-    addYamlValue(entry, baseOffset, builder, stringMark);
-  }
+  return stringMark;
 }
 
-function tokenizeGenericYamlConfig(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
+function classifyGenericYamlValue(_key: string, value: string): Decoration {
+  if (/^(true|false|yes|no)$/i.test(value)) {
+    return keywordMark;
+  }
+  if (/^\d+(\.\d+)?$/.test(value)) {
+    return numberMark;
+  }
+  return stringMark;
+}
+
+function tokenizeYamlConfigLine(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>, classifyValue: YamlValueClassifier): void {
   const entry = parseYamlEntry(text);
   if (!entry) return;
 
   addYamlEntryScaffold(entry, baseOffset, builder);
   if (!entry.value) return;
 
-  if (/^(true|false|yes|no)$/i.test(entry.value)) {
-    addYamlValue(entry, baseOffset, builder, keywordMark);
-  }
-  else if (/^\d+(\.\d+)?$/.test(entry.value)) {
-    addYamlValue(entry, baseOffset, builder, numberMark);
-  }
-  else {
-    addYamlValue(entry, baseOffset, builder, stringMark);
-  }
+  addYamlValue(entry, baseOffset, builder, classifyValue(entry.key, entry.value));
 }
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -451,10 +445,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (node.name.includes('HyperMD-codeblock-end')) {
         if (currentBlock && currentBlock.lines.length > 0) {
           const isProviderDefinitionBlock = PROVIDER_DEFINITION_LANGUAGES.has(currentBlock.language);
-          const isConfigCapableBlock = currentBlock.language === 'vaultquery' ||
-            currentBlock.language === 'vaultquery-chart' ||
-            currentBlock.language === 'vaultquery-markdown' ||
-            currentBlock.language === 'vaultquery-calendar';
+          const isConfigCapableBlock = CONFIG_CAPABLE_LANGUAGES.has(currentBlock.language);
           const isQueryBlock = currentBlock.language === 'vaultquery';
 
           let inTemplate = false;
@@ -469,7 +460,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             }
 
             if (isProviderDefinitionBlock) {
-              tokenizeGenericYamlConfig(content, line.from, builder);
+              tokenizeYamlConfigLine(content, line.from, builder, classifyGenericYamlValue);
               continue;
             }
 
@@ -481,7 +472,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             }
 
             if (inConfig) {
-              tokenizeYamlConfig(content, line.from, builder);
+              tokenizeYamlConfigLine(content, line.from, builder, classifyConfigYamlValue);
               continue;
             }
 

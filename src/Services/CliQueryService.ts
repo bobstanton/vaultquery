@@ -89,6 +89,11 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
 
   const path = typeof params.path === 'string' ? params.path : undefined;
 
+  const api = plugin.api;
+  if (!api) {
+    throw new Error('VaultQuery is not ready. The plugin may have been unloaded.');
+  }
+
   await plugin.indexingStateManager.waitForIndexingComplete();
 
   const statementClassification = classifyCliStatements(sql);
@@ -101,8 +106,8 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
       throw new Error('VaultQuery CLI write operations are disabled.');
     }
 
-    const preview = await plugin.api.previewQuery(sql, [], path);
-    const affectedPaths = await plugin.api.applyPreview(preview);
+    const preview = await api.previewQuery(sql, [], path);
+    const affectedPaths = await api.applyPreview(preview);
     for (const affectedPath of affectedPaths) {
       plugin.indexingStateManager.queueIndexing(affectedPath);
     }
@@ -114,7 +119,7 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
   }
 
   const format = normalizeFormat(typeof params.format === 'string' ? params.format : undefined);
-  const results = await plugin.api.query(sql, path);
+  const results = await api.query(sql, path);
   return formatResults(results, format);
 }
 

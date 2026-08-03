@@ -5,19 +5,25 @@ import type { Extension } from '@codemirror/state';
 import { ViewPlugin } from '@codemirror/view';
 import type { ViewUpdate } from '@codemirror/view';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
-import { PROVIDER_DEFINITION_LANGUAGES } from '../Constants/EditorConstants';
-import { SQL_COMPLETION_KEYWORD_PHRASES, SQL_FUNCTION_TOKENS } from '../Constants/SqlCatalog';
+import { CONFIG_CAPABLE_LANGUAGES, PROVIDER_DEFINITION_LANGUAGES, SQL_EDITOR_LANGUAGES } from '../Constants/EditorConstants';
+import { SQL_COMPLETION_KEYWORD_PHRASES, SQL_FUNCTION_TOKENS, SQL_PHRASE_LEAD_WORDS, VAULTQUERY_FUNCTION_SIGNATURES } from '../Constants/SqlCatalog';
+import { getConfigKeys, getConfigValues } from '../Constants/BlockConfigCatalog';
+import type { ConfigValueSuggestion } from '../Constants/BlockConfigCatalog';
 import { logger as rootLogger } from '../utils/logger';
 import { extractSqlAliasMap } from '../utils/SQLParsingUtils';
+import { skipWhitespace } from '../utils/StringUtils';
 import type { ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem } from '../Providers/TableProviderTypes';
 
 const logger = rootLogger.scope('Completion');
 
 interface SuggestionItem {
   label: string;
+  displayLabel?: string;
   apply: string;
   detail?: string;
   type?: string;
+  boost?: number;
+  cursorOffset?: number;
 }
 
 interface ActiveFence {
@@ -32,6 +38,7 @@ interface SchemaCache {
   columns: SuggestionItem[];
   functions: SuggestionItem[];
   columnsByRelation: Map<string, SuggestionItem[]>;
+  propertyPlaceholders: SuggestionItem[];
 }
 
 type CompletionMode = 'yamlKey' | 'yamlValue' | 'sql' | 'section' | 'placeholder';
@@ -46,30 +53,19 @@ interface VaultQueryCompletionContext {
   key?: string;
 }
 
-const QUERY_BLOCK_LANGUAGES = new Set([
-  'vaultquery',
-  'vaultquery-chart',
-  'vaultquery-markdown',
-  'vaultquery-calendar',
-]);
-
-const SQL_LANGUAGES = new Set([
-  'vaultquery',
-  'vaultquery-chart',
-  'vaultquery-markdown',
-  'vaultquery-calendar',
-  'vaultquery-write',
-  'vaultquery-view',
-  'vaultquery-trigger',
-]);
-
 const SQL_KEYWORDS: SuggestionItem[] = SQL_COMPLETION_KEYWORD_PHRASES
   .map((label) => ({ label, apply: label, detail: 'SQL keyword', type: 'keyword' }));
 
 const SQL_FUNCTIONS: SuggestionItem[] = Array.from(SQL_FUNCTION_TOKENS)
   .sort((left, right) => left.localeCompare(right))
-  .map((name) => `${name.toUpperCase()}()`)
-  .map((label) => ({ label, apply: label, detail: 'SQL function', type: 'function' }));
+  .map((name) => name.toUpperCase())
+  .map((name) => ({
+    label: `${name}()`,
+    apply: `${name}()`,
+    detail: 'SQL function',
+    type: 'function',
+    cursorOffset: name.length + 1,
+  }));
 
 const PLACEHOLDER_VALUES: SuggestionItem[] = [
   ['{this.path}', 'Current note path'],
@@ -88,13 +84,15 @@ const PLACEHOLDER_VALUES: SuggestionItem[] = [
   ['{this.outgoingLinks}', 'Outgoing links list'],
   ['{this.tags}', 'Tags list'],
   ['{this.headings}', 'Headings list'],
-].map(([label, detail]) => ({ label, apply: label, detail, type: 'variable' }));
+].map(([label, detail]) => ({ label, apply: label, detail, type: 'variable', boost: 1 }));
 
 PLACEHOLDER_VALUES.push({
   label: '{this.<key>}',
   apply: '{this.}',
   detail: 'Frontmatter property placeholder',
   type: 'variable',
+  boost: -1,
+  cursorOffset: '{this.'.length,
 });
 
 const QUERY_SECTION_SUGGESTIONS: SuggestionItem[] = [
@@ -102,84 +100,52 @@ const QUERY_SECTION_SUGGESTIONS: SuggestionItem[] = [
   { label: 'template', apply: 'template:\nreturn ``', detail: 'Template renderer section', type: 'property' },
 ];
 
-const TABLE_CONFIG_KEYS: SuggestionItem[] = [
-  { label: 'height', apply: 'height: ', detail: 'Fixed grid height', type: 'property' },
-  { label: 'minHeight', apply: 'minHeight: ', detail: 'Minimum grid height', type: 'property' },
-  { label: 'maxHeight', apply: 'maxHeight: ', detail: 'Maximum grid height', type: 'property' },
-];
-
-const MARKDOWN_CONFIG_KEYS: SuggestionItem[] = [
-  { label: 'columns', apply: 'columns: ', detail: 'Column selection', type: 'property' },
-  { label: 'alignment', apply: 'alignment: ', detail: 'Column alignment', type: 'property' },
-];
-
-const CHART_CONFIG_KEYS: SuggestionItem[] = [
-  { label: 'type', apply: 'type: ', detail: 'Chart type', type: 'property' },
-  { label: 'title', apply: 'title: ', detail: 'Chart title', type: 'property' },
-  { label: 'datasetLabel', apply: 'datasetLabel: ', detail: 'Dataset label', type: 'property' },
-  { label: 'xLabel', apply: 'xLabel: ', detail: 'X axis label', type: 'property' },
-  { label: 'yLabel', apply: 'yLabel: ', detail: 'Y axis label', type: 'property' },
-  { label: 'datasetBackgroundColor', apply: 'datasetBackgroundColor: ', detail: 'Dataset color', type: 'property' },
-  { label: 'datasetBorderColor', apply: 'datasetBorderColor: ', detail: 'Dataset border color', type: 'property' },
-];
-
-const CALENDAR_CONFIG_KEYS: SuggestionItem[] = [
-  { label: 'initialView', apply: 'initialView: ', detail: 'Calendar starting view', type: 'property' },
-  { label: 'initialDate', apply: 'initialDate: ', detail: 'Calendar starting date', type: 'property' },
-  { label: 'firstDay', apply: 'firstDay: ', detail: 'Week start day', type: 'property' },
-  { label: 'weekNumbers', apply: 'weekNumbers: ', detail: 'Show week numbers', type: 'property' },
-  { label: 'visibleWeeks', apply: 'visibleWeeks: ', detail: 'Month view visible weeks', type: 'property' },
-  { label: 'skipBlankPeriods', apply: 'skipBlankPeriods: ', detail: 'Skip blank calendar periods when navigating', type: 'property' },
-  { label: 'dayMaxEvents', apply: 'dayMaxEvents: ', detail: 'Maximum visible events per day cell', type: 'property' },
-  { label: 'dayMaxEventRows', apply: 'dayMaxEventRows: ', detail: 'Maximum event rows per day cell', type: 'property' },
-  { label: 'dayMinHeight', apply: 'dayMinHeight: ', detail: 'Minimum day cell height', type: 'property' },
-  { label: 'eventMaxStack', apply: 'eventMaxStack: ', detail: 'Maximum stacked timed events', type: 'property' },
-  { label: 'height', apply: 'height: ', detail: 'Calendar height', type: 'property' },
-  { label: 'contentHeight', apply: 'contentHeight: ', detail: 'Calendar content height', type: 'property' },
-  { label: 'aspectRatio', apply: 'aspectRatio: ', detail: 'Calendar aspect ratio', type: 'property' },
-  { label: 'expandRows', apply: 'expandRows: ', detail: 'Expand rows to fill height', type: 'property' },
-  { label: 'slotMinTime', apply: 'slotMinTime: ', detail: 'First visible slot time', type: 'property' },
-  { label: 'slotMaxTime', apply: 'slotMaxTime: ', detail: 'Last visible slot time', type: 'property' },
-  { label: 'slotDuration', apply: 'slotDuration: ', detail: 'Slot duration', type: 'property' },
-];
-
-const BOOLEAN_VALUES = ['true', 'false'].map((label) => ({ label, apply: label, detail: 'Boolean value', type: 'constant' }));
-const CHART_TYPE_VALUES = ['bar', 'line', 'pie', 'doughnut', 'scatter'].map((label) => ({ label, apply: label, detail: 'Chart type', type: 'enum' }));
-const CALENDAR_VIEW_VALUES = ['dayGridMonth', 'timeGridWeek', 'timeGridDay', 'month', 'week', 'day'].map((label) => ({ label, apply: label, detail: 'Calendar view', type: 'enum' }));
-const CALENDAR_INITIAL_DATE_VALUES = [
-  { label: 'first', apply: 'first', detail: 'Earliest event date', type: 'enum' },
-  { label: 'last', apply: 'last', detail: 'Latest event date', type: 'enum' },
-];
-const YAML_VALUE_SUGGESTIONS: Record<string, SuggestionItem[]> = {
-  type: CHART_TYPE_VALUES,
-  initialview: CALENDAR_VIEW_VALUES,
-  initialdate: CALENDAR_INITIAL_DATE_VALUES,
-  weeknumbers: BOOLEAN_VALUES,
-  expandrows: BOOLEAN_VALUES,
-  skipblankperiods: BOOLEAN_VALUES,
+const VAULTQUERY_FUNCTIONS_BY_SCOPE: Record<'query' | 'trigger', SuggestionItem[]> = {
+  query: buildVaultQueryFunctionItems('query'),
+  trigger: buildVaultQueryFunctionItems('trigger'),
 };
-const SCHEMA_CACHE_TTL_MS = 30_000;
 
-export class VaultQueryCompletionProvider {
-  private schemaCache: SchemaCache = {
+function buildVaultQueryFunctionItems(scope: 'query' | 'trigger'): SuggestionItem[] {
+  return VAULTQUERY_FUNCTION_SIGNATURES
+    .filter((signature) => signature.scope === scope)
+    .map((signature) => ({
+      label: signature.name,
+      displayLabel: `${signature.name}(${signature.args.join(', ')})`,
+      apply: `${signature.name}()`,
+      detail: signature.detail,
+      type: 'function',
+      cursorOffset: signature.name.length + 1,
+    }));
+}
+
+function getVaultQueryFunctionItems(language: string): SuggestionItem[] {
+  return language === 'vaultquery-trigger'
+    ? [...VAULTQUERY_FUNCTIONS_BY_SCOPE.trigger, ...VAULTQUERY_FUNCTIONS_BY_SCOPE.query]
+    : VAULTQUERY_FUNCTIONS_BY_SCOPE.query;
+}
+
+const SCHEMA_CACHE_TTL_MS = 30_000;
+const MAX_PROPERTY_KEY_SUGGESTIONS = 300;
+
+function emptySchemaCache(): SchemaCache {
+  return {
     loadedAt: 0,
     relations: [],
     columns: [],
     functions: [],
     columnsByRelation: new Map(),
+    propertyPlaceholders: [],
   };
+}
+
+export class VaultQueryCompletionProvider {
+  private schemaCache: SchemaCache = emptySchemaCache();
   private schemaCachePromise: Promise<SchemaCache> | null = null;
 
   public constructor(private readonly plugin: VaultQueryPluginContext) {}
 
   public invalidateSchemaCache(): void {
-    this.schemaCache = {
-      loadedAt: 0,
-      relations: [],
-      columns: [],
-      functions: [],
-      columnsByRelation: new Map(),
-    };
+    this.schemaCache = emptySchemaCache();
     this.schemaCachePromise = null;
   }
 
@@ -198,7 +164,8 @@ export class VaultQueryCompletionProvider {
       from: completionContext.from,
       to: completionContext.to,
       options: this.filterItems(options, completionContext.query).map(toCompletion),
-      validFor: /^[\w.{}[\]'",\s-]*$/u,
+      validFor: /^[\w.{}[\]'"-]*$/u,
+      getMatch: getDisplayLabelMatch,
     };
   }
 
@@ -217,11 +184,11 @@ export class VaultQueryCompletionProvider {
       return getYamlCompletionContext(state, fence, pos, explicit, this);
     }
 
-    if (QUERY_BLOCK_LANGUAGES.has(fence.language)) {
+    if (CONFIG_CAPABLE_LANGUAGES.has(fence.language)) {
       return this.getVaultQueryBlockContext(state, fence, pos, explicit);
     }
 
-    if (SQL_LANGUAGES.has(fence.language)) {
+    if (SQL_EDITOR_LANGUAGES.has(fence.language)) {
       return getSqlCompletionContext(state, fence, pos, explicit);
     }
 
@@ -230,9 +197,12 @@ export class VaultQueryCompletionProvider {
 
   private getVaultQueryBlockContext(state: EditorState, fence: ActiveFence, pos: number, explicit: boolean): VaultQueryCompletionContext | null {
     const line = state.doc.lineAt(pos);
-    const inConfig = isInConfigSection(state, fence, line.number);
 
-    if (inConfig) {
+    if (isInTemplateSection(state, fence, line.number)) {
+      return null;
+    }
+
+    if (isInConfigSection(state, fence, line.number)) {
       return getYamlCompletionContext(state, fence, pos, explicit, this);
     }
 
@@ -243,7 +213,13 @@ export class VaultQueryCompletionProvider {
 
     const trimmed = line.text.trim();
     const linePrefix = line.text.slice(0, pos - line.from).trim();
-    if (!trimmed || 'config'.startsWith(linePrefix.toLowerCase()) || 'template'.startsWith(linePrefix.toLowerCase())) {
+    const typedSectionPrefix = Boolean(linePrefix)
+      && ('config'.startsWith(linePrefix.toLowerCase()) || 'template'.startsWith(linePrefix.toLowerCase()));
+
+    const isSectionCandidate = typedSectionPrefix
+      || (!trimmed && !isInsideUnterminatedStatement(state, fence, line.number));
+
+    if (isSectionCandidate) {
       return {
         mode: 'section',
         fence,
@@ -267,7 +243,7 @@ export class VaultQueryCompletionProvider {
           ? QUERY_SECTION_SUGGESTIONS
           : QUERY_SECTION_SUGGESTIONS.filter((item) => item.label === 'config');
       case 'placeholder':
-        return PLACEHOLDER_VALUES;
+        return this.getPlaceholderSuggestions();
       case 'sql':
         return this.getSqlSuggestions(state, context);
       default:
@@ -281,19 +257,12 @@ export class VaultQueryCompletionProvider {
       return providerCompletions.keys.map(toSuggestionItemForKey);
     }
 
-    if (language === 'vaultquery') {
-      return TABLE_CONFIG_KEYS;
-    }
-    if (language === 'vaultquery-markdown') {
-      return MARKDOWN_CONFIG_KEYS;
-    }
-    if (language === 'vaultquery-chart') {
-      return CHART_CONFIG_KEYS;
-    }
-    if (language === 'vaultquery-calendar') {
-      return CALENDAR_CONFIG_KEYS;
-    }
-    return [];
+    return getConfigKeys(language).map((definition) => ({
+      label: definition.key,
+      apply: `${definition.key}: `,
+      detail: definition.detail,
+      type: 'property',
+    }));
   }
 
   private getYamlValues(language: string, key: string): SuggestionItem[] {
@@ -303,12 +272,17 @@ export class VaultQueryCompletionProvider {
       return providerValues.map(toSuggestionItemForValue);
     }
 
-    return YAML_VALUE_SUGGESTIONS[normalizedKey] ?? [];
+    return getConfigValues(language, key).map(toSuggestionItemForConfigValue);
+  }
+
+  private async getPlaceholderSuggestions(): Promise<SuggestionItem[]> {
+    const schema = await this.getSchemaCache();
+    return dedupeItems([...PLACEHOLDER_VALUES, ...schema.propertyPlaceholders]);
   }
 
   private async getSqlSuggestions(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
-    const sqlSource = getSqlSourceForFence(state, context.fence);
-    const beforeCursor = getLinePrefix(state, context.to);
+    const sqlSource = collectFenceSql(state, context.fence);
+    const beforeCursor = getSqlPrefixForCursor(state, context.fence, context.to);
     const sqlContext = getSqlSuggestionContext(beforeCursor);
     const schema = await this.getSchemaCache();
     const aliasMap = extractSqlAliasMap(sqlSource);
@@ -316,16 +290,29 @@ export class VaultQueryCompletionProvider {
     const primaryColumns = qualifiedColumns.length > 0
       ? qualifiedColumns
       : getPrimaryColumnsForContext(aliasMap, schema);
+    const functions = dedupeItems([...getVaultQueryFunctionItems(context.fence.language), ...schema.functions]);
 
     switch (sqlContext) {
       case 'relation':
-        return dedupeItems([...schema.relations, ...SQL_KEYWORDS]);
+        return dedupeItems([...boost(schema.relations, 2), ...SQL_KEYWORDS]);
       case 'column':
-        return dedupeItems([...primaryColumns, ...schema.columns, ...schema.functions, ...SQL_KEYWORDS, ...schema.relations]);
+        return dedupeItems([
+          ...boost(primaryColumns, 2),
+          ...boost(schema.columns, 1),
+          ...functions,
+          ...boost(SQL_KEYWORDS, -1),
+          ...boost(schema.relations, -1),
+        ]);
       case 'function':
-        return dedupeItems([...schema.functions, ...schema.columns, ...SQL_KEYWORDS]);
+        return dedupeItems([...boost(functions, 2), ...schema.columns, ...boost(SQL_KEYWORDS, -1)]);
       default:
-        return dedupeItems([...primaryColumns, ...schema.columns, ...schema.relations, ...schema.functions, ...SQL_KEYWORDS]);
+        return dedupeItems([
+          ...boost(primaryColumns, 1),
+          ...schema.columns,
+          ...schema.relations,
+          ...functions,
+          ...boost(SQL_KEYWORDS, -1),
+        ]);
     }
   }
 
@@ -370,6 +357,7 @@ export class VaultQueryCompletionProvider {
           apply: `${name}()`,
           detail: 'User-defined SQL function',
           type: 'function',
+          cursorOffset: name.length + 1,
         })),
       ]);
 
@@ -396,6 +384,7 @@ export class VaultQueryCompletionProvider {
         columns: Array.from(columnItems.values()).sort((a, b) => a.label.localeCompare(b.label)),
         functions,
         columnsByRelation: buildColumnsByRelation(schema.columns),
+        propertyPlaceholders: await this.loadPropertyPlaceholders(relations),
       };
     }
     catch (error) {
@@ -404,16 +393,38 @@ export class VaultQueryCompletionProvider {
     }
   }
 
+  private async loadPropertyPlaceholders(relations: SuggestionItem[]): Promise<SuggestionItem[]> {
+    if (!this.plugin.api || !relations.some((relation) => relation.label === 'properties')) {
+      return [];
+    }
+
+    try {
+      const rows = await this.plugin.api.query(
+        `SELECT DISTINCT key FROM properties ORDER BY key LIMIT ${MAX_PROPERTY_KEY_SUGGESTIONS}`
+      );
+
+      return rows
+        .map((row) => row.key)
+        .filter((key): key is string => typeof key === 'string' && /^[\w-]+$/u.test(key))
+        .map((key) => ({
+          label: `{this.${key}}`,
+          apply: `{this.${key}}`,
+          detail: 'Frontmatter property of the current note',
+          type: 'variable',
+        }));
+    }
+    catch (error) {
+      logger.debug('Frontmatter placeholder suggestions unavailable', error);
+      return [];
+    }
+  }
+
   private isProviderDefinitionLanguage(language: string): boolean {
     return PROVIDER_DEFINITION_LANGUAGES.has(language);
   }
 
   public isKnownConfigContext(language: string): boolean {
-    return this.isProviderDefinitionLanguage(language)
-      || language === 'vaultquery'
-      || language === 'vaultquery-markdown'
-      || language === 'vaultquery-chart'
-      || language === 'vaultquery-calendar';
+    return this.isProviderDefinitionLanguage(language) || CONFIG_CAPABLE_LANGUAGES.has(language);
   }
 
   public isMultiValueProviderKey(language: string, key: string): boolean {
@@ -425,7 +436,7 @@ export class VaultQueryCompletionProvider {
   public hasYamlValueSuggestions(language: string, key: string): boolean {
     const normalizedKey = key.toLowerCase();
     return Boolean(this.getProviderDefinitionCompletions(language)?.values?.[normalizedKey]?.length)
-      || normalizedKey in YAML_VALUE_SUGGESTIONS;
+      || getConfigValues(language, key).length > 0;
   }
 
   private getProviderDefinitionCompletions(language: string): ProviderDefinitionCompletionConfig | null {
@@ -473,6 +484,12 @@ function getYamlCompletionContext(state: EditorState, fence: ActiveFence, pos: n
   const line = state.doc.lineAt(pos);
   const cursorCh = pos - line.from;
   const beforeCursor = line.text.slice(0, cursorCh);
+
+  const listItem = getYamlListItemContext(state, fence, pos, provider);
+  if (listItem) {
+    return listItem;
+  }
+
   const keyMatch = line.text.match(/^(\s*)([A-Za-z][\w-]*)?\s*(?::\s*(.*))?$/u);
   if (!keyMatch) {
     return null;
@@ -521,6 +538,62 @@ function getYamlCompletionContext(state: EditorState, fence: ActiveFence, pos: n
     query,
     key,
   };
+}
+
+function getYamlListItemContext(state: EditorState, fence: ActiveFence, pos: number, provider: VaultQueryCompletionProvider): VaultQueryCompletionContext | null {
+  if (!PROVIDER_DEFINITION_LANGUAGES.has(fence.language)) {
+    return null;
+  }
+
+  const line = state.doc.lineAt(pos);
+  const listMatch = line.text.match(/^(\s*)-(\s*)/u);
+  if (!listMatch) {
+    return null;
+  }
+
+  const [, indent = '', spacing = ''] = listMatch;
+  const valueStartCh = indent.length + 1 + spacing.length;
+  const cursorCh = pos - line.from;
+  if (cursorCh < valueStartCh) {
+    return null;
+  }
+
+  const parentKey = getEnclosingYamlKey(state, fence, line.number, indent.length);
+  if (!parentKey) {
+    return null;
+  }
+
+  const query = line.text.slice(valueStartCh, cursorCh).trim();
+  if (!query && !provider.hasYamlValueSuggestions(fence.language, parentKey)) {
+    return null;
+  }
+
+  return {
+    mode: 'yamlValue',
+    fence,
+    from: line.from + valueStartCh,
+    to: pos,
+    query,
+    key: parentKey,
+  };
+}
+
+function getEnclosingYamlKey(state: EditorState, fence: ActiveFence, lineNumber: number, indent: number): string | null {
+  for (let current = lineNumber - 1; current > fence.startLine; current--) {
+    const text = state.doc.line(current).text;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    if ((text.match(/^\s*/u)?.[0].length ?? 0) >= indent) {
+      continue;
+    }
+
+    return trimmed.match(/^([A-Za-z][\w-]*)\s*:/u)?.[1] ?? null;
+  }
+
+  return null;
 }
 
 function getPlaceholderCompletionContext(state: EditorState, fence: ActiveFence, pos: number): VaultQueryCompletionContext | null {
@@ -572,9 +645,24 @@ function getSqlCompletionContext(state: EditorState, fence: ActiveFence, pos: nu
   };
 }
 
-function getLinePrefix(state: EditorState, pos: number): string {
+function getSqlPrefixForCursor(state: EditorState, fence: ActiveFence, pos: number): string {
   const line = state.doc.lineAt(pos);
-  return line.text.slice(0, pos - line.from);
+  return collectFenceSql(state, fence, { lineNumber: line.number, endCh: pos - line.from });
+}
+
+function findPhraseLeadWordStart(text: string): number | null {
+  if (!text.endsWith(' ') || text.endsWith('  ')) {
+    return null;
+  }
+
+  const wordMatch = text.slice(0, -1).match(/([A-Za-z]+)$/u);
+  if (!wordMatch) {
+    return null;
+  }
+
+  return SQL_PHRASE_LEAD_WORDS.has(wordMatch[1].toLowerCase())
+    ? text.length - 1 - wordMatch[1].length
+    : null;
 }
 
 export function findSqlCompletionStart(text: string): number {
@@ -584,7 +672,7 @@ export function findSqlCompletionStart(text: string): number {
 
   const lastChar = text[text.length - 1];
   if (/\s|,|\(/u.test(lastChar)) {
-    return text.length;
+    return findPhraseLeadWordStart(text) ?? text.length;
   }
 
   let index = text.length;
@@ -620,13 +708,15 @@ export function getSqlSuggestionContext(beforeCursor: string): SqlSuggestionCont
   return 'generic';
 }
 
-function getSqlSourceForFence(state: EditorState, fence: ActiveFence): string {
+function collectFenceSql(state: EditorState, fence: ActiveFence, cursor?: { lineNumber: number; endCh: number }): string {
   const lines: string[] = [];
+  const lastLine = Math.min(cursor?.lineNumber ?? fence.endLine, fence.endLine, state.doc.lines);
   let inConfig = false;
   let inTemplate = false;
 
-  for (let lineNumber = fence.startLine + 1; lineNumber <= Math.min(fence.endLine, state.doc.lines); lineNumber++) {
-    const text = state.doc.line(lineNumber).text;
+  for (let lineNumber = fence.startLine + 1; lineNumber <= lastLine; lineNumber++) {
+    const fullText = state.doc.line(lineNumber).text;
+    const text = cursor && lineNumber === cursor.lineNumber ? fullText.slice(0, cursor.endCh) : fullText;
     const trimmed = text.trim();
     if (trimmed.startsWith('```')) {
       continue;
@@ -706,6 +796,29 @@ function buildColumnsByRelation(columns: Array<{ relation: string; name: string;
   return map;
 }
 
+function isInsideUnterminatedStatement(state: EditorState, fence: ActiveFence, lineNumber: number): boolean {
+  for (let current = lineNumber - 1; current > fence.startLine; current--) {
+    const trimmed = state.doc.line(current).text.trim();
+    if (!trimmed || trimmed.startsWith('```')) {
+      continue;
+    }
+
+    return !trimmed.endsWith(';');
+  }
+
+  return false;
+}
+
+function isInTemplateSection(state: EditorState, fence: ActiveFence, lineNumber: number): boolean {
+  for (let line = fence.startLine + 1; line < lineNumber; line++) {
+    if (state.doc.line(line).text.trim().startsWith('template:')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function isInConfigSection(state: EditorState, fence: ActiveFence, lineNumber: number): boolean {
   let foundConfig = false;
 
@@ -721,14 +834,6 @@ function isInConfigSection(state: EditorState, fence: ActiveFence, lineNumber: n
   }
 
   return foundConfig;
-}
-
-function skipWhitespace(line: string, start: number): number {
-  let index = start;
-  while (index < line.length && /\s/u.test(line[index])) {
-    index++;
-  }
-  return index;
 }
 
 export function isInsideQuotedString(text: string): boolean {
@@ -748,12 +853,16 @@ export function isInsideQuotedString(text: string): boolean {
   return (singleQuotes % 2) === 1 || (doubleQuotes % 2) === 1;
 }
 
+function boost(items: SuggestionItem[], value: number): SuggestionItem[] {
+  return items.map((item) => ({ ...item, boost: value }));
+}
+
 function dedupeItems(items: SuggestionItem[]): SuggestionItem[] {
   const seen = new Set<string>();
   const deduped: SuggestionItem[] = [];
 
   for (const item of items) {
-    const key = `${item.label}::${item.apply}`;
+    const key = `${item.label}::${item.displayLabel ?? ''}::${item.apply}`;
     if (seen.has(key)) {
       continue;
     }
@@ -764,12 +873,33 @@ function dedupeItems(items: SuggestionItem[]): SuggestionItem[] {
   return deduped;
 }
 
+function getDisplayLabelMatch(completion: Completion, matched?: readonly number[]): readonly number[] {
+  const displayLabel = completion.displayLabel;
+  if (!matched || !displayLabel || !displayLabel.startsWith(completion.label)) {
+    return [];
+  }
+
+  return matched;
+}
+
 function toCompletion(item: SuggestionItem): Completion {
+  const { apply, cursorOffset } = item;
+
   return {
     label: item.label,
-    apply: item.apply,
+    displayLabel: item.displayLabel,
+    apply: cursorOffset === undefined
+      ? apply
+      : (view, _completion, from, to) => {
+        view.dispatch({
+          changes: { from, to, insert: apply },
+          selection: { anchor: from + cursorOffset },
+          userEvent: 'input.complete',
+        });
+      },
     detail: item.detail,
     type: item.type,
+    boost: item.boost,
   };
 }
 
@@ -785,6 +915,16 @@ function toSuggestionItemForKey(item: ProviderDefinitionCompletionItem): Suggest
 function toSuggestionItemForValue(item: ProviderDefinitionCompletionItem): SuggestionItem {
   return {
     label: item.label,
+    apply: item.apply ?? item.label,
+    detail: item.detail,
+    type: item.type ?? 'enum',
+  };
+}
+
+function toSuggestionItemForConfigValue(item: ConfigValueSuggestion): SuggestionItem {
+  return {
+    label: item.label,
+    displayLabel: item.displayLabel,
     apply: item.apply ?? item.label,
     detail: item.detail,
     type: item.type ?? 'enum',

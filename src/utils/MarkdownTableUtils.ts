@@ -14,18 +14,27 @@ export interface ParsedMarkdownTable {
   dataStartLine: number;
 }
 
-export interface MarkdownTableLineInfo {
-  startLine: number;
-  endLine: number;
-  headerLine: number;
-  separatorLine: number;
-  columns: string[];
-  dataStartLine: number;
-}
-
 export class MarkdownTableUtils {
   private static readonly TABLE_ROW_PATTERN = /^\s*\|.*\|\s*$/;
   private static readonly TABLE_ALIGN_ROW_PATTERN = /^\s*\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|\s*$/;
+
+  private static *iterateTables(lines: string[]): Generator<{ startLine: number; endLineExclusive: number }> {
+    let i = 0;
+    while (i < lines.length - 1) {
+      if (this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
+        let j = i + 2;
+        while (j < lines.length && this.isTableRow(lines[j])) j++;
+        yield { startLine: i, endLineExclusive: j };
+        i = j;
+        continue;
+      }
+      i++;
+    }
+  }
+
+  static escapeTableCell(value: string): string {
+    return value.replace(/\|/g, '\\|');
+  }
 
   static splitTableRow(line: string): string[] {
     const cells: string[] = [];
@@ -68,82 +77,53 @@ export class MarkdownTableUtils {
     const tables: MarkdownTable[] = [];
     let tableIdx = 0;
     let currentHeading: string | undefined;
+    let headingScanFrom = 0;
 
-    let i = 0;
-    while (i < lines.length) {
-      const headingMatch = lines[i].match(/^(#{1,6})\s+(.+)$/);
-      if (headingMatch) {
-        currentHeading = headingMatch[2].trim();
-      }
-
-      if (i < lines.length - 1 && this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
-        const start_offset = lineOffsets[i] + contentOffset;
-        let j = i + 2;
-        while (j < lines.length && this.isTableRow(lines[j])) j++;
-
-        let block_id: string | undefined;
-        if (j < lines.length) {
-          const blockMatch = lines[j].match(/\^([\w-]+)\s*$/);
-          if (blockMatch) {
-            block_id = blockMatch[1];
-            j++;
-          }
+    for (const { startLine, endLineExclusive } of this.iterateTables(lines)) {
+      for (let i = headingScanFrom; i <= startLine; i++) {
+        const headingMatch = lines[i].match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+          currentHeading = headingMatch[2].trim();
         }
-
-        const end_offset = lineOffsets[j] + contentOffset;
-        const table_name = block_id ?? currentHeading ?? noteTitle;
-        tables.push({
-          table_index: tableIdx++,
-          table_name,
-          block_id,
-          start_offset,
-          end_offset,
-          line_number: i + 1
-        });
-        i = j;
-        currentHeading = undefined;
-        continue;
       }
-      i++;
+
+      let j = endLineExclusive;
+      let block_id: string | undefined;
+      if (j < lines.length) {
+        const blockMatch = lines[j].match(/\^([\w-]+)\s*$/);
+        if (blockMatch) {
+          block_id = blockMatch[1];
+          j++;
+        }
+      }
+
+      tables.push({
+        table_index: tableIdx++,
+        table_name: block_id ?? currentHeading ?? noteTitle,
+        block_id,
+        start_offset: lineOffsets[startLine] + contentOffset,
+        end_offset: lineOffsets[j] + contentOffset,
+        line_number: startLine + 1
+      });
+      headingScanFrom = j;
+      currentHeading = undefined;
     }
+
     return tables;
   }
 
   static findTableByIndex(content: string, tableIndex: number): { start: number; end: number } | null {
     const lines = content.split('\n');
     const lineOffsets = this.buildLineStartOffsets(lines);
-    let i = 0, found = 0;
-    
-    while (i < lines.length - 1) {
-      const currentLine = lines[i];
-      const nextLine = lines[i + 1];
-      
-      if (this.isTableRow(currentLine) && this.isAlignRow(nextLine)) {
-        
-        if (found === tableIndex) {
-          const start = lineOffsets[i];
-          let j = i + 2;
+    let found = 0;
 
-          while (j < lines.length && this.isTableRow(lines[j])) {
-            j++;
-          }
-
-          const end = lineOffsets[j];
-          return { start, end };
-        }
-        
-        found++;
-        
-        let j = i + 2;
-        while (j < lines.length && this.isTableRow(lines[j])) {
-          j++;
-        }
-        i = j;
-        continue;
+    for (const { startLine, endLineExclusive } of this.iterateTables(lines)) {
+      if (found === tableIndex) {
+        return { start: lineOffsets[startLine], end: lineOffsets[endLineExclusive] };
       }
-      i++;
+      found++;
     }
-    
+
     return null;
   }
 
@@ -225,58 +205,12 @@ export class MarkdownTableUtils {
     };
   }
 
-  static parseTableLines(lines: string[]): MarkdownTableLineInfo[] {
-    const tables: MarkdownTableLineInfo[] = [];
-    let i = 0;
-
-    while (i < lines.length) {
-      if (i + 1 < lines.length && this.isLooseTableRow(lines[i]) && this.isLooseAlignRow(lines[i + 1])) {
-        const headerLine = i;
-        const separatorLine = i + 1;
-        const columns = this.splitTableRow(lines[headerLine]);
-        let endLine = separatorLine;
-
-        for (let j = separatorLine + 1; j < lines.length; j++) {
-          if (lines[j].includes('|')) {
-            endLine = j;
-          } else {
-            break;
-          }
-        }
-
-        tables.push({
-          startLine: headerLine,
-          endLine,
-          headerLine,
-          separatorLine,
-          columns,
-          dataStartLine: separatorLine + 1
-        });
-
-        i = endLine + 1;
-        continue;
-      }
-
-      i++;
-    }
-
-    return tables;
-  }
-
   private static isTableRow(line: string): boolean {
     return MarkdownTableUtils.TABLE_ROW_PATTERN.test(line);
   }
 
   private static isAlignRow(line: string): boolean {
     return MarkdownTableUtils.TABLE_ALIGN_ROW_PATTERN.test(line);
-  }
-
-  private static isLooseTableRow(line: string): boolean {
-    return line.includes('|') && /^\|?(.+?)\|?$/.test(line);
-  }
-
-  private static isLooseAlignRow(line: string): boolean {
-    return /^\|?[\s\-:|]+\|?$/.test(line);
   }
 
   private static isSeparatorCells(cells: string[]): boolean {

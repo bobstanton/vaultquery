@@ -1,21 +1,17 @@
-import { App, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
-import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
 import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
 import { parseSQLObjectName, validateSQLObjectStart } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
+import { createOpenFileHandler } from './ProcessorUtils';
 import type { RenderContext } from '../Renderers/BaseRenderer';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('ViewBlocks');
 
 export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
-  public constructor(app: App, plugin: VaultQueryPluginContext) {
-    super(app, plugin);
-  }
-
   protected getContainerClass(): string {
     return 'vaultquery-container vaultquery-view';
   }
@@ -48,16 +44,17 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       logger.debug(`view="${viewName}" needsRecreation=${needsRecreation} source="${ctx.sourcePath}"`);
       if (needsRecreation) {
         logger.debug(`dropping and recreating view "${viewName}"`);
-        await this.plugin.api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
+        const api = this.requireApi();
+        await api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
-        await this.plugin.api.execute(sql);
+        await api.execute(sql);
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
         logger.debug(`calling reindexNote for "${ctx.sourcePath}"`);
-        await this.plugin.api.reindexNote(ctx.sourcePath);
+        await api.reindexNote(ctx.sourcePath);
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
@@ -79,7 +76,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       const limit = this.plugin.settings.viewPreviewLimit;
 
       const query = `SELECT * FROM "${viewName}" LIMIT ${Math.max(1, limit)}`;
-      const results = await this.plugin.api.query(query);
+      const results = await this.requireApi().query(query);
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
@@ -102,7 +99,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
         parsed: { query },
         container,
         app: this.app,
-        openFile: (path: string) => { void this.app.workspace.openLinkText(path, ''); },
+        openFile: createOpenFileHandler(this.app),
         MarkdownRenderer,
         pluginContext: this.component,
         settings: this.plugin.settings
@@ -122,7 +119,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
   }
 
   private async findDuplicateViewPath(viewName: string, sourcePath: string): Promise<string | null> {
-    const views = await this.plugin.api.getAllUserViews();
+    const views = await this.requireApi().getAllUserViews();
     const duplicate = views.find(view =>
       view.view_name === viewName &&
       view.path !== sourcePath
@@ -132,11 +129,12 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
   }
 
   private async shouldCreateOrRecreateView(viewName: string, sql: string): Promise<boolean> {
-    if (this.plugin.api.viewNeedsRecreation(viewName, sql)) {
+    const api = this.requireApi();
+    if (api.viewNeedsRecreation(viewName, sql)) {
       return true;
     }
 
-    const existing = await this.plugin.api.query(
+    const existing = await api.query(
       `SELECT name FROM sqlite_master WHERE type = 'view' AND name = ${quoteIdentifier(viewName)} LIMIT 1`
     );
 

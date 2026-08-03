@@ -1,4 +1,5 @@
 export {
+  declareVaultQueryProviderBlockLanguages,
   getVaultQueryAPI,
   registerVaultQueryTableProviders,
   waitForVaultQueryAPI,
@@ -22,9 +23,17 @@ export type {
   FileIndexedEvent,
   FileRemovedEvent,
   IVaultQueryAPI,
+  QueryMirrorStatus,
   QueryResult,
   VaultIndexedEvent,
+  VaultQueryCapabilities,
 } from './VaultQueryAPI';
+
+export type {
+  AutocompleteSchemaColumnInfo,
+  AutocompleteSchemaRelationInfo,
+  AutocompleteSchemaShape,
+} from './utils/AutocompleteSchemaUtils';
 
 export type {
   IndexedProviderDefinitionBlock,
@@ -47,7 +56,7 @@ export type {
   VaultQueryTableProvider,
 } from './Providers/TableProviderTypes';
 
-export type { IndexingStats, NoteSource } from './types/types';
+export type { IndexingStats, NoteSource } from './types';
 export type { PreviewResult } from './Services/PreviewService';
 
 export interface VaultQueryPlugin {

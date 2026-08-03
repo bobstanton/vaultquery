@@ -223,6 +223,9 @@ const LINK_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_links_path ON links(path);
 CREATE INDEX IF NOT EXISTS idx_links_target ON links(link_target);
 CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(link_target_path);
+`;
+
+const UNRESOLVED_LINK_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_unresolved_links_path ON unresolved_links(path);
 CREATE INDEX IF NOT EXISTS idx_unresolved_links_target ON unresolved_links(link_target);
 `;
@@ -281,7 +284,7 @@ export function getIndexesForFeatures(features: EnabledFeatures): string {
   if (features.indexTasks) sql += TASK_DEDUP + TASK_INDEXES;
   if (features.indexHeadings) sql += HEADING_DEDUP + HEADING_INDEXES;
   if (features.indexLinks) sql += LINK_INDEXES;
-  if (features.indexUnresolvedLinks) sql += LINK_INDEXES;
+  if (features.indexUnresolvedLinks) sql += UNRESOLVED_LINK_INDEXES;
   if (features.indexEmbeds) sql += EMBED_INDEXES;
   if (features.indexTags) sql += TAG_INDEXES;
   if (features.indexListItems) sql += LIST_ITEM_DEDUP + LIST_ITEM_INDEXES;
@@ -294,16 +297,6 @@ export function getIndexesForFeatures(features: EnabledFeatures): string {
 const VIEWS_AND_TRIGGERS = `
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS tables (
-  path TEXT NOT NULL,
-  table_index INTEGER NOT NULL DEFAULT 0,
-  table_name TEXT,
-  block_id TEXT,
-  start_offset INTEGER,
-  end_offset INTEGER,
-  line_number INTEGER,
-  PRIMARY KEY (path, table_index)
-);
 CREATE INDEX IF NOT EXISTS ix_tables_path ON tables(path);
 
 INSERT OR IGNORE INTO tables(path, table_index, table_name, line_number)
@@ -796,6 +789,32 @@ function getPropertyColumns(propertyKeys: string[]): PropertyColumn[] {
 
 export const PROPERTIES_MAT_TABLE = '_vq_props_mat';
 
+function buildPropertyColumnUpdateStatements(propertyColumnsConfig: PropertyColumn[]): string {
+  return propertyColumnsConfig.map(({columnName, keys}) => {
+    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
+    const columnIdentifier = quoteIdentifier(columnName);
+    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
+  UPDATE properties
+  SET value = NEW.${columnIdentifier}, value_type = 'string'
+  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
+  INSERT INTO properties (path, key, value, value_type, array_index)
+  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
+    );`;
+  }).join('\n');
+}
+
+function buildPropertyColumnInsertStatements(propertyColumnsConfig: PropertyColumn[]): string {
+  return propertyColumnsConfig.map(({columnName}) => {
+    const columnIdentifier = quoteIdentifier(columnName);
+    return `  INSERT INTO properties (path, key, value, value_type, array_index)
+  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
+  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
+  }).join('\n');
+}
+
 function buildPivotSelect(propertyColumnsConfig: PropertyColumn[], pathFilter: string): string {
   const pivotColumns = propertyColumnsConfig.map(({columnName, keys}) => {
     const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
@@ -851,28 +870,8 @@ FROM notes;
   const propertyColumnsConfig = getPropertyColumns(propertyKeys);
   const columnDefs = propertyColumnsConfig.map(({columnName}) => `${quoteIdentifier(columnName)} TEXT`).join(', ');
   const flatColumns = propertyColumnsConfig.map(({columnName}) => `  m.${quoteIdentifier(columnName)}`).join(',\n');
-
-  const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
-    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
-  UPDATE properties
-  SET value = NEW.${columnIdentifier}, value_type = 'string'
-  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
-  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
-    );`;
-  }).join('\n');
-
-  const insertStatements = propertyColumnsConfig.map(({columnName}) => {
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
-  }).join('\n');
+  const updateStatements = buildPropertyColumnUpdateStatements(propertyColumnsConfig);
+  const insertStatements = buildPropertyColumnInsertStatements(propertyColumnsConfig);
 
   return `
 DROP VIEW IF EXISTS notes_with_properties;
@@ -950,28 +949,8 @@ SELECT DISTINCT path FROM properties;
 
   const propertyColumnsConfig = getPropertyColumns(propertyKeys);
   const flatColumns = propertyColumnsConfig.map(({columnName}) => `  ${quoteIdentifier(columnName)}`).join(',\n');
-
-  const updateStatements = propertyColumnsConfig.map(({columnName, keys}) => {
-    const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
-  UPDATE properties
-  SET value = NEW.${columnIdentifier}, value_type = 'string'
-  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
-  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
-    );`;
-  }).join('\n');
-
-  const insertStatements = propertyColumnsConfig.map(({columnName}) => {
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
-  }).join('\n');
+  const updateStatements = buildPropertyColumnUpdateStatements(propertyColumnsConfig);
+  const insertStatements = buildPropertyColumnInsertStatements(propertyColumnsConfig);
 
   return `
 DROP VIEW IF EXISTS note_properties;

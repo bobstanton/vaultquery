@@ -1,7 +1,9 @@
-import type { TableCellRow } from '../Services/ContentLocationService';
+import { asNum, asStr } from './types';
 import { createTableKey } from '../utils/StringUtils';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
 import { logger as rootLogger } from '../utils/logger';
+
+import type { TableCellRow } from '../Services/ContentLocationService';
 
 const logger = rootLogger.scope('WriteSync');
 type Row = Record<string, unknown>;
@@ -31,13 +33,13 @@ function isRow(value: unknown): value is Row {
 }
 
 function extractRowTableKey(r: Row, affectedTables: Set<string>, tableLineNumbers: TableLineNumbers): { path: string; table_index: number; tableKey: string } {
-  const path = r.path as string;
-  const table_index = (r.table_index as number) ?? 0;
+  const path = asStr(r.path);
+  const table_index = asNum(r.table_index, 0);
   const tableKey = createTableKey(path, table_index);
   affectedTables.add(tableKey);
-  const tableLineNumber = r.table_line_number as number | null | undefined;
+  const tableLineNumber = asNum(r.table_line_number, null);
   if (!tableLineNumbers.has(tableKey) || (tableLineNumber != null && tableLineNumbers.get(tableKey) == null)) {
-    tableLineNumbers.set(tableKey, tableLineNumber ?? null);
+    tableLineNumbers.set(tableKey, tableLineNumber);
   }
   return { path, table_index, tableKey };
 }
@@ -70,8 +72,8 @@ export async function appendCellsFromTableRows(rows: Row[], affectedTables: Set<
   const maxRowByTable = new Map<string, number>();
 
   for (const row of rows) {
-    const path = row.path as string;
-    const tableIndex = (row.table_index as number) ?? 0;
+    const path = asStr(row.path);
+    const tableIndex = asNum(row.table_index, 0);
     const tableKey = createTableKey(path, tableIndex);
     if (!maxRowByTable.has(tableKey)) {
       maxRowByTable.set(tableKey, await queryMaxRow(path, tableIndex));
@@ -84,7 +86,7 @@ export async function appendCellsFromTableRows(rows: Row[], affectedTables: Set<
     const { path, table_index, tableKey } = extractRowTableKey(row, affectedTables, tableLineNumbers);
     const baseRowIndex = maxRowByTable.get(tableKey) ?? 0;
     const rowOffset = rowCountByTable.get(tableKey) ?? 0;
-    const rowIndex = (row.row_index as number) ?? (baseRowIndex + rowOffset);
+    const rowIndex = asNum(row.row_index, baseRowIndex + rowOffset);
     rowCountByTable.set(tableKey, rowOffset + 1);
 
     appendCellsFromObject(cellsByTable, tableKey, path, table_index, rowIndex, parseRowJson(row, context), tableLineNumbers);

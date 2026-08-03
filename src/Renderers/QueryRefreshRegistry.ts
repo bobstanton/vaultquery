@@ -22,7 +22,7 @@ interface AutoRefreshResolutionOptions {
 
 export function resolveAutoRefreshSetting(settings: VaultQuerySettings, parsed: ParsedQuery | undefined, resolutionOptions: AutoRefreshResolutionOptions = {}): boolean {
   const options = parsed?.output?.options;
-  const configuredValue = options?.autorefresh ?? options?.['auto-refresh'];
+  const configuredValue = options?.autorefresh;
   const parsedOverride = parseBooleanOption(configuredValue);
   if (parsedOverride !== undefined) {
     return parsedOverride;

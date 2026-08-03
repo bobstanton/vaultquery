@@ -1,14 +1,17 @@
 import { App, Component, MarkdownPostProcessorContext } from 'obsidian';
+import type { VaultQueryAPI } from '../VaultQueryAPI';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
 import { cleanupRenderedOutput } from '../Renderers/RendererCleanup';
+import { addFloatingButtons } from '../Renderers/OutputChrome';
 import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { RenderVersionGuard } from './ProcessorUtils';
 
 export abstract class BaseUserDefinedProcessor {
   protected component: Component;
-  private renderVersions = new WeakMap<HTMLElement, number>();
+  private renderGuard = new RenderVersionGuard();
 
   constructor(protected app: App, protected plugin: VaultQueryPluginContext) {
     this.component = new Component();
@@ -39,7 +42,15 @@ export abstract class BaseUserDefinedProcessor {
   protected abstract processContent(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext, renderVersion: number): void | Promise<void>;
 
   protected isCurrentRender(container: HTMLElement, renderVersion: number): boolean {
-    return this.renderVersions.get(container) === renderVersion;
+    return this.renderGuard.isCurrent(container, renderVersion);
+  }
+
+  protected requireApi(): VaultQueryAPI {
+    const api = this.plugin.api;
+    if (!api) {
+      throw new Error('VaultQuery is not ready. The plugin may have been unloaded.');
+    }
+    return api;
   }
 
   protected renderError(container: HTMLElement, message: string): void {
@@ -50,8 +61,7 @@ export abstract class BaseUserDefinedProcessor {
   }
 
   private async renderWithRefresh(container: HTMLElement, source: string, ctx: MarkdownPostProcessorContext): Promise<void> {
-    const renderVersion = (this.renderVersions.get(container) ?? 0) + 1;
-    this.renderVersions.set(container, renderVersion);
+    const renderVersion = this.renderGuard.begin(container);
 
     cleanupRenderedOutput(container);
 
@@ -74,8 +84,7 @@ export abstract class BaseUserDefinedProcessor {
       return;
     }
 
-    const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-    BaseRenderer.addRefreshButton(buttonContainer, refresh);
+    addFloatingButtons(container, { onRefresh: refresh });
   }
 
   public unload(): void {

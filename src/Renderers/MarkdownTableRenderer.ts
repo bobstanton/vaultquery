@@ -1,5 +1,6 @@
 import { Component } from 'obsidian';
 import { BaseRenderer } from './BaseRenderer';
+import { addFloatingButtons } from './OutputChrome';
 import type { RenderContext } from './BaseRenderer';
 
 interface MarkdownTableConfig {
@@ -11,6 +12,11 @@ const MARKDOWN_PATTERN = /\[\[|!\[|```|`|^\s*[-*+]\s|^\s*\d+\.\s|\*\*|__|\*|_|^#
 const renderComponents = new WeakMap<HTMLElement, Component>();
 
 export class MarkdownTableRenderer extends BaseRenderer {
+  static cleanupContainer(container: HTMLElement): void {
+    renderComponents.get(container)?.unload();
+    renderComponents.delete(container);
+  }
+
   static parseConfig(options?: Record<string, unknown>): MarkdownTableConfig {
     const config: MarkdownTableConfig = {};
 
@@ -48,13 +54,9 @@ export class MarkdownTableRenderer extends BaseRenderer {
         text: 'Query returned no results'
       });
 
-      const buttonContainer = tempContainer.createDiv('vaultquery-floating-buttons');
-      if (onRefresh) {
-        BaseRenderer.addRefreshButton(buttonContainer, onRefresh);
-      }
-
       container.empty();
       container.append(...Array.from(tempContainer.childNodes));
+      addFloatingButtons(container, { onRefresh });
       return;
     }
 
@@ -64,7 +66,7 @@ export class MarkdownTableRenderer extends BaseRenderer {
     }
     const shouldRenderMarkdownContent = context.settings.contentRenderingMode === 'rendered-markdown';
 
-    renderComponents.get(container)?.unload();
+    this.cleanupContainer(container);
     const renderComponent = new Component();
     renderComponent.load();
     renderComponents.set(container, renderComponent);
@@ -119,14 +121,9 @@ export class MarkdownTableRenderer extends BaseRenderer {
       }
     }
 
-    const buttonContainer = tempContainer.createDiv('vaultquery-floating-buttons');
-    BaseRenderer.addCopyAsMarkdownButton(buttonContainer, results, columns);
-    if (onRefresh) {
-      BaseRenderer.addRefreshButton(buttonContainer, onRefresh);
-    }
-
     container.empty();
     container.append(...Array.from(tempContainer.childNodes));
+    addFloatingButtons(container, { results, columns, onRefresh });
   }
 
   private static resolveColumns(results: Record<string, unknown>[], configuredColumns?: string[]): string[] {

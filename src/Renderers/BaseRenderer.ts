@@ -2,7 +2,7 @@ import { App, Component, MarkdownRenderer, setIcon } from 'obsidian';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { splitQuerySections } from '../utils/QueryParsingUtils';
-import { formatIsoDateString, formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
+import { formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 
@@ -180,10 +180,6 @@ export abstract class BaseRenderer {
       columns,
       formatValues: true
     });
-  }
-
-  protected static formatIsoDateString(dateStr: string): string {
-    return formatIsoDateString(dateStr);
   }
 
   static addRefreshButton(buttonContainer: HTMLElement, onRefresh: (force?: boolean) => Promise<void>): void {

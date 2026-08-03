@@ -4,7 +4,7 @@ import { SlickGridRenderer } from './SlickGridRenderer';
 import { ColumnUtils } from '../utils/ColumnUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { ConfirmationModal } from '../Modals/ConfirmationModal';
-import { generateUniqueId } from '../utils/StringUtils';
+import { addFloatingButtons } from './OutputChrome';
 import type { RenderContext } from './BaseRenderer';
 import { previewRowCount, previewTotalRowCount } from '../Services/PreviewService';
 import type { PreviewResult } from '../Services/PreviewService';
@@ -19,38 +19,30 @@ export interface PreviewRenderContext extends RenderContext {
 export class PreviewGridRenderer {
   private static readonly SHOW_CHANGES_BELOW_LABEL = 'Show changes below';
   private static readonly HIDE_CHANGES_BELOW_LABEL = 'Hide changes below';
+  private static readonly DETAILS_COLUMN_ID = 'Details';
 
   static renderPreview(previewResult: PreviewResult, context: PreviewRenderContext): void {
     const { container } = context;
 
     SlickGridRenderer.cleanupContainer(container);
 
-    let containerId = container.id;
-    if (!containerId) {
-      containerId = generateUniqueId('vaultquery-preview');
-      container.id = containerId;
-    }
-
     this.createSqlPreviewSection(previewResult, container, context);
     this.createPreviewGrid(previewResult, container, context);
-    this.createSummarySection(previewResult, container, context);
+    this.createSummarySection(previewResult, container);
     this.createActionButtons(previewResult, container, context);
 
-    const buttonContainer = container.createDiv('vaultquery-floating-buttons');
-
-    const previewData = this.preparePreviewData(previewResult, context);
-    if (previewData.length > 0) {
-      BaseRenderer.addCopyAsMarkdownButton(buttonContainer, previewData);
-    }
+    addFloatingButtons(container, {
+      results: this.preparePreviewData(previewResult),
+      onRefresh: context.onRefresh,
+    });
 
     if (context.onRefresh) {
-      BaseRenderer.addRefreshButton(buttonContainer, context.onRefresh);
       QueryRefreshRegistry.register(container, { onRefresh: context.onRefresh });
     }
   }
 
-  private static createSummarySection(previewResult: PreviewResult, container: HTMLElement, _context: PreviewRenderContext): void {
-    const { op, table, before, after, sqlToApply: _sqlToApply } = previewResult;
+  private static createSummarySection(previewResult: PreviewResult, container: HTMLElement): void {
+    const { op, table, before, after } = previewResult;
     const rowCount = previewRowCount(previewResult);
 
     let summaryText = '';
@@ -130,7 +122,7 @@ export class PreviewGridRenderer {
   }
 
   private static createPreviewGrid(previewResult: PreviewResult, container: HTMLElement, context: PreviewRenderContext): void {
-    const data = this.preparePreviewData(previewResult, context);
+    const data = this.preparePreviewData(previewResult);
 
     if (data.length === 0) {
       return;
@@ -165,11 +157,16 @@ export class PreviewGridRenderer {
   private static setupMultiStatementExpansion(gridContainer: HTMLElement, previewResult: PreviewResult, context: PreviewRenderContext): void {
     const self = PreviewGridRenderer;
 
+    const detailsColumnIndex = self.detailsColumnIndex(previewResult);
+    if (detailsColumnIndex < 0) {
+      return;
+    }
+
     const handleExpandClick = (e: Event) => {
       const target = e.target as HTMLElement;
       const cell = target.closest('.slick-cell') as HTMLElement;
 
-      if (!cell || !self.isChangeDetailsCell(cell)) {
+      if (!cell || !self.isChangeDetailsCell(cell, detailsColumnIndex)) {
         return;
       }
 
@@ -182,7 +179,7 @@ export class PreviewGridRenderer {
       const rowIndex = self.rowIndexOfRowElement(row);
 
       if (rowIndex >= 0 && rowIndex < (previewResult.multiResults?.length || 0)) {
-        self.toggleOperationDetails(gridContainer, rowIndex, previewResult, context);
+        self.toggleOperationDetails(gridContainer, rowIndex, previewResult, context, detailsColumnIndex);
       }
     };
 
@@ -195,21 +192,21 @@ export class PreviewGridRenderer {
     win.setTimeout(() => {
       const cells = gridContainer.querySelectorAll('.slick-cell');
       cells.forEach(cell => {
-        if (self.isChangeDetailsCell(cell)) {
+        if (self.isChangeDetailsCell(cell, detailsColumnIndex)) {
           (cell as HTMLElement).addClass('vaultquery-clickable-cell');
         }
       });
     }, 100);
   }
 
-  private static toggleOperationDetails(gridContainer: HTMLElement, rowIndex: number, previewResult: PreviewResult, context: PreviewRenderContext): void {
+  private static toggleOperationDetails(gridContainer: HTMLElement, rowIndex: number, previewResult: PreviewResult, context: PreviewRenderContext, detailsColumnIndex: number): void {
     const operationData = previewResult.multiResults?.[rowIndex];
     if (!operationData) return;
 
     const existingDetails = gridContainer.querySelector(`[data-details-for="${rowIndex}"]`);
     if (existingDetails) {
       this.removeOperationDetails(existingDetails);
-      this.updateOperationDetailsLabel(gridContainer, rowIndex, false);
+      this.updateOperationDetailsLabel(gridContainer, rowIndex, false, detailsColumnIndex);
       return;
     }
 
@@ -218,7 +215,7 @@ export class PreviewGridRenderer {
       const detailsFor = Number(el.getAttribute('data-details-for'));
       this.removeOperationDetails(el);
       if (!Number.isNaN(detailsFor)) {
-        this.updateOperationDetailsLabel(gridContainer, detailsFor, false);
+        this.updateOperationDetailsLabel(gridContainer, detailsFor, false, detailsColumnIndex);
       }
     });
 
@@ -234,7 +231,7 @@ export class PreviewGridRenderer {
     strong.appendText(`${this.getOperationIcon(operationData.op)} `);
     strong.appendText(`${operationData.op.toUpperCase()} Details - ${operationData.table} table`);
 
-    const detailedData = this.prepareOperationDetailData(operationData, context);
+    const detailedData = this.prepareOperationDetailData(operationData);
 
     if (detailedData.length > 0) {
       const subgridContainer = detailsContainer.createDiv({ cls: 'vaultquery-subgrid' });
@@ -264,7 +261,7 @@ export class PreviewGridRenderer {
       gridContainer.appendChild(detailsContainer);
     }
 
-    this.updateOperationDetailsLabel(gridContainer, rowIndex, true);
+    this.updateOperationDetailsLabel(gridContainer, rowIndex, true, detailsColumnIndex);
   }
 
   private static removeOperationDetails(element: Element): void {
@@ -274,9 +271,20 @@ export class PreviewGridRenderer {
     element.remove();
   }
 
-  private static isChangeDetailsCell(cell: Element): boolean {
-    const text = cell.textContent?.trim();
-    return text === this.SHOW_CHANGES_BELOW_LABEL || text === this.HIDE_CHANGES_BELOW_LABEL;
+  private static detailsColumnIndex(previewResult: PreviewResult): number {
+    const rows = this.prepareMultiStatementData(previewResult);
+    if (rows.length === 0) {
+      return -1;
+    }
+
+    return Object.keys(rows[0])
+      .filter(key => !key.startsWith('_'))
+      .indexOf(this.DETAILS_COLUMN_ID);
+  }
+
+  private static isChangeDetailsCell(cell: Element, detailsColumnIndex: number): boolean {
+    // SlickGrid stamps positional classes (l{index} r{index}) on every cell.
+    return detailsColumnIndex >= 0 && cell.classList.contains(`l${detailsColumnIndex}`);
   }
 
   /**
@@ -301,7 +309,7 @@ export class PreviewGridRenderer {
     return null;
   }
 
-  private static updateOperationDetailsLabel(gridContainer: HTMLElement, rowIndex: number, expanded: boolean): void {
+  private static updateOperationDetailsLabel(gridContainer: HTMLElement, rowIndex: number, expanded: boolean, detailsColumnIndex: number): void {
     const row = this.findRowElement(gridContainer, rowIndex);
     if (!row) {
       return;
@@ -309,7 +317,7 @@ export class PreviewGridRenderer {
 
     const label = expanded ? this.HIDE_CHANGES_BELOW_LABEL : this.SHOW_CHANGES_BELOW_LABEL;
     row.querySelectorAll('.slick-cell').forEach(cell => {
-      if (!this.isChangeDetailsCell(cell)) {
+      if (!this.isChangeDetailsCell(cell, detailsColumnIndex)) {
         return;
       }
 
@@ -320,7 +328,7 @@ export class PreviewGridRenderer {
     });
   }
 
-  private static prepareOperationDetailData(operation: PreviewResult, _context: PreviewRenderContext): Record<string, unknown>[] {
+  private static prepareOperationDetailData(operation: PreviewResult): Record<string, unknown>[] {
     switch (operation.op) {
       case 'insert':
         return this.prepareInsertData(operation.after);
@@ -333,7 +341,7 @@ export class PreviewGridRenderer {
     }
   }
 
-  private static preparePreviewData(previewResult: PreviewResult, _context: PreviewRenderContext): Record<string, unknown>[] {
+  private static preparePreviewData(previewResult: PreviewResult): Record<string, unknown>[] {
     const { op, pkCols, before, after } = previewResult;
 
     switch (op) {
@@ -479,10 +487,10 @@ export class PreviewGridRenderer {
 
     return previewResult.multiResults.map((result, index) => ({
       '#': index + 1,
-      '📋 Action': `${this.getOperationIcon(result.op)} ${result.op.toUpperCase()}`,
-      '🗂️ Table': result.table,
-      '📊 Rows': previewRowCount(result),
-      '🔍 Details': this.SHOW_CHANGES_BELOW_LABEL,
+      'Action': `${this.getOperationIcon(result.op)} ${result.op.toUpperCase()}`,
+      'Table': result.table,
+      'Rows': previewRowCount(result),
+      [this.DETAILS_COLUMN_ID]: this.SHOW_CHANGES_BELOW_LABEL,
       '_operationIndex': index,
       '_operationData': result
     }));

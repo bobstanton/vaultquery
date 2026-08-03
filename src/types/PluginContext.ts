@@ -9,7 +9,7 @@ interface IndexingStateManagerContext {
 }
 
 export interface VaultQueryPluginContext extends Plugin {
-  api: VaultQueryAPI;
+  api: VaultQueryAPI | null;
   settings: VaultQuerySettings;
   indexingStateManager: IndexingStateManagerContext;
   saveSettings(options?: { requiresFullReindex?: boolean }): Promise<void>;

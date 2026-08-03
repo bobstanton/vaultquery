@@ -1,14 +1,9 @@
-import { App, MarkdownPostProcessorContext } from 'obsidian';
-import type { VaultQueryPluginContext } from '../types/PluginContext';
+import { MarkdownPostProcessorContext } from 'obsidian';
 import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
 import { parseFunctionName, validateFunctionSyntax } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
 
 export class FunctionCodeBlockProcessor extends BaseUserDefinedProcessor {
-  public constructor(app: App, plugin: VaultQueryPluginContext) {
-    super(app, plugin);
-  }
-
   protected getContainerClass(): string {
     return 'vaultquery-container vaultquery-function';
   }
@@ -34,8 +29,9 @@ export class FunctionCodeBlockProcessor extends BaseUserDefinedProcessor {
     }
 
     try {
-      if (this.plugin.api.functionNeedsRecreation(functionName, trimmedSource)) {
-        await this.plugin.api.registerCustomFunction(functionName, trimmedSource);
+      const api = this.requireApi();
+      if (api.functionNeedsRecreation(functionName, trimmedSource)) {
+        await api.registerCustomFunction(functionName, trimmedSource);
       }
       this.renderSuccess(container, functionName, trimmedSource);
     }

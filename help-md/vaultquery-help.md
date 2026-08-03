@@ -541,6 +541,24 @@ obsidian vaultquery:query path="Hikes/Trip.md" sql="SELECT value FROM properties
 
 Use the output-specific fence name to choose a renderer. That makes help discoverable by appending `-help` to the fence name, such as `vaultquery-chart-help` or `vaultquery-calendar-help`.
 
+# Shared config options
+
+Every query block accepts these in its `config:` section, whichever renderer it uses.
+
+| Option        | Description |
+|---------------|-------------|
+| `autoRefresh` | Re-run this query when indexed files change. `true` or `false`, overriding the global "Auto refresh on index change" setting for this block |
+
+~~~vaultquery
+SELECT title, path
+FROM notes
+WHERE path LIKE 'Daily/%'
+ORDER BY path DESC;
+
+config:
+autoRefresh: true
+~~~
+
 # Table grid output
 
 `vaultquery` renders results as an interactive table grid by default.

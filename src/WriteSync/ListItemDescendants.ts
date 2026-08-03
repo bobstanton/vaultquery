@@ -41,22 +41,21 @@ function dedupeDescendants(batches: RowRecord[][]): RowRecord[] {
   return expandedRows;
 }
 
-export function expandListItemViewDeletes(rows: RowRecord[], queryDatabase: QueryRowsSync, table?: DescendantTable): RowRecord[];
-export function expandListItemViewDeletes(rows: RowRecord[], queryDatabase: QueryRowsAsync, table?: DescendantTable): Promise<RowRecord[]>;
-export function expandListItemViewDeletes(rows: RowRecord[], queryDatabase: QueryRowsSync | QueryRowsAsync,
-  table: DescendantTable = 'list_items'): RowRecord[] | Promise<RowRecord[]> {
+function descendantQueryParams(row: RowRecord): (string | number | null)[] {
+  const path = asStr(row.path);
+  const listIndex = asNum(row.list_index, 0);
+  const itemIndex = asNum(row.item_index, 0);
+  return [itemIndex, path, listIndex, path, listIndex];
+}
+
+export function expandListItemViewDeletesSync(rows: RowRecord[], queryDatabase: QueryRowsSync,
+  table: DescendantTable = 'list_items'): RowRecord[] {
   const sql = descendantQuery(table);
-  const batches = rows.map(row => {
-    const path = asStr(row.path);
-    const listIndex = asNum(row.list_index, 0);
-    const itemIndex = asNum(row.item_index, 0);
-    return queryDatabase(sql, [itemIndex, path, listIndex, path, listIndex]);
-  });
+  return dedupeDescendants(rows.map(row => queryDatabase(sql, descendantQueryParams(row))));
+}
 
-  // A single adapter produces homogeneous batches: all plain arrays (sync) or all promises (async).
-  if (batches.every((batch): batch is RowRecord[] => !(batch instanceof Promise))) {
-    return dedupeDescendants(batches);
-  }
-
-  return Promise.all(batches as Promise<RowRecord[]>[]).then(dedupeDescendants);
+export async function expandListItemViewDeletesAsync(rows: RowRecord[], queryDatabase: QueryRowsAsync,
+  table: DescendantTable = 'list_items'): Promise<RowRecord[]> {
+  const sql = descendantQuery(table);
+  return dedupeDescendants(await Promise.all(rows.map(row => queryDatabase(sql, descendantQueryParams(row)))));
 }

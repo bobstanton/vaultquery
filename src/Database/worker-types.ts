@@ -1,4 +1,4 @@
-import type { IndexNoteData } from '../types/types.d.ts';
+import type { IndexNoteData } from '../types';
 import type { EnabledFeatures } from './DatabaseSchema';
 
 export type WorkerRequest =
@@ -9,7 +9,6 @@ export type WorkerRequest =
   | { type: 'indexNotesBatch'; id: number; notesData: IndexNoteData[]; isInitialIndexing: boolean }
   | { type: 'createIndexes'; id: number; features?: EnabledFeatures }
   | { type: 'registerFunction'; id: number; name: string; source: string }
-  | { type: 'deleteNote'; id: number; path: string }
   | { type: 'close'; id: number }
   | { type: 'export'; id: number }
   | { type: 'import'; id: number; data: ArrayBuffer }
@@ -22,8 +21,11 @@ export type WorkerRequest =
   | { type: 'getAllUserFunctions'; id: number }
   | { type: 'getAllUserTriggers'; id: number }
   | { type: 'registerTrigger'; id: number; triggerName: string; triggerSql: string; sourcePath?: string }
-  | { type: 'registerUserTriggers'; id: number }
   | { type: 'health'; id: number };
+
+type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never;
+
+export type WorkerRequestBody = WithoutId<WorkerRequest>;
 
 export type WorkerResponse =
   | { type: 'success'; id: number; result?: unknown }

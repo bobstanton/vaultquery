@@ -1,20 +1,8 @@
 import { TFile } from 'obsidian';
-import { PERFORMANCE_MESSAGES } from '../utils/ErrorMessages';
 import type { IndexingStats } from '../types';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('Performance');
-
-export interface IndexingTimings {
-  fmTime: number;
-  frontmatterTime: number;
-  tablesTime: number;
-  tasksTime: number;
-  headingsTime: number;
-  linksTime: number;
-  tagsTime: number;
-  listItemsTime: number;
-}
 
 interface SlowFileEntry {
   path: string;
@@ -31,39 +19,33 @@ export class PerformanceMonitor {
   private lastStats: IndexingStats | null = null;
   private currentSlowFiles: SlowFileEntry[] = [];
   private operationStartTime: number = 0;
-  private totalFilesProcessed: number = 0;
 
   public startOperation(): void {
     this.operationStartTime = performance.now();
     this.currentSlowFiles = [];
-    this.totalFilesProcessed = 0;
   }
 
-  public trackFile(file: TFile, startTime: number, timings: IndexingTimings, needsContentProcessing: boolean): void {
-    const totalTime = performance.now() - startTime;
-    this.totalFilesProcessed++;
-
+  public trackFile(file: TFile, totalTime: number, needsContentProcessing: boolean): void {
     if (totalTime <= PerformanceMonitor.SLOW_THRESHOLD_MS) {
       return;
     }
 
-    const detailedInfo = this.buildDetailedInfo(timings, needsContentProcessing);
+    const details = needsContentProcessing ? 'content+metadata' : 'metadata-only';
 
     this.currentSlowFiles.push({
       path: file.path,
       size: file.stat.size,
       processingTime: totalTime,
-      details: detailedInfo
+      details
     });
 
     if (totalTime > PerformanceMonitor.VERY_SLOW_THRESHOLD_MS) {
-      this.logVerySlowFile(file, totalTime, needsContentProcessing);
+      this.logVerySlowFile(file, totalTime, details);
     }
   }
 
-  public finishOperation(totalFilesProcessed?: number): IndexingStats {
+  public finishOperation(fileCount: number): IndexingStats {
     const totalTime = performance.now() - this.operationStartTime;
-    const fileCount = totalFilesProcessed ?? this.totalFilesProcessed;
 
     this.lastStats = {
       timestamp: Date.now(),
@@ -81,25 +63,16 @@ export class PerformanceMonitor {
     return this.lastStats;
   }
 
-  private buildDetailedInfo(timings: IndexingTimings, needsContentProcessing: boolean): string {
-    if (!needsContentProcessing) {
-      return 'metadata-only';
-    }
-
-    return `content+metadata (fm: ${timings.fmTime.toFixed(1)}ms, frontmatter: ${timings.frontmatterTime.toFixed(1)}ms, tables: ${timings.tablesTime.toFixed(1)}ms, tasks: ${timings.tasksTime.toFixed(1)}ms, headings: ${timings.headingsTime.toFixed(1)}ms, links: ${timings.linksTime.toFixed(1)}ms, tags: ${timings.tagsTime.toFixed(1)}ms, listItems: ${timings.listItemsTime.toFixed(1)}ms)`;
-  }
-
   private getTopSlowFiles(): IndexingStats['slowFiles'] {
     return [...this.currentSlowFiles]
       .sort((a, b) => b.processingTime - a.processingTime)
       .slice(0, PerformanceMonitor.MAX_SLOW_FILES);
   }
 
-  private logVerySlowFile(file: TFile, totalTime: number, needsContentProcessing: boolean): void {
+  private logVerySlowFile(file: TFile, totalTime: number, details: string): void {
     const sizeKB = (file.stat.size / 1024).toFixed(1);
     const timeMs = totalTime.toFixed(0);
-    const details = needsContentProcessing ? 'content+metadata' : 'metadata-only';
 
-    logger.warn(PERFORMANCE_MESSAGES.SLOW_FILE(file.path, sizeKB, timeMs, details));
+    logger.warn(`Slow file: ${file.path} (${sizeKB}KB, ${timeMs}ms, ${details})`);
   }
 }

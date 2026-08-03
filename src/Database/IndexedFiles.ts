@@ -1,4 +1,3 @@
-import { CONSOLE_ERRORS } from '../utils/ErrorMessages';
 import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('IndexedFiles');
@@ -21,7 +20,7 @@ export async function getIndexedFilesFromDatabase(database: IndexedFilesDatabase
     }));
   }
   catch (error) {
-    logger.error(CONSOLE_ERRORS.INDEXED_FILES_ERROR, error);
+    logger.error('Error getting indexed files', error);
     return [];
   }
 }

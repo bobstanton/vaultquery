@@ -1,5 +1,7 @@
-import type { PreviewResult } from './types';
+import { asNum, asStr } from './types';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
+
+import type { PreviewResult } from '../Services/PreviewService';
 
 const META_COLUMNS = new Set(['path', 'table_index', 'row_index', 'table_name', 'rowid']);
 
@@ -7,9 +9,9 @@ export function transformDynamicViewToTableCells(previewResult: PreviewResult): 
   const transformRows = (rows: Record<string, unknown>[]): Record<string, unknown>[] => {
     const result: Record<string, unknown>[] = [];
     for (const row of rows) {
-      const path = row.path as string;
-      const tableIndex = row.table_index as number;
-      const rowIndex = row.row_index as number;
+      const path = asStr(row.path);
+      const tableIndex = asNum(row.table_index, 0);
+      const rowIndex = asNum(row.row_index, 0);
 
       for (const [colName, value] of Object.entries(row)) {
         if (!META_COLUMNS.has(colName)) {

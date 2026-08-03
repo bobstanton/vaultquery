@@ -6,6 +6,7 @@ import timeGridPlugin from '@fullcalendar/timegrid';
 import type { RenderContext } from './BaseRenderer';
 import { parseBooleanOptionOrNull, parseCssDimensionOrNull } from '../utils/ConfigParsingUtils';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
+import { CALENDAR_OPTION_BOUNDS } from '../Constants/BlockConfigCatalog';
 
 declare const activeWindow: Window;
 
@@ -139,22 +140,22 @@ export class CalendarRenderer {
 
     set('expandRows', parseBooleanOptionOrNull(options?.expandrows));
 
-    const firstDay = this.parseBoundedIntegerOption(options?.firstday, 0, 6);
+    const firstDay = this.parseBoundedOption(options?.firstday, 'firstDay');
     if (firstDay !== null) set('firstDay', firstDay as CalendarConfig['firstDay']);
 
     set('weekNumbers', parseBooleanOptionOrNull(options?.weeknumbers));
 
-    set('visibleWeeks', this.parseBoundedIntegerOption(options?.visibleweeks, 1, 6));
+    set('visibleWeeks', this.parseBoundedOption(options?.visibleweeks, 'visibleWeeks'));
 
-    set('mobileVisibleDays', this.parseBoundedIntegerOption(options?.mobilevisibledays, 1, 7));
+    set('mobileVisibleDays', this.parseBoundedOption(options?.mobilevisibledays, 'mobileVisibleDays'));
 
-    set('dayMaxEvents', this.parseIntegerOrBooleanOption(options?.daymaxevents, 0));
+    set('dayMaxEvents', this.parseIntegerOrBooleanOption(options?.daymaxevents, CALENDAR_OPTION_BOUNDS.dayMaxEvents.min));
 
-    set('dayMaxEventRows', this.parseIntegerOrBooleanOption(options?.daymaxeventrows, 0));
+    set('dayMaxEventRows', this.parseIntegerOrBooleanOption(options?.daymaxeventrows, CALENDAR_OPTION_BOUNDS.dayMaxEventRows.min));
 
-    set('dayMinHeight', this.parseBoundedIntegerOption(options?.dayminheight, 40));
+    set('dayMinHeight', this.parseBoundedOption(options?.dayminheight, 'dayMinHeight'));
 
-    set('eventMaxStack', this.parseBoundedIntegerOption(options?.eventmaxstack, 0));
+    set('eventMaxStack', this.parseBoundedOption(options?.eventmaxstack, 'eventMaxStack'));
 
     set('slotMinTime', this.parseDurationOption(options?.slotmintime));
     set('slotMaxTime', this.parseDurationOption(options?.slotmaxtime));
@@ -986,6 +987,11 @@ export class CalendarRenderer {
   private static parseBoundedIntegerOption(value: unknown, min: number, max: number = Number.POSITIVE_INFINITY): number | null {
     const parsed = this.parseIntegerOption(value);
     return parsed !== null && parsed >= min && parsed <= max ? parsed : null;
+  }
+
+  private static parseBoundedOption(value: unknown, option: keyof typeof CALENDAR_OPTION_BOUNDS): number | null {
+    const bounds = CALENDAR_OPTION_BOUNDS[option];
+    return this.parseBoundedIntegerOption(value, bounds.min, bounds.max);
   }
 
   private static parseIntegerOrBooleanOption(value: unknown, min: number): boolean | number | null {

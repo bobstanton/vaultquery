@@ -1,21 +1,15 @@
 import { App, TFile, MetadataCache, normalizePath } from 'obsidian';
 import { escapeRegex, hashString } from '../utils/StringUtils';
-import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import type { TaskMetadataFields } from '../types';
 
 export type Range = { start: number; end: number };
+
+export type LocatedRange = { kind: 'ok'; range: Range } | { kind: 'miss'; reason: string };
 
 export interface InsertionPoint {
   offset: number;
   needsNewlineBefore: boolean;
   needsNewlineAfter: boolean;
-}
-
-export interface TableLocationInfo {
-  path: string;
-  block_id?: string | null;
-  table_start?: number | null;
-  table_end?: number | null;
 }
 
 export interface TableCellRow {
@@ -83,6 +77,13 @@ const TASK_STATUS_MAP: ReadonlyMap<string, { completed: boolean; status: string 
 /** Default task status for unrecognized checkbox characters */
 const DEFAULT_TASK_STATUS_ENTRY = { completed: false, status: 'TODO' };
 
+const DEFAULT_STATUS_CHECKBOX = ' ';
+
+const STATUS_CHECKBOX_MAP: ReadonlyMap<string, string> = new Map([
+  ...Array.from(TASK_STATUS_MAP, ([checkbox, entry]) => [entry.status, checkbox] as const),
+  [DEFAULT_TASK_STATUS_ENTRY.status, DEFAULT_STATUS_CHECKBOX],
+]);
+
 export class ContentLocationService {
   public constructor(private app: App, private metadataCache: MetadataCache) {}
 
@@ -91,6 +92,10 @@ export class ContentLocationService {
    */
   public static getTaskStatus(checkbox: string): { completed: boolean; status: string } {
     return TASK_STATUS_MAP.get(checkbox.toLowerCase()) ?? DEFAULT_TASK_STATUS_ENTRY;
+  }
+
+  public static statusToCheckbox(status: string): string | null {
+    return STATUS_CHECKBOX_MAP.get(status.toUpperCase()) ?? null;
   }
 
   /**
@@ -168,11 +173,11 @@ export class ContentLocationService {
     };
   }
 
-  public locateTask(content: string, row: TaskRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
+  public locateTask(content: string, row: TaskRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeTask);
     if (stableRange) {
       return { kind: "ok", range: stableRange };
-      }
+    }
 
     const fuzzyResult = this.fuzzyTaskInSection(content, row);
     if (fuzzyResult) {
@@ -182,7 +187,7 @@ export class ContentLocationService {
     return { kind: "miss", reason: "Unable to locate task safely" };
   }
 
-  public locateHeading(content: string, row: HeadingRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
+  public locateHeading(content: string, row: HeadingRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeHeading);
     if (stableRange) {
       return { kind: "ok", range: stableRange };
@@ -202,7 +207,7 @@ export class ContentLocationService {
     return { kind: "miss", reason: "Unable to locate heading" };
   }
 
-  public locateListItem(content: string, row: ListItemRow): { kind: "ok"; range: Range } | { kind: "miss"; reason: string } {
+  public locateListItem(content: string, row: ListItemRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeListItem);
     if (stableRange) {
       return { kind: "ok", range: stableRange };
@@ -280,7 +285,7 @@ export class ContentLocationService {
     let m: RegExpExecArray | null;
     while ((m = re.exec(content)) !== null) {
       const raw = m[3] ?? "";
-      const score = ContentLocationService.lcsScore(ContentLocationService.normalizeText(raw), normalized);
+      const score = ContentLocationService.jaccardWordSetSimilarity(ContentLocationService.normalizeText(raw), normalized);
       if (score > (best?.score ?? 0)) {
         const lastNewline = content.lastIndexOf("\n", m.index);
         const start = lastNewline === -1 ? 0 : lastNewline + 1;
@@ -299,7 +304,8 @@ export class ContentLocationService {
     return s.trim().toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}\s]/gu, "");
   }
 
-  private static lcsScore(a: string, b: string): number {
+  /** Jaccard similarity of the two strings' word sets (|A ∩ B| / |A ∪ B|). */
+  private static jaccardWordSetSimilarity(a: string, b: string): number {
     const A = new Set(a.split(" ").filter(Boolean));
     const B = new Set(b.split(" ").filter(Boolean));
     const inter = new Set([...A].filter(x => B.has(x))).size;
@@ -307,7 +313,7 @@ export class ContentLocationService {
     return inter / union;
   }
 
-  static getLineStartOffset(content: string, lineIndex: number): number {
+  public static getLineStartOffset(content: string, lineIndex: number): number {
     if (lineIndex <= 0) return 0;
     let pos = 0, line = 0;
     while (line < lineIndex && pos !== -1) {
@@ -318,13 +324,13 @@ export class ContentLocationService {
     return pos === -1 ? content.length : pos;
   }
 
-  static getLineEndOffset(content: string, lineIndex: number): number {
+  public static getLineEndOffset(content: string, lineIndex: number): number {
     const start = ContentLocationService.getLineStartOffset(content, lineIndex);
     const end = content.indexOf('\n', start);
     return end === -1 ? content.length : end;
   }
 
-  static expandRangeToIncludeNewline(content: string, range: Range): Range {
+  public static expandRangeToIncludeNewline(content: string, range: Range): Range {
     // If the character after the range is a newline, include it in the deletion
     // to avoid leaving blank lines behind.
     if (range.end < content.length && content[range.end] === '\n') {
@@ -342,7 +348,7 @@ export class ContentLocationService {
     const targetLineIndex = lineNumber - 1;
 
     if (targetLineIndex >= lines.length) {
-      return ContentLocationService.findTableInsertionPoint(content);
+      return ContentLocationService.findEndInsertionPoint(content);
     }
 
     if (targetLineIndex <= 0) {
@@ -377,7 +383,7 @@ export class ContentLocationService {
       return ContentLocationService.insertAfterLine(content, lastTaskLineIndex);
     }
 
-    return ContentLocationService.findTableInsertionPoint(content);
+    return ContentLocationService.findEndInsertionPoint(content);
   }
 
   public async findListItemInsertionPoint(content: string, path: string, listIndex: number, queryListItemsByListIndex?: (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>): Promise<InsertionPoint> {
@@ -399,7 +405,7 @@ export class ContentLocationService {
         }
       }
 
-      return ContentLocationService.findTableInsertionPoint(content);
+      return ContentLocationService.findEndInsertionPoint(content);
     }
 
     let lastListItemLineIndex = -1;
@@ -416,10 +422,6 @@ export class ContentLocationService {
       return ContentLocationService.insertAfterLine(content, lastListItemLineIndex);
     }
 
-    return ContentLocationService.findTableInsertionPoint(content);
-  }
-
-  public static findTableInsertionPoint(content: string): InsertionPoint {
     return ContentLocationService.findEndInsertionPoint(content);
   }
 
@@ -438,20 +440,5 @@ export class ContentLocationService {
       needsNewlineBefore: true,
       needsNewlineAfter: false
     };
-  }
-
-  public locateTableRange(content: string, tableInfo: TableLocationInfo): Range | null {
-    if (tableInfo.block_id) {
-      const r = this.rangeFromBlockId(tableInfo.path, tableInfo.block_id);
-      if (r) return r;
-    }
-    
-    if (ContentLocationService.isValidRange(content, tableInfo.table_start, tableInfo.table_end)) {
-      const slice = content.slice(tableInfo.table_start!, tableInfo.table_end!);
-      if (MarkdownTableUtils.isMarkdownTable(slice)) {
-        return { start: tableInfo.table_start!, end: tableInfo.table_end! };
-      }
-    }
-    return null;
   }
 }

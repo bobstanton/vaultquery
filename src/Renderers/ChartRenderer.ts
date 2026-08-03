@@ -3,6 +3,8 @@ import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
 import { BaseRenderer } from './BaseRenderer';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
+import { CHART_TYPES } from '../Constants/BlockConfigCatalog';
+import type { ChartTypeName } from '../Constants/BlockConfigCatalog';
 
 type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null;
 type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
@@ -14,8 +16,7 @@ function ensureChartRegistration(): void {
   isRegistered = true;
 }
 
-const CHART_TYPES = ['bar', 'line', 'pie', 'doughnut', 'scatter'] as const;
-type ChartType = (typeof CHART_TYPES)[number];
+type ChartType = ChartTypeName;
 
 interface ChartConfig {
   type: ChartType;
@@ -34,7 +35,32 @@ export interface ChartContext {
 }
 
 export class ChartRenderer {
-  private static instances = new WeakMap<HTMLElement, Chart>();
+  private static liveCharts = new Set<Chart>();
+
+  static cleanupContainer(container: HTMLElement): void {
+    for (const chart of Array.from(this.liveCharts)) {
+      const canvas = chart.canvas;
+      if (canvas && (container === canvas || container.contains(canvas))) {
+        this.destroyChart(chart);
+      }
+    }
+  }
+
+  static cleanup(): void {
+    for (const chart of Array.from(this.liveCharts)) {
+      this.destroyChart(chart);
+    }
+  }
+
+  private static destroyChart(chart: Chart): void {
+    this.liveCharts.delete(chart);
+    try {
+      chart.destroy();
+    }
+    catch {
+      // Ignore destruction errors during controlled cleanup.
+    }
+  }
 
   static parseConfig(options?: Record<string, unknown>): ChartConfig {
     const config: Partial<ChartConfig> = {};
@@ -57,11 +83,7 @@ export class ChartRenderer {
   static renderChart(context: ChartContext): void {
     const { results, container, config } = context;
 
-    const existingChart = this.instances.get(container);
-    if (existingChart) {
-      existingChart.destroy();
-      this.instances.delete(container);
-    }
+    this.cleanupContainer(container);
 
     container.empty();
     ensureChartRegistration();
@@ -84,7 +106,7 @@ export class ChartRenderer {
 
     try {
       const chart = new Chart(canvas, chartConfig);
-      this.instances.set(container, chart);
+      this.liveCharts.add(chart);
     }
     catch (error) {
       BaseRenderer.renderError(container, {

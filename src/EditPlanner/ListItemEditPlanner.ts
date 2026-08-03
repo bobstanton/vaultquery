@@ -1,6 +1,6 @@
 import { ContentLocationService } from '../Services/ContentLocationService';
 import type { ListItemRow, EntityPlanResult, EntityPlannerContext } from './types';
-import { getBlockIdSuffix, planLineEntityEdits, pushInsertionEdit } from './types';
+import { INSERT_NEW_LINE, getBlockIdSuffix, planLineEntityEdits, pushInsertionEdit } from './types';
 
 type QueryListItemsByListIndex = (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>;
 
@@ -8,8 +8,8 @@ export class ListItemEditPlanner {
   public constructor(private readonly contentLocationService: ContentLocationService) {}
 
   public async planListItemEdits(ctx: EntityPlannerContext, listItems: ListItemRow[], listItemsToDelete: ListItemRow[], queryListItemsByListIndex?: QueryListItemsByListIndex): Promise<EntityPlanResult> {
-    const newListItems = listItems.filter(item => item.line_number === -1);
-    const existingListItems = listItems.filter(item => item.line_number !== -1);
+    const newListItems = listItems.filter(item => item.line_number === INSERT_NEW_LINE);
+    const existingListItems = listItems.filter(item => item.line_number !== INSERT_NEW_LINE);
 
     const { edits, warnings } = planLineEntityEdits(ctx, existingListItems, listItemsToDelete, {
       entityName: 'list items',

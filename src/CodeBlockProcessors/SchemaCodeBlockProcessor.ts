@@ -1,6 +1,7 @@
 import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
+import { getErrorMessage } from '../utils/ErrorMessages';
 
 export class SchemaCodeBlockProcessor {
   private component: Component;
@@ -30,7 +31,29 @@ export class SchemaCodeBlockProcessor {
   }
 
   private async renderSchema(container: HTMLElement): Promise<void> {
-    const schema = await this.plugin.api.getSchemaInfo();
-    void MarkdownRenderer.render(this.app, schema, container, '', this.component);
+    const api = this.plugin.api;
+    if (!api) {
+      container.createDiv({
+        cls: 'vaultquery-help-loading',
+        text: 'VaultQuery is still initializing — re-open this note to load the schema.'
+      });
+      return;
+    }
+
+    try {
+      const schema = await api.getSchemaInfo();
+      await MarkdownRenderer.render(this.app, schema, container, '', this.component);
+    }
+    catch (error: unknown) {
+      container.empty();
+      container.createDiv({
+        cls: 'vaultquery-help-error',
+        text: `Failed to load schema: ${getErrorMessage(error)}`
+      });
+    }
+  }
+
+  public unload(): void {
+    this.component.unload();
   }
 }
