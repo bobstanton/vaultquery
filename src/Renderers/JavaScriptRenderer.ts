@@ -54,6 +54,7 @@ function buildTemplateHelpers() {
 export class JavaScriptRenderer extends BaseRenderer {
   static render(template: string, context: TemplateRenderContext, container: HTMLElement, openFile: (path: string) => void): void {
     let debouncedRender = debouncedRenderers.get(container);
+
     if (!debouncedRender) {
       debouncedRender = debounce(
         (t: string, ctx: TemplateRenderContext, open: (path: string) => void) => {
@@ -62,6 +63,7 @@ export class JavaScriptRenderer extends BaseRenderer {
         DEBOUNCE_MS,
         true
       );
+
       debouncedRenderers.set(container, debouncedRender);
     }
 
@@ -71,21 +73,26 @@ export class JavaScriptRenderer extends BaseRenderer {
   private static renderImmediate(template: string, context: TemplateRenderContext, container: HTMLElement, openFile: (path: string) => void): void {
     try {
       let parent = container.parentElement;
+
       while (parent) {
         if (parent.classList.contains('vaultquery-container') || parent.classList.contains('vaultquery-results')) {
           logger.warn('Detected nested template render attempt, skipping to prevent recursion');
+
           BaseRenderer.renderError(container, {
             title: 'JavaScript rendering error',
             message: 'Cannot render nested queries'
           });
+
           return;
         }
+
         parent = parent.parentElement;
       }
 
       const helpers = buildTemplateHelpers();
 
       container.empty();
+
       renderUserHtmlTemplate({
         template,
         mode: 'function-body',
@@ -103,11 +110,11 @@ export class JavaScriptRenderer extends BaseRenderer {
     catch (error: unknown) {
       logger.error('JavaScript rendering failed', error);
       container.empty();
+
       BaseRenderer.renderError(container, {
         title: 'JavaScript rendering error',
         message: getErrorMessage(error)
       });
     }
   }
-
 }

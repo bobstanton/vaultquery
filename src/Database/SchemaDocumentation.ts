@@ -5,16 +5,54 @@ export interface SchemaColumnDoc {
   defaultVal?: string;
 }
 
+export interface SchemaTable {
+  name: string;
+  description?: string;
+  isView: boolean;
+  columns: SchemaColumnDoc[];
+  notes: string[];
+  section?: string;
+  sectionNote?: string;
+  details?: string[];
+}
+
+export function renderSchemaTables(tables: readonly SchemaTable[]): string {
+  let section: string | undefined;
+
+  return tables.map(table => {
+    const parts: string[] = [];
+
+    if (table.section && table.section !== section) {
+      parts.push(`## ${table.section}\n`);
+      if (table.sectionNote) parts.push(`> ${table.sectionNote}\n`);
+    }
+
+    section = table.section;
+    parts.push(renderSchemaTableDoc(table.name, table.columns, table.isView));
+    parts.push(...table.notes.map(note => `> ${note}`), ...(table.details ?? []));
+
+    return parts.join('\n');
+  }).join('\n\n');
+}
+
+function schemaName(name: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : JSON.stringify(name)
+    .replace(/[|`<>&]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 export function renderSchemaTableDoc(tableName: string, columns: SchemaColumnDoc[], isView = false): string {
-  const header = `### ${tableName}${isView ? ' (VIEW)' : ''}\n\n`;
+  const header = `### ${schemaName(tableName)}${isView ? ' (VIEW)' : ''}\n\n`;
   const hasDefaults = columns.some(c => c.defaultVal);
+
   const tableHeader = hasDefaults
     ? '| Column | Type | Default | Description |\n|--------|------|---------|-------------|\n'
     : '| Column | Type | Description |\n|--------|------|-------------|\n';
+
   const rows = columns.map(c => hasDefaults
-    ? `| \`${c.name}\` | ${c.type} | ${c.defaultVal || ''} | ${c.description} |`
-    : `| \`${c.name}\` | ${c.type} | ${c.description} |`
+    ? `| \`${schemaName(c.name)}\` | ${c.type} | ${c.defaultVal || ''} | ${c.description} |`
+    : `| \`${schemaName(c.name)}\` | ${c.type} | ${c.description} |`
   ).join('\n');
+
   return header + tableHeader + rows + '\n';
 }
 
@@ -48,7 +86,8 @@ export function taskColumnDocs(overrides: Record<string, Partial<SchemaColumnDoc
 export const NOTES_COLUMNS: SchemaColumnDoc[] = [
   { name: 'path', type: 'TEXT', description: 'File path (primary key)' },
   { name: 'title', type: 'TEXT', description: 'Note name (filename without extension)' },
-  { name: 'content', type: 'TEXT', description: 'Full text content' },
+  { name: 'content', type: 'TEXT', description: 'Indexed text without frontmatter; empty when unavailable' },
+  { name: 'content_status', type: 'TEXT', description: 'ready or not_indexed' },
   { name: 'created', type: 'INTEGER', description: 'Creation timestamp (ms)' },
   { name: 'modified', type: 'INTEGER', description: 'Last modified timestamp (ms)' },
   { name: 'size', type: 'INTEGER', description: 'File size in bytes' },

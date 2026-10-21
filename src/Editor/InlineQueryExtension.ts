@@ -1,6 +1,6 @@
 import { EditorView, WidgetType } from '@codemirror/view';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
-import { detectDmlOperationInSql } from '../utils/SQLParsingUtils';
+import { isSelectOnly } from '../utils/SQLParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 import { scalarFromResults } from '../utils/ResultFormatUtils';
 import { processReadingViewInlineCode } from './InlineMarkdownUtils';
@@ -23,24 +23,18 @@ const INLINE_QUERY_TEXT_REGEX = new RegExp(`^${INLINE_QUERY_PATTERN}$`);
 
 function parseInlineQueryText(text: string): string | null {
   const match = text.match(INLINE_QUERY_TEXT_REGEX);
+
   return match?.[1].trim() || null;
 }
 
-function isReadOnlyQuery(sql: string): boolean {
-  if (!/^\s*(SELECT|WITH)\b/i.test(sql)) {
-    return false;
-  }
-
-  return detectDmlOperationInSql(sql) === null;
-}
-
 async function resolveInlineQuery(plugin: VaultQueryPluginContext, sql: string, sourcePath: string): Promise<string> {
-  if (!isReadOnlyQuery(sql)) {
+  if (!isSelectOnly(sql)) {
     throw new Error('Inline queries only support SELECT/WITH statements');
   }
 
   const api = await waitForInlineVaultQueryReady(plugin);
   const results = await api.query(sql, sourcePath);
+
   return scalarFromResults(results);
 }
 
@@ -86,6 +80,7 @@ export function createInlineQueryExtension(plugin: VaultQueryPluginContext) {
 export function processReadingViewInlineQueries(plugin: VaultQueryPluginContext, element: HTMLElement, sourcePath: string): void {
   processReadingViewInlineCode(element, (text) => {
     const sql = parseInlineQueryText(text);
+
     return sql ? createInlineQueryElement(element.ownerDocument, plugin, sql, sourcePath, 'Query error') : null;
   });
 }

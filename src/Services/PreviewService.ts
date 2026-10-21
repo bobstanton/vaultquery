@@ -24,6 +24,8 @@ export type PreviewResult = {
   after: Row[];
   sqlToApply: SqlAndParams[];
   multiResults?: PreviewResult[];
+  planId?: string;
+  dataFileColumns?: readonly string[];
 };
 
 export function previewRowCount(result: Pick<PreviewResult, 'before' | 'after'>): number {
@@ -34,11 +36,20 @@ export function previewTotalRowCount(results: readonly Pick<PreviewResult, 'befo
   return results.reduce((sum, result) => sum + previewRowCount(result), 0);
 }
 
+export function copyPreviewForApply(result: PreviewResult): PreviewResult {
+  return {
+    op: result.op, table: result.table, pkCols: [], ids: [], before: [],
+    after: result.op === 'insert' && result.table === 'table_rows'
+      ? result.after.map(row => ({ path: row.path, table_index: row.table_index })) : [],
+    sqlToApply: structuredClone(result.sqlToApply),
+    multiResults: result.multiResults?.map(copyPreviewForApply),
+  };
+}
+
 export class PreviewService {
   public constructor(private db: Database) {}
 
   public previewDmlFromSql(sql: string, params: unknown[] = []): PreviewResult {
-
     const statements = splitSqlStatements(sql);
 
     if (statements.length > 1) {
@@ -48,6 +59,7 @@ export class PreviewService {
     const cleanedSql = statements.length === 1 ? statements[0] : sql;
 
     this.db.exec('PRAGMA defer_foreign_keys = ON');
+
     try {
       return this.previewSingleStatementDml(cleanedSql, params);
     }
@@ -65,23 +77,26 @@ export class PreviewService {
     if (!table) throw new Error(ERROR_MESSAGES.DML_TABLE_NOT_FOUND);
 
     const pkCols = getPrimaryKeyCols(this.db, table);
+
     return this.previewStatementReadOnly({ sql, op, table, pkCols }, params);
   }
 
   private previewMultiStatementDml(statements: string[], params: unknown[] = []): PreviewResult {
     const validatedStatements: ValidatedStatement[] = [];
-    
+
     for (const stmt of statements) {
       const op = detectDmlOperation(stripLeadingCte(stmt));
+
       if (!op) {
         throw new Error(ERROR_MESSAGES.DML_INVALID_STATEMENT(previewStatementLabel(stmt)));
       }
-      
+
       const table = extractTargetTableViaExplain(this.db, stmt);
+
       if (!table) {
         throw new Error(ERROR_MESSAGES.DML_TABLE_NOT_DETERMINED(previewStatementLabel(stmt)));
       }
-      
+
       validatedStatements.push({ sql: stmt, op, table, pkCols: getPrimaryKeyCols(this.db, table) });
     }
 
@@ -103,7 +118,7 @@ export class PreviewService {
       this.resetDeferredForeignKeys();
 
       const allSqlToApply = multiResults.flatMap(r => r.sqlToApply);
-      
+
       return {
         op: "multi",
         table: `${validatedStatements.length} tables`,
@@ -123,8 +138,9 @@ export class PreviewService {
         // Savepoint rollback is best-effort; preserve the original error below.
         logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
       }
+
       this.resetDeferredForeignKeys();
-      throw new Error(friendlySqliteError(e, activeStatement));
+      throw new Error(friendlySqliteError(e, { table: activeStatement.table }));
     }
   }
 
@@ -141,6 +157,7 @@ export class PreviewService {
     const savepoint = applyChanges ? 'statement_preview' : 'preview';
     const { sql, op, table, pkCols } = statement;
     this.db.exec(`SAVEPOINT ${savepoint}`);
+
     try {
       if (op === "delete") {
         const affected = executeDeleteAndCaptureRows(this.db, table, sql, params);
@@ -165,6 +182,7 @@ export class PreviewService {
 
       let returningList = buildReturningList(pkCols, true);
       let affected: Row[];
+
       try {
         affected = selectRows(this.db, appendOrReplaceReturning(sql, returningList), params);
       }
@@ -179,7 +197,9 @@ export class PreviewService {
       if (op === "update") {
         this.db.exec(`ROLLBACK TO ${savepoint}`);
       }
+
       const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
+
       if (op !== "update") {
         this.db.exec(`ROLLBACK TO ${savepoint}`);
       }
@@ -207,9 +227,11 @@ export class PreviewService {
           logger.info('Savepoint rollback failed during preview cleanup', rollbackError);
         }
       }
+
       if (!applyChanges) {
-        throw new Error(friendlySqliteError(error, { sql, table }));
+        throw new Error(friendlySqliteError(error, { table }));
       }
+
       throw error;
     }
   }
@@ -223,10 +245,12 @@ export class PreviewService {
       if (table === 'list_items_view') {
         return { before: this.expandListItemsViewDeletes(affected), after: [] };
       }
+
       return { before: affected, after: [] };
     }
 
     const before = fetchByIds(this.db, table, pkCols, ids, rowids, true);
+
     if (before.length === 0 && affected.length > 0) {
       before.push(...this.fetchViewRowsByStableKeys(table, affected));
     }
@@ -236,22 +260,25 @@ export class PreviewService {
 
   private fetchViewRowsByStableKeys(table: string, affected: Row[]): Row[] {
     const viewKeyColumns = this.getViewKeyColumns(table, affected[0]);
+
     if (viewKeyColumns.length === 0) {
       return [];
     }
 
     const before: Row[] = [];
+
     for (const affectedRow of affected) {
       const conditions = viewKeyColumns.map(col => `${quoteIdentifier(col)} = ?`).join(' AND ');
       const values = viewKeyColumns.map(col => affectedRow[col]);
       before.push(...selectRows(this.db, `SELECT * FROM ${quoteIdentifier(table)} WHERE ${conditions}`, values));
     }
+
     return before;
   }
 
   private expandListItemsViewDeletes(rows: Row[]): Row[] {
-    const deletableRows = rows.filter(row =>
-      typeof row.path === 'string' && typeof row.list_index === 'number' && typeof row.item_index === 'number');
+    const deletableRows = rows.filter(row => typeof row.path === 'string' && typeof row.list_index === 'number' && typeof row.item_index === 'number');
+
     return expandListItemViewDeletesSync(deletableRows, (sql, params) => selectRows(this.db, sql, params), 'list_items_view');
   }
 
@@ -284,13 +311,14 @@ export class PreviewService {
 
     return [];
   }
-
 }
 
 function selectRows(db: Database, sql: string, params: unknown[] = []): Row[] {
   const stmt = db.prepare(sql);
+
   try {
     stmt.bind(params as (string | number | null | Uint8Array)[]);
+
     return collectStatementRows(stmt);
   } finally {
     stmt.free();
@@ -300,15 +328,22 @@ function selectRows(db: Database, sql: string, params: unknown[] = []): Row[] {
 function buildReturningList(pkCols: string[], tryRowid: boolean): string {
   const parts: string[] = [];
   if (tryRowid) parts.push("rowid");
-  for (const c of pkCols) parts.push(quoteIdentifier(c));
+
+  for (const c of pkCols) {
+    parts.push(quoteIdentifier(c));
+  }
+
   parts.push("*");
+
   return parts.join(", ");
 }
 
 function executeDeleteAndCaptureRows(db: Database, table: string, sql: string, params: unknown[]): Row[] {
   const columns = getTableColumns(db, table);
+
   if (columns.length === 0) {
     db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
+
     return [];
   }
 
@@ -320,6 +355,7 @@ function executeDeleteAndCaptureRows(db: Database, table: string, sql: string, p
   const triggerTiming = getSchemaObjectType(db, table) === 'view' ? 'INSTEAD OF' : 'BEFORE';
 
   db.run(`CREATE TEMP TABLE ${quoteIdentifier(captureTable)} (${columnList})`);
+
   db.run(`CREATE TEMP TRIGGER ${quoteIdentifier(captureTrigger)}
 ${triggerTiming} DELETE ON ${quoteIdentifier(table)}
 BEGIN
@@ -328,6 +364,7 @@ BEGIN
 END;`);
 
   db.run(stripReturningClause(sql), params as (string | number | null | Uint8Array)[]);
+
   return selectRows(db, `SELECT * FROM ${quoteIdentifier(captureTable)}`);
 }
 
@@ -349,16 +386,19 @@ function getSchemaObjectType(db: Database, table: string): string | null {
 
 function tryCollectRowids(rows: Row[]): number[] {
   const out: number[] = [];
+
   for (const r of rows) {
     const v = r.rowid;
     if (typeof v === "number" && Number.isFinite(v)) out.push(v);
   }
+
   return out;
 }
 
 function fetchByIds(db: Database, table: string, pkCols: string[], ids: unknown[][], rowids: number[], preferRowids: boolean = false): Row[] {
   if (preferRowids && rowids.length) {
     const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE rowid IN (${qMarks(rowids.length)})`;
+
     return selectRows(db, sql, rowids);
   }
 
@@ -371,8 +411,10 @@ function fetchByIds(db: Database, table: string, pkCols: string[], ids: unknown[
 
       for (const tuple of ids) {
         const parts: string[] = [];
+
         for (let i = 0; i < pkCols.length; i++) {
           const col = quoteIdentifier(pkCols[i]);
+
           if (tuple[i] === null) {
             parts.push(`${col} IS NULL`);
           }
@@ -381,10 +423,12 @@ function fetchByIds(db: Database, table: string, pkCols: string[], ids: unknown[
             allParams.push(tuple[i]);
           }
         }
+
         conditions.push(`(${parts.join(' AND ')})`);
       }
 
       const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE ${conditions.join(' OR ')}`;
+
       return selectRows(db, sql, allParams);
     }
     else {
@@ -392,13 +436,17 @@ function fetchByIds(db: Database, table: string, pkCols: string[], ids: unknown[
       const placeholders = ids.map(t => `(${qMarks(t.length)})`).join(", ");
       const flatParams = ids.flat();
       const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE (${cols}) IN (${placeholders})`;
+
       return selectRows(db, sql, flatParams);
     }
   }
+
   if (rowids.length) {
     const sql = `SELECT * FROM ${quoteIdentifier(table)} WHERE rowid IN (${qMarks(rowids.length)})`;
+
     return selectRows(db, sql, rowids);
   }
+
   return [];
 }
 
@@ -412,9 +460,10 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
 
   if (syntaxTarget) {
     try {
-      const viewCheck = selectRows(db, `SELECT type FROM sqlite_schema WHERE name = ? AND type = 'view' LIMIT 1`, [syntaxTarget])[0];
+      const viewCheck = selectRows(db, `SELECT name FROM sqlite_schema WHERE name = ? COLLATE NOCASE AND type = 'view' LIMIT 1`, [syntaxTarget])[0];
+
       if (viewCheck) {
-        return syntaxTarget;
+        return String(viewCheck.name);
       }
     }
     catch (error) {
@@ -430,22 +479,27 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
       if (opcode !== "OPENWRITE") continue;
 
       const rootpage = Number(row.p2);
+
       if (!Number.isFinite(rootpage)) {
         continue;
       }
 
       const hit = selectRows(db, `SELECT type, name, tbl_name FROM sqlite_schema WHERE rootpage = ? LIMIT 1`, [rootpage])[0];
+
       if (!hit) {
         continue;
       }
 
       if (String(hit.type).toLowerCase() === "table") {
         const tableName = String(hit.name);
+
         if (tableName === 'sqlite_sequence' && syntaxTarget) {
           return syntaxTarget;
         }
+
         return tableName;
       }
+
       if (String(hit.type).toLowerCase() === "index") {
         return String(hit.tbl_name);
       }
@@ -460,6 +514,7 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
 
 function getPrimaryKeyCols(db: Database, table: string): string[] {
   const rows = selectRows(db, `PRAGMA table_info(${quoteIdentifier(table)})`);
+
   return rows
     .filter(r => Number(r.pk) > 0)
     .sort((a, b) => Number(a.pk) - Number(b.pk))
@@ -468,5 +523,6 @@ function getPrimaryKeyCols(db: Database, table: string): string[] {
 
 function previewStatementLabel(sql: string): string {
   const compact = sql.replace(/\s+/g, ' ').trim();
+
   return compact.length > 50 ? `${compact.substring(0, 50)}...` : compact;
 }

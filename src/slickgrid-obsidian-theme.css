@@ -124,6 +124,7 @@
     font-size: var(--font-ui-medium);
     vertical-align: middle;
     box-sizing: border-box;
+    cursor: default;
 }
 
 .vaultquery-data-grid .slick-cell.selected {
@@ -161,7 +162,7 @@
 }
 
 .vaultquery-data-grid .slick-viewport::-webkit-scrollbar-thumb:hover {
-    background: var(--scrollbar-thumb-bg-hover);
+    background: var(--scrollbar-active-thumb-bg, var(--background-modifier-border-hover));
 }
 
 .vaultquery-data-grid .slick-viewport::-webkit-scrollbar-corner {

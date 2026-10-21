@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer } from 'obsidian';
+import { App } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import * as triggerHelp from '../generated-help/vaultquery-trigger-help.generated';
 import { BaseHelpCodeBlockProcessor } from './BaseHelpCodeBlockProcessor';
@@ -10,9 +10,7 @@ export class TriggerHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
 
   protected renderDynamicContent(container: HTMLElement, key: string): void {
     if (key === 'triggers') {
-      void this.generateTriggersMarkdown().then(markdown => {
-        void MarkdownRenderer.render(this.app, markdown, container, '', this.component);
-      });
+      this.renderGeneratedMarkdown(container, () => this.generateTriggersMarkdown());
     }
     else {
       super.renderDynamicContent(container, key);
@@ -25,10 +23,10 @@ export class TriggerHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
     const sections: string[] = [];
 
     if (triggers.length === 0) {
-      sections.push('> No triggers registered. Create a `vaultquery-trigger` code block to define one.\n');
+      sections.push('> No triggers registered. Use `vaultquery-trigger` to define one.\n');
     }
     else {
-      sections.push('| Trigger Name | Source File | Status |');
+      sections.push('| Trigger | Source file | Status |');
       sections.push('|--------------|-------------|--------|');
 
       for (const trigger of triggers.sort((a, b) => a.trigger_name.localeCompare(b.trigger_name))) {
@@ -36,6 +34,7 @@ export class TriggerHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
         const status = trigger.enabled ? 'Active' : 'Disabled';
         sections.push(`| \`${trigger.trigger_name}\` | ${fileName} | ${status} |`);
       }
+
       sections.push('');
     }
 

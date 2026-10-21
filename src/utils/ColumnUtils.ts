@@ -1,13 +1,8 @@
-export class ColumnUtils {
-  private static readonly metadataColumns = ['created', 'modified', 'title', 'size'];
+const METADATA_COLUMNS = ['created', 'modified', 'title', 'size'];
 
-  public static filterRelevantColumns(columns: string[]): string[] {
-    return columns.filter(col =>
-      col !== 'rowid' &&
-      !col.startsWith('sqlite_') &&
-      !col.startsWith('__') &&
-      !this.metadataColumns.includes(col)
-    );
-  }
-
+export function filterRelevantColumns(columns: string[]): string[] {
+  return columns.filter(column => column !== 'rowid'
+    && !column.startsWith('sqlite_')
+    && !column.startsWith('__')
+    && !METADATA_COLUMNS.includes(column));
 }

@@ -2,7 +2,7 @@ import { MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
 import { BaseUserDefinedProcessor } from './BaseUserDefinedProcessor';
 import { parseSQLObjectName, validateSQLObjectStart } from '../utils/SQLParsingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
-import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
+import { quoteIdentifier, escapeSqlString } from '../utils/SqlIdentifierUtils';
 import { SlickGridRenderer } from '../Renderers/SlickGridRenderer';
 import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { createOpenFileHandler } from './ProcessorUtils';
@@ -21,43 +21,56 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
 
     if (!validateSQLObjectStart(sql, 'VIEW')) {
       this.renderError(container, 'vaultquery-view blocks must start with a CREATE VIEW statement');
+
       return;
     }
 
     const viewName = parseSQLObjectName(sql, 'VIEW');
+
     if (!viewName) {
       this.renderError(container, 'Could not parse view name from CREATE VIEW statement');
+
       return;
     }
 
     try {
       const duplicatePath = await this.findDuplicateViewPath(viewName, ctx.sourcePath);
+
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
+
       if (duplicatePath) {
         this.renderError(container, `Another vaultquery-view block already defines "${viewName}" in ${duplicatePath}`);
+
         return;
       }
 
       const needsRecreation = await this.shouldCreateOrRecreateView(viewName, sql);
       logger.debug(`view="${viewName}" needsRecreation=${needsRecreation} source="${ctx.sourcePath}"`);
+
       if (needsRecreation) {
         logger.debug(`dropping and recreating view "${viewName}"`);
         const api = this.requireApi();
-        await api.execute(`DROP VIEW IF EXISTS "${viewName}"`);
+        await api.execute(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
+
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
+
         await api.execute(sql);
+
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
+
         logger.debug(`calling reindexNote for "${ctx.sourcePath}"`);
         await api.reindexNote(ctx.sourcePath);
+
         if (!this.isCurrentRender(container, renderVersion)) {
           return;
         }
+
         logger.debug(`reindexNote complete for "${ctx.sourcePath}"`);
       }
 
@@ -67,6 +80,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
+
       this.renderError(container, `Failed to create view: ${getErrorMessage(error)}`);
     }
   }
@@ -75,8 +89,9 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
     try {
       const limit = this.plugin.settings.viewPreviewLimit;
 
-      const query = `SELECT * FROM "${viewName}" LIMIT ${Math.max(1, limit)}`;
+      const query = `SELECT * FROM ${quoteIdentifier(viewName)} LIMIT ${Math.max(1, limit)}`;
       const results = await this.requireApi().query(query);
+
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
@@ -86,11 +101,13 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
 
       if (limit === 0) {
         successDiv.createEl('p', { text: 'View preview is disabled in settings.' });
+
         return;
       }
 
       if (results.length === 0) {
         successDiv.createEl('p', { text: 'View is empty (no rows)' });
+
         return;
       }
 
@@ -111,6 +128,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
+
       BaseRenderer.renderError(container, {
         title: `View "${viewName}" created with errors`,
         message: getErrorMessage(error)
@@ -120,8 +138,8 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
 
   private async findDuplicateViewPath(viewName: string, sourcePath: string): Promise<string | null> {
     const views = await this.requireApi().getAllUserViews();
-    const duplicate = views.find(view =>
-      view.view_name === viewName &&
+
+    const duplicate = views.find(view => view.view_name === viewName &&
       view.path !== sourcePath
     );
 
@@ -130,12 +148,13 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
 
   private async shouldCreateOrRecreateView(viewName: string, sql: string): Promise<boolean> {
     const api = this.requireApi();
+
     if (api.viewNeedsRecreation(viewName, sql)) {
       return true;
     }
 
     const existing = await api.query(
-      `SELECT name FROM sqlite_master WHERE type = 'view' AND name = ${quoteIdentifier(viewName)} LIMIT 1`
+      `SELECT name FROM sqlite_master WHERE type = 'view' AND name = '${escapeSqlString(viewName)}' LIMIT 1`
     );
 
     return existing.length === 0;

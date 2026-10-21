@@ -21,6 +21,7 @@ export class HeadingEditPlanner {
 
   private preserveFenceAndId(existing: string): { fence: string; suffix: string } {
     const m = existing.match(/^(#+)\s+.*?(\s+#+\s*)?(\s+\{#.*\})?\s*$/);
+
     return { fence: (m?.[1] ?? "##"), suffix: ((m?.[2] ?? "") + (m?.[3] ?? "")) };
   }
 
@@ -28,6 +29,7 @@ export class HeadingEditPlanner {
     const { fence, suffix } = existing
       ? this.preserveFenceAndId(existing)
       : { fence: "#".repeat(row.level || 1), suffix: "" };
+
     const blockIdSuffix = getBlockIdSuffix(row.block_id, existing);
 
     return `${fence} ${row.heading_text}${suffix}${blockIdSuffix}`.trimEnd();

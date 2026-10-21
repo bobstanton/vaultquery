@@ -1,13 +1,56 @@
 import type { Database } from 'sql.js';
 import { processEscapeSequences } from '../utils/StringUtils';
+import { convertDistance, parseNumber } from '../utils/MeasurementUtils';
+import { pathName, pathParent, pathBasename, pathExtension } from '../utils/PathUtils';
 
 type MarkdownLinkGenerator = (path: string, subpath: string, alias: string | null) => string | null;
 
+function regexText(value: unknown): string | null {
+  if (typeof value === 'number') return String(value);
+
+  return typeof value === 'string' ? value : null;
+}
+
 export class SharedSQLFunctions {
+  protected static registerMeasurementFunctions(db: Database): void {
+    db.create_function('parse_number', (value: unknown) => parseNumber(value));
+    db.create_function('convert_distance', (value: unknown, targetUnit: unknown) => convertDistance(value, targetUnit));
+    db.create_function('convert_distance', (value: unknown, targetUnit: unknown, bareUnit: unknown) => convertDistance(value, targetUnit, bareUnit));
+  }
+
+  static normalizeWikilink(wikilink: unknown): string | null {
+    if (typeof wikilink !== 'string') return null;
+
+    let linkText = wikilink.trim();
+
+    if (linkText.startsWith('[[') && linkText.endsWith(']]')) {
+      linkText = linkText.slice(2, -2);
+    }
+
+    const pipeIndex = linkText.indexOf('|');
+
+    if (pipeIndex !== -1) {
+      linkText = linkText.substring(0, pipeIndex);
+    }
+
+    const hashIndex = linkText.indexOf('#');
+
+    if (hashIndex !== -1) {
+      linkText = linkText.substring(0, hashIndex);
+    }
+
+    linkText = linkText.trim();
+
+    return linkText || null;
+  }
+
   protected static registerRegexFunctions(db: Database): void {
     // SQLite translates "X REGEXP Y" to "regexp(Y, X)" (pattern first, text second)
-    db.create_function('regexp', (pattern: string, text: string) => {
-      if (pattern === null || text === null) return 0;
+    db.create_function('regexp', (patternValue: unknown, textValue: unknown) => {
+      const pattern = regexText(patternValue);
+      const text = regexText(textValue);
+      if (pattern === null || text === null) return null;
+
       try {
         return new RegExp(pattern).test(text) ? 1 : 0;
       }
@@ -18,11 +61,15 @@ export class SharedSQLFunctions {
     });
 
     // Processes escape sequences in replacement: \n, \t, \r, \\
-    db.create_function('regexp_replace', (text: string, pattern: string, replacement: string) => {
-      if (text == null) return null;
-      if (pattern == null) return text;
+    db.create_function('regexp_replace', (textValue: unknown, patternValue: unknown, replacementValue: unknown) => {
+      const text = regexText(textValue);
+      const pattern = regexText(patternValue);
+      const replacement = regexText(replacementValue);
+      if (text === null || pattern === null || replacement === null) return null;
+
       try {
-        const processedReplacement = processEscapeSequences(replacement ?? '');
+        const processedReplacement = processEscapeSequences(replacement);
+
         return text.replace(new RegExp(pattern, 'g'), processedReplacement);
       }
 
@@ -32,19 +79,20 @@ export class SharedSQLFunctions {
     });
   }
 
-  protected static registerLinkFunctions(db: Database, generateMarkdownLink?: MarkdownLinkGenerator): void {
-    const makeLink = (path: string, anchor: string, display: string | null): string | null => {
-      if (path == null) return null;
-      if (generateMarkdownLink) {
-        const generated = generateMarkdownLink(path, anchor, display);
-        if (generated) return generated;
-      }
-      return display != null ? `[[${path}${anchor}|${display}]]` : `[[${path}${anchor}]]`;
+  protected static registerLinkFunctions(db: Database, generateMarkdownLink: MarkdownLinkGenerator): void {
+    const makeLink = (path: string, anchor: string | null, display: string | null): string | null => {
+      if (typeof path !== 'string' || anchor === null || (display != null && typeof display !== 'string')) return null;
+
+      return generateMarkdownLink(path, anchor, display);
     };
-    const headingAnchor = (heading: string | null): string => heading != null ? `#${heading}` : '';
-    const blockAnchor = (blockId: string | null): string => {
+
+    const headingAnchor = (heading: string | null): string | null => heading == null ? '' : typeof heading === 'string' ? `#${heading}` : null;
+
+    const blockAnchor = (blockId: string | null): string | null => {
       if (blockId == null) return '';
+      if (typeof blockId !== 'string') return null;
       const cleanBlockId = blockId.startsWith('^') ? blockId.substring(1) : blockId;
+
       return `#^${cleanBlockId}`;
     };
 
@@ -66,35 +114,10 @@ export class SharedSQLFunctions {
   }
 
   protected static registerPathFunctions(db: Database): void {
-    const extractFilename = (path: string): string | null => {
-      if (path == null) return null;
-      const lastSlash = path.lastIndexOf('/');
-      return lastSlash === -1 ? path : path.substring(lastSlash + 1);
-    };
-
-    db.create_function('filename', extractFilename);
-
-    db.create_function('path_name', extractFilename);
-
-    db.create_function('path_basename', (path: string) => {
-      const name = extractFilename(path);
-      if (name === null) return null;
-      const lastDot = name.lastIndexOf('.');
-      return lastDot === -1 ? name : name.substring(0, lastDot);
-    });
-
-    db.create_function('path_extension', (path: string) => {
-      const name = extractFilename(path);
-      if (name === null) return null;
-      const lastDot = name.lastIndexOf('.');
-      return lastDot === -1 ? '' : name.substring(lastDot + 1);
-    });
-
-    db.create_function('path_parent', (path: string) => {
-      if (path == null) return null;
-      const lastSlash = path.lastIndexOf('/');
-      return lastSlash === -1 ? '' : path.substring(0, lastSlash);
-    });
+    for (const [name, parse] of Object.entries({ filename: pathName, path_name: pathName,
+      path_basename: pathBasename, path_extension: pathExtension, path_parent: pathParent })) {
+      db.create_function(name, (path: unknown) => typeof path === 'string' ? parse(path) : null);
+    }
   }
 
   protected static registerDateFunctions(db: Database): void {
@@ -108,7 +131,7 @@ export class SharedSQLFunctions {
   }
 
   protected static parseDate(text: string): string | null {
-    if (text == null) return null;
+    if (typeof text !== 'string') return null;
 
     const monthNames: Record<string, string> = {
       'january': '01', 'february': '02', 'march': '03', 'april': '04',
@@ -120,12 +143,15 @@ export class SharedSQLFunctions {
     };
 
     const pad = (n: string | number): string => String(n).padStart(2, '0');
+
     const formatNumericDate = (year: string, monthValue: string, dayValue: string): string | null => {
       const month = parseInt(monthValue, 10);
       const day = parseInt(dayValue, 10);
+
       if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
         return `${year}-${pad(month)}-${pad(day)}`;
       }
+
       return null;
     };
 
@@ -150,9 +176,11 @@ export class SharedSQLFunctions {
         regex: /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b/i,
         extract: (m) => {
           const month = monthNames[m[1].toLowerCase()];
+
           if (month) {
             return `${m[3]}-${month}-${pad(m[2])}`;
           }
+
           return null;
         }
       },
@@ -161,9 +189,11 @@ export class SharedSQLFunctions {
         regex: /\b(\d{1,2})(?:st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec),?\s*(\d{4})\b/i,
         extract: (m) => {
           const month = monthNames[m[2].toLowerCase()];
+
           if (month) {
             return `${m[3]}-${month}-${pad(m[1])}`;
           }
+
           return null;
         }
       },
@@ -176,8 +206,10 @@ export class SharedSQLFunctions {
 
     for (const { regex, extract } of patterns) {
       const match = text.match(regex);
+
       if (match) {
         const result = extract(match);
+
         if (result) {
           const [year, month, day] = result.split('-').map(Number);
           const date = new Date(year, month - 1, day);
@@ -193,19 +225,21 @@ export class SharedSQLFunctions {
   }
 
   protected static formatDate(dateStr: string, format: string): string | null {
-    if (dateStr == null) return null;
+    if (typeof dateStr !== 'string' || (format != null && typeof format !== 'string')) return null;
     if (format == null) return dateStr;
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
+
     const monthAbbrev = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayAbbrev = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     let year: number, month: number, day: number;
     const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
     if (isoMatch) {
       year = parseInt(isoMatch[1], 10);
       month = parseInt(isoMatch[2], 10);
@@ -214,6 +248,7 @@ export class SharedSQLFunctions {
 
     else {
       const compactMatch = dateStr.match(/^(\d{4})(\d{2})(\d{2})$/);
+
       if (compactMatch) {
         year = parseInt(compactMatch[1], 10);
         month = parseInt(compactMatch[2], 10);
@@ -226,6 +261,7 @@ export class SharedSQLFunctions {
     }
 
     const date = new Date(year, month - 1, day);
+
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
       return null;
     }
@@ -240,6 +276,7 @@ export class SharedSQLFunctions {
     // private-use code point avoids the control-character regex warning that a
     // NUL sentinel triggers, and cannot occur in real date directive output.)
     const ESCAPED_PERCENT = '\uF8FF';
+
     return format
       .replace(/%%/g, ESCAPED_PERCENT)
       .replace(/%Y/g, String(year))
@@ -258,25 +295,29 @@ export class SharedSQLFunctions {
 
   protected static registerGeoFunctions(db: Database): void {
     db.create_function('geo_lat', (text: string) => {
-      if (text == null) return null;
+      if (typeof text !== 'string') return null;
       const coords = this.parseCoordinates(text);
+
       return coords ? coords.lat : null;
     });
 
     db.create_function('geo_lng', (text: string) => {
-      if (text == null) return null;
+      if (typeof text !== 'string') return null;
       const coords = this.parseCoordinates(text);
+
       return coords ? coords.lng : null;
     });
 
     db.create_function('geo_distance_mi', (lat1: number, lng1: number, lat2: number, lng2: number) => {
       if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
       const km = this.haversineDistance(lat1, lng1, lat2, lng2);
+
       return km * 0.621371; // Convert km to miles
     });
 
     db.create_function('geo_distance_km', (lat1: number, lng1: number, lat2: number, lng2: number) => {
       if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
+
       return this.haversineDistance(lat1, lng1, lat2, lng2);
     });
   }
@@ -291,9 +332,11 @@ export class SharedSQLFunctions {
 
     for (const pattern of patterns) {
       const match = text.match(pattern);
+
       if (match) {
         const lat = parseFloat(match[1]);
         const lng = parseFloat(match[2]);
+
         if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
           return { lat, lng };
         }

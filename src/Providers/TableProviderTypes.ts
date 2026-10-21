@@ -1,3 +1,5 @@
+import type { TabularDocument } from '../Tabular/TabularTypes';
+
 export type ProviderColumnType = 'TEXT' | 'INTEGER' | 'REAL' | 'BLOB';
 
 export interface ProviderColumnDefinition {
@@ -37,10 +39,7 @@ export interface ProviderDefinitionBlockContext {
 
 export interface ProviderDefinitionBlock {
   language: string;
-  parse: (
-    source: string,
-    context: ProviderDefinitionBlockContext
-  ) => Promise<ProviderRefreshDefinition> | ProviderRefreshDefinition;
+  parse: (source: string, context: ProviderDefinitionBlockContext) => Promise<ProviderRefreshDefinition> | ProviderRefreshDefinition;
   completions?: ProviderDefinitionCompletionConfig;
 }
 
@@ -63,6 +62,23 @@ export interface ProviderRefreshContext {
   requestedTables?: string[];
   request?: Record<string, unknown>;
   existingStatus: TableProviderStatus[];
+  existingSnapshots?: ProviderSnapshotMetadata[];
+  signal?: AbortSignal;
+}
+
+export interface ProviderSnapshotMetadata {
+  table: string;
+  revision: string;
+  asOf: number;
+  validatedAt?: number;
+  expiresAt: number;
+  etag?: string;
+  lastModified?: string;
+}
+
+export interface ProviderTableSnapshot extends ProviderSnapshotMetadata {
+  kind: 'table';
+  document: TabularDocument;
 }
 
 export type ProviderRowValue = string | number | boolean | null;
@@ -70,20 +86,14 @@ export type ProviderRowValue = string | number | boolean | null;
 export interface ProviderTableRows {
   replaceWhere?: Record<string, ProviderRowValue>;
   rows: Record<string, ProviderRowValue>[];
-  /**
-   * Timestamp, in epoch milliseconds, for when the provider data was fetched or last updated.
-   * If omitted, VaultQuery uses the materialization time.
-   */
   asOf?: number;
-  /**
-   * Timestamp, in epoch milliseconds, for when this provider data should expire.
-   * If omitted, VaultQuery uses the table's default expiration window from materialization time.
-   */
   expiresAt?: number;
 }
 
 export interface ProviderRefreshResult {
   tables: Record<string, ProviderTableRows>;
+  snapshots?: ProviderTableSnapshot[];
+  unchangedSnapshots?: ProviderSnapshotMetadata[];
 }
 
 export interface ProviderTablesChangedEvent {
@@ -96,8 +106,10 @@ export interface VaultQueryTableProvider {
   id: string;
   displayName: string;
   tables: ProviderTableDefinition[];
+  definitionTables?: { format: 'csv' | 'json'; readOnly: true };
   definitionBlock: ProviderDefinitionBlock;
   refresh: (context: ProviderRefreshContext) => Promise<ProviderRefreshResult>;
+  whenIdle?: () => Promise<void>;
 }
 
 export interface TableProviderRegistration {
@@ -118,6 +130,10 @@ export interface TableProviderStatus {
   expiresAt?: number;
   lastError?: string;
   active: boolean;
+  lastValidatedAt?: number;
+  snapshotRevision?: string;
+  snapshotState?: 'pending' | 'ready' | 'stale' | 'refreshing' | 'unavailable';
+  schemaChanged?: boolean;
 }
 
 export interface IndexedProviderDefinitionBlock {

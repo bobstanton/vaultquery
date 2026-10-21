@@ -1,3 +1,5 @@
+import { TAG_NAME_CHARACTER } from './TagSyntax';
+
 const DATE_PATTERN = String.raw`\d{4}-\d{2}-\d{2}`;
 
 export const TASK_PRIORITY_EMOJIS: ReadonlyArray<{ emoji: string; priority: string }> = [
@@ -23,7 +25,7 @@ export const TASK_RECURRENCE_REGEX = new RegExp(`🔁\\s*([^${TASK_RECURRENCE_TE
 export const TASK_ON_COMPLETION_REGEX = /🏁\s*(\w+)/;
 export const TASK_ID_REGEX = /🆔\s*([\w-]+)/;
 export const TASK_DEPENDS_ON_REGEX = /⛔\s*([\w,-]+)/;
-export const TASK_TAGS_REGEX = /#[\w-]+/g;
+export const TASK_TAGS_REGEX = new RegExp(`#${TAG_NAME_CHARACTER}+`, 'g');
 
 export interface TaskMetadata {
   priority?: string;

@@ -1,9 +1,10 @@
 import initSqlJs from 'sql.js';
 import type { Database, SqlJsStatic, Statement } from 'sql.js';
 import { WorkerSQLFunctions } from './WorkerSQLFunctions';
-import { migrateLinksColumns } from './DatabaseSchema';
+import { withReadOnlyQuery } from './ReadOnlyQuery';
+import { QueryBatchCursors, queryChangesDatabase } from './QueryIteration';
 import type { EnabledFeatures } from './DatabaseSchema';
-import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache, LINKS_MIGRATED_LOG_MESSAGE } from './SchemaOperations';
+import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache } from './SchemaOperations';
 import type { IndexCreationState } from './SchemaOperations';
 import { StatementCache } from './StatementCache';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
@@ -12,9 +13,10 @@ import type { WorkerRequest, WorkerResponse } from './worker-types';
 import type { IndexNoteData } from '../types';
 import { hashString } from '../utils/StringUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { SerialQueue } from '../utils/SerialQueue';
 import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
-import { queryStatementRows, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
+import { queryStatementRows, queryStatementValues, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
 import { exportWithRuntimeStateRestore, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
 import type { UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
@@ -26,18 +28,27 @@ import type { IndexingLogger, IndexingDbAdapter } from './IndexingOperations';
 const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 
 let db: Database | null = null;
+
+const queryCursors = new QueryBatchCursors(() => {
+  if (!db) throw new Error('Database not initialized');
+
+  return db;
+});
+
 let sqlJsModule: SqlJsStatic | null = null;
 let schemaManager: DatabaseSchemaManager | null = null;
 const indexState: IndexCreationState = { indexesCreated: false, enabledFeatures: null };
 const multiRowInsertSqlCache = new Map<string, string>();
+
 const logger: IndexingLogger = {
   debug: () => {},
   warn: (message: string, ...data: unknown[]) => console.warn(`[Worker] ${message}`, ...data),
   error: (message: string, ...data: unknown[]) => console.error(`[Worker] ${message}`, ...data),
 };
+
 const statementCache = new StatementCache(PREPARED_STATEMENT_CACHE_LIMIT, (message, error) => logger.warn(message, error));
 const registeredCustomFunctionSources = new Map<string, string>();
-const matRefreshSqlCache = new MatRefreshSqlCache((message, error) => logger.warn(message, error));
+const matRefreshSqlCache = new MatRefreshSqlCache();
 
 function respond(response: WorkerResponse, transfer?: Transferable[]): void {
   if (transfer && transfer.length > 0) {
@@ -47,12 +58,25 @@ function respond(response: WorkerResponse, transfer?: Transferable[]): void {
   }
 }
 
+function resultTransfers(rows: Record<string, unknown>[]): ArrayBuffer[] {
+  const buffers = new Set<ArrayBuffer>();
+
+  for (const row of rows) {
+    for (const value of Object.values(row)) {
+      if (value instanceof Uint8Array && value.buffer instanceof ArrayBuffer) buffers.add(value.buffer);
+    }
+  }
+
+  return [...buffers];
+}
+
 function handleError(id: number, error: unknown): void {
-  respond({ type: 'error', id, error: getErrorMessage(error) });
+  respond({ type: 'error', id, error: getErrorMessage(error), name: error instanceof Error ? error.name : undefined });
 }
 
 function getPreparedStatement(sql: string): Statement {
   if (!db) throw new Error('Database not initialized');
+
   return statementCache.get(db, sql);
 }
 
@@ -76,7 +100,7 @@ function batchDeleteByIds(tableName: string, ids: number[]): void {
 
 function createSchema(): void {
   if (!db) throw new Error('Database not initialized');
-  createSchemaCore(db, message => logger.warn(message));
+  createSchemaCore(db);
   indexState.indexesCreated = false;
 }
 
@@ -95,6 +119,7 @@ function checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<
     timestamp: new Date().toISOString(),
     mode: 'worker',
     preparedStatementCount: statementCache.size,
+    queryCursorCount: queryCursors.size,
     indexesCreated: indexState.indexesCreated,
   });
 }
@@ -102,11 +127,13 @@ function checkHealth(): { healthy: boolean; error?: string; diagnostics: Record<
 function createIndexingAdapter(): IndexingDbAdapter {
   if (!db) throw new Error('Database not initialized');
   const activeDb = db;
+
   return {
-    exec: (sql, params) => activeDb.exec(sql, params as (string | number | null | Uint8Array)[] | undefined),
+    exec: (sql, params) => queryStatementValues(getPreparedStatement(sql), params as (string | number | null | Uint8Array)[] | undefined),
     run: (sql, params) => activeDb.run(sql, params as (string | number | null | Uint8Array)[]),
     runPrepared: (sql, params) => {
       const stmt = getPreparedStatement(sql);
+
       runPreparedStatement(stmt, params, resetError => {
         logger.warn('Failed to reset prepared statement', resetError);
       });
@@ -145,6 +172,7 @@ function replaceUserTriggers(path: string, userTriggers?: IndexNoteData['userTri
 
 function propertiesMatRefreshSql(): { deleteSql: string; insertSql: string } | null {
   if (!db) return null;
+
   return matRefreshSqlCache.get(db, getAllPropertyKeys);
 }
 
@@ -156,6 +184,7 @@ function registerCustomFunction(name: string, source: string): void {
 
 function performIndexingOperations(data: IndexNoteData, skipDeletes: boolean): void {
   const adapter = createIndexingAdapter();
+
   performIndexingOperationsCore(adapter, data, skipDeletes, {
     insertNote: note => insertNoteCore(adapter, note),
     replaceProperties,
@@ -172,14 +201,19 @@ function withTx<T>(fn: () => T): T {
   if (!db) throw new Error('Database not initialized');
 
   db.run('BEGIN TRANSACTION');
+
   try {
     const result = fn();
     db.run('COMMIT');
+
     return result;
   } catch (error) {
-    try { db.run('ROLLBACK'); } catch {
+    try {
+      db.run('ROLLBACK');
+    } catch {
       // The original error is more useful than a failed rollback.
     }
+
     throw error;
   }
 }
@@ -223,6 +257,7 @@ function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: s
   if (sourcePath) {
     const sqlHash = hashString(triggerSql);
     const stmt = getPreparedStatement(INDEXING_SQL.INSERT_USER_TRIGGER);
+
     runPreparedStatement(stmt, [triggerName, sourcePath, triggerSql, sqlHash], resetError => {
       logger.warn('Failed to reset prepared statement', resetError);
     });
@@ -232,11 +267,42 @@ function registerTrigger(triggerName: string, triggerSql: string, sourcePath?: s
   // user triggers call vq_* functions, which are only registered there.
 }
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+const READ_REQUESTS: ReadonlySet<WorkerRequest['type']> = new Set(['queryOpen', 'queryNext', 'queryClose', 'getAllPropertyKeys', 'getViewNames', 'getViewColumns',
+  'getAllUserViews', 'getAllUserFunctions', 'getAllUserTriggers', 'health']);
+
+const requests = new SerialQueue();
+
+self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
 
+  if (request.type === 'queryNext' || request.type === 'queryClose') void handleRequest(request);
+  else void requests.enqueue(() => handleRequest(request));
+};
+
+async function handleRequest(request: WorkerRequest): Promise<void> {
   try {
+    const readRequest = READ_REQUESTS.has(request.type) || (request.type === 'query' && !queryChangesDatabase(request.sql));
+
+    if (!readRequest) {
+      await queryCursors.settle();
+      queryCursors.invalidate();
+    }
+
     switch (request.type) {
+      case 'queryOpen': {
+        respond({ type: 'success', id: request.id, result: queryCursors.open(request.sql, request.params) });
+        break;
+      }
+      case 'queryNext': {
+        const batch = queryCursors.next(request.cursor);
+        respond({ type: 'success', id: request.id, result: batch }, resultTransfers(batch.rows));
+        break;
+      }
+      case 'queryClose': {
+        queryCursors.close(request.cursor);
+        respond({ type: 'success', id: request.id });
+        break;
+      }
       case 'init': {
         sqlJsModule = await initSqlJs({
           wasmBinary: request.wasmBinary,
@@ -250,20 +316,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         WorkerSQLFunctions.register(db);
         createSchema();
 
-        try {
-          db.run('PRAGMA optimize');
-        } catch {
-          // PRAGMA optimize is optional and may be unavailable in older SQLite builds.
-        }
+        db.run('PRAGMA optimize');
 
         respond({ type: 'success', id: request.id });
         break;
       }
 
       case 'query': {
-        const stmt = getPreparedStatement(request.sql);
-        const results = queryStatementRows(stmt, request.params);
-        respond({ type: 'success', id: request.id, result: results });
+        if (!db) throw new Error('Database not initialized');
+        const read = () => queryStatementRows(getPreparedStatement(request.sql), request.params);
+        const results = request.readOnly ? withReadOnlyQuery(db, request.sql, read) : read();
+        respond({ type: 'success', id: request.id, result: results }, resultTransfers(results));
         break;
       }
 
@@ -271,6 +334,20 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         if (!db) throw new Error('Database not initialized');
         db.run(request.sql, request.params);
         respond({ type: 'success', id: request.id, result: db.getRowsModified() });
+        break;
+      }
+
+      case 'runBatch': {
+        if (!db) throw new Error('Database not initialized');
+        const database = db;
+
+        withTx(() => {
+          for (const statement of request.statements) {
+            database.run(statement.sql, statement.params);
+          }
+        });
+
+        respond({ type: 'success', id: request.id });
         break;
       }
 
@@ -296,8 +373,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             for (const data of request.notesData) {
               performIndexingOperations(data, request.isInitialIndexing);
             }
-          }),
-          error => logger.warn('ANALYZE failed after batch indexing', error)
+          })
         );
 
         respond({ type: 'success', id: request.id });
@@ -319,6 +395,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case 'export': {
         if (!db) throw new Error('Database not initialized');
         const activeDb = db;
+
         const data = exportWithRuntimeStateRestore(activeDb, {
           statementCache,
           matRefreshSqlCache,
@@ -327,6 +404,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           registerBuiltinFunctions: () => WorkerSQLFunctions.register(activeDb),
           registerCustomFunction,
         });
+
         // Transfer instead of structured-clone: the database can be tens of
         // megabytes, and export() already returned a fresh buffer we own.
         respond({ type: 'success', id: request.id, result: data.buffer }, [data.buffer]);
@@ -344,9 +422,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         matRefreshSqlCache.invalidate();
         runPragmaStatements();
         WorkerSQLFunctions.register(db);
-        if (migrateLinksColumns(db)) {
-          logger.warn(LINKS_MIGRATED_LOG_MESSAGE);
-        }
+        createSchema();
 
         respond({ type: 'success', id: request.id });
         break;
@@ -359,6 +435,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           db.close();
           db = null;
         }
+
         schemaManager = null;
         matRefreshSqlCache.invalidate();
         respond({ type: 'success', id: request.id });
@@ -373,8 +450,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       case 'rebuildTableViews': {
-        schemaManager?.rebuildTableViews(request.enableDynamicTableViews);
-        respond({ type: 'success', id: request.id });
+        const rebuilt = schemaManager?.rebuildTableViews(request.enableDynamicTableViews) ?? false;
+        respond({ type: 'success', id: request.id, result: rebuilt });
         break;
       }
 
@@ -426,6 +503,6 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   } catch (error) {
     handleError(request.id, error);
   }
-};
+}
 
 respond({ type: 'ready' });

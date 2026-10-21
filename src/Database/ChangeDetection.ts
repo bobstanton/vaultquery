@@ -1,8 +1,4 @@
-/**
- * Change detection for properties.
- *
- */
-
+import { indexBy } from './EntityDescriptors';
 import type { Changes } from './EntityDescriptors';
 
 export interface PropertyData {
@@ -19,14 +15,6 @@ interface PropertyKey {
 
 export type PropertyChanges = Changes<PropertyData, PropertyKey>;
 
-function indexBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T> {
-  const map = new Map<string, T>();
-  for (const item of items) {
-    const key = keyFn(item);
-    if (!map.has(key)) map.set(key, item);
-  }
-  return map;
-}
 
 /** Create composite key for properties (no id column in table) */
 function propertyKey(key: string, arrayIndex: number | null): string {
@@ -45,12 +33,14 @@ export function detectPropertyChanges(file: PropertyData[], existing: PropertyDa
     existing.filter(e => e.array_index === null),
     e => e.key
   );
+
   const array0s = indexBy(
     existing.filter(e => e.array_index === 0),
     e => e.key
   );
 
   const arrayCounts = new Map<string, number>();
+
   for (const e of existing) {
     if (e.array_index !== null) {
       arrayCounts.set(e.key, (arrayCounts.get(e.key) ?? 0) + 1);
@@ -70,12 +60,14 @@ export function detectPropertyChanges(file: PropertyData[], existing: PropertyDa
     if (!match || matched.has(matchKey)) {
       if (prop.array_index === 0) {
         const scalar = scalars.get(prop.key);
+
         if (scalar && !matched.has(propertyKey(prop.key, null))) {
           match = scalar;
           matchKey = propertyKey(prop.key, null);
         }
       } else if (prop.array_index === null) {
         const arr0 = array0s.get(prop.key);
+
         if (arr0 && !matched.has(propertyKey(prop.key, 0)) && arrayCounts.get(prop.key) === 1) {
           match = arr0;
           matchKey = propertyKey(prop.key, 0);
@@ -98,6 +90,7 @@ export function detectPropertyChanges(file: PropertyData[], existing: PropertyDa
 
   for (const e of existing) {
     const key = propertyKey(e.key, e.array_index);
+
     if (!matched.has(key)) {
       result.deleted.push({ key: e.key, array_index: e.array_index });
     }

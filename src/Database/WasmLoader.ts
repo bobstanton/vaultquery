@@ -20,51 +20,54 @@ export async function loadWasmBinary(adapter: VaultFileAdapter | null, pluginDir
   const source = wasmSettings?.source ?? 'auto';
   const customPath = wasmSettings?.customPath?.trim();
 
-  const getLocalPath = (): string | null =>
-    customPath || (pluginDir ? `${pluginDir}/${DEFAULT_WASM_FILENAME}` : null);
+  const getLocalPath = (): string | null => customPath || (pluginDir ? `${pluginDir}/${DEFAULT_WASM_FILENAME}` : null);
 
   const tryLoadLocal = async (): Promise<ArrayBuffer | null> => {
     const localPath = getLocalPath();
-    if (!localPath || !adapter) return null;
-    try {
-      return await adapter.readBinary(localPath);
-    }
-    catch {
-      return null;
-    }
+    if (!localPath || !adapter || !await adapter.exists(localPath)) return null;
+
+    return adapter.readBinary(localPath);
   };
 
   const loadFromCdn = async (): Promise<ArrayBuffer> => {
     const response = await requestUrl({ url: CDN_URL });
+
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch WASM from CDN: ${response.status}`);
     }
+
     return response.arrayBuffer;
   };
 
   switch (source) {
     case 'local': {
       const localBinary = await tryLoadLocal();
+
       if (!localBinary) {
         const localPath = getLocalPath();
         throw new Error(`WASM source is set to 'local' but file not found at: ${localPath || '(no path configured)'}`);
       }
+
       return { wasmBinary: localBinary, fromCdn: false };
     }
 
     case 'cdn': {
       const cdnBinary = await loadFromCdn();
+
       return { wasmBinary: cdnBinary, fromCdn: true };
     }
 
     case 'auto':
     default: {
       const localBinary = await tryLoadLocal();
+
       if (localBinary) {
         return { wasmBinary: localBinary, fromCdn: false };
       }
+
       try {
         const cdnBinary = await loadFromCdn();
+
         return { wasmBinary: cdnBinary, fromCdn: true };
       }
       catch (error) {

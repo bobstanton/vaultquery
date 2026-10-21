@@ -2,6 +2,7 @@ import { markdownTable } from 'markdown-table';
 import { ContentLocationService } from '../Services/ContentLocationService';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { createTableKey, parseTableKey } from '../utils/StringUtils';
+import { pushInsertionEdit } from './types';
 import type { TableCellRow, ReplaceRangeEdit, EntityPlanResult, EntityPlannerContext, TableRowGroup } from './types';
 
 export class TableEditPlanner {
@@ -21,16 +22,8 @@ export class TableEditPlanner {
           ? ContentLocationService.findInsertionPointAtLine(ctx.content, t.line_number)
           : ContentLocationService.findEndInsertionPoint(ctx.content);
 
-        const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
-        const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
+        pushInsertionEdit(edits, ctx, insertionPoint, newTable, t.line_number != null ? "create new table at specified line" : "create new table");
 
-        edits.push({
-          type: "replaceRange",
-          path: ctx.path,
-          range: { start: insertionPoint.offset, end: insertionPoint.offset },
-          text: prefix + newTable + suffix,
-          reason: t.line_number != null ? "create new table at specified line" : "create new table"
-        });
         continue;
       }
 
@@ -52,6 +45,7 @@ export class TableEditPlanner {
       const key = createTableKey(c.path, c.table_index);
 
       let group = byKey.get(key);
+
       if (!group) {
         group = { header: new Set(), rows: new Map(), line_number: null };
         byKey.set(key, group);
@@ -60,6 +54,7 @@ export class TableEditPlanner {
       group.header.add(c.column_name);
 
       let row = group.rows.get(c.row_index);
+
       if (!row) {
         row = {};
         group.rows.set(c.row_index, row);
@@ -73,9 +68,11 @@ export class TableEditPlanner {
     }
 
     const out: TableRowGroup[] = [];
+
     for (const [key, g] of byKey) {
       const { path, tableIndex: table_index } = parseTableKey(key);
       const rows = Array.from(g.rows.entries()).sort((a, b) => a[0] - b[0]).map(([_, r]) => r);
+
       out.push({
         path,
         table_index,
@@ -84,6 +81,7 @@ export class TableEditPlanner {
         rows,
       });
     }
+
     return out;
   }
 
@@ -98,8 +96,10 @@ export class TableEditPlanner {
 
   private replaceTableRows(existingTable: { header: string[]; rows: string[][] } | null, newTable: TableRowGroup): { header: string[]; rows: Array<Record<string, string>> } {
     let header: string[];
+
     if (existingTable?.header && existingTable.header.length > 0) {
       header = [...existingTable.header];
+
       for (const col of newTable.header) {
         if (!header.includes(col)) {
           header.push(col);

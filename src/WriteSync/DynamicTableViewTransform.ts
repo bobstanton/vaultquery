@@ -8,6 +8,7 @@ const META_COLUMNS = new Set(['path', 'table_index', 'row_index', 'table_name', 
 export function transformDynamicViewToTableCells(previewResult: PreviewResult): PreviewResult {
   const transformRows = (rows: Record<string, unknown>[]): Record<string, unknown>[] => {
     const result: Record<string, unknown>[] = [];
+
     for (const row of rows) {
       const path = asStr(row.path);
       const tableIndex = asNum(row.table_index, 0);
@@ -25,6 +26,7 @@ export function transformDynamicViewToTableCells(previewResult: PreviewResult): 
         }
       }
     }
+
     return result;
   };
 
@@ -40,6 +42,7 @@ export function transformDynamicViewToTableRows(previewResult: PreviewResult): P
   const transformRows = (rows: Record<string, unknown>[]): Record<string, unknown>[] => {
     return rows.map(row => {
       const rowJson: Record<string, unknown> = {};
+
       for (const [colName, value] of Object.entries(row)) {
         if (!META_COLUMNS.has(colName)) {
           rowJson[colName] = formatUnknownValue(value);

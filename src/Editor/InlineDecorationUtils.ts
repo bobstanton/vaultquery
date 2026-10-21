@@ -25,11 +25,12 @@ interface InlineExtensionOptions<T> {
 
 function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, cursorPos: number): InlineMatch<T>[] {
   const matches: InlineMatch<T>[] = [];
-  const text = state.doc.toString();
+  const text = state.doc.sliceString(0);
   const regex = new RegExp(syntax.regex.source, syntax.regex.flags.includes('g') ? syntax.regex.flags : `${syntax.regex.flags}g`);
   const rawMatches: Array<{ match: RegExpExecArray; from: number; to: number }> = [];
 
   let match: RegExpExecArray | null;
+
   while ((match = regex.exec(text)) !== null) {
     const from = match.index;
     const to = from + match[0].length;
@@ -41,12 +42,14 @@ function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, curso
   }
 
   const codeBlockRanges = findCodeBlockRanges(text);
+
   for (const { match, from, to } of rawMatches) {
     if (isInsideCodeBlock(from, codeBlockRanges) || (cursorPos >= from && cursorPos <= to)) {
       continue;
     }
 
     const value = syntax.parseMatch(match);
+
     if (value) {
       matches.push({ from, to, value });
     }
@@ -69,31 +72,36 @@ export function createInlineDecorationExtension<T>(options: InlineExtensionOptio
       }
 
       update(update: ViewUpdate) {
-        const isEnabled = options.enabled?.() ?? true;
-        if (!isEnabled) {
+        const enabled = options.enabled?.() ?? true;
+
+        if (!enabled) {
           this.decorations = Decoration.none;
+
           return;
         }
 
         this.sourcePath = getActiveSourcePath(plugin);
+
         if (update.docChanged || update.viewportChanged || update.selectionSet) {
-          this.decorations = this.buildDecorations(update.view, isEnabled);
+          this.decorations = this.buildDecorations(update.view, enabled);
         }
       }
 
-      private buildDecorations(view: EditorView, isEnabled: boolean): DecorationSet {
-        if (!isEnabled || !view.state.field(editorLivePreviewField)) {
+      private buildDecorations(view: EditorView, enabled: boolean): DecorationSet {
+        if (!enabled || !view.state.field(editorLivePreviewField)) {
           return Decoration.none;
         }
 
         const builder = new RangeSetBuilder<Decoration>();
         const cursorPos = view.state.selection.main.head;
+
         for (const match of findInlineMatches(view.state, options.syntax, cursorPos)) {
           builder.add(match.from, match.to, Decoration.replace({
             widget: options.createWidget(match.value, plugin, this.sourcePath),
             inclusive: false,
           }));
         }
+
         return builder.finish();
       }
     },

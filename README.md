@@ -1,199 +1,66 @@
-# VaultQuery Plugin
+# VaultQuery
 
-Execute SELECT, INSERT, UPDATE, and DELETE statements across notes, properties, tasks, tables, headings, and links. Output to [SlickGrid](https://slickgrid.net/), [Markdown Table](https://github.com/wooorm/markdown-table), [Chart.js](https://www.chartjs.org/), [FullCalendar](https://github.com/fullcalendar/fullcalendar) or JavaScript rendering.
+Query and update vault files with SQL. Display results as tables, charts, calendars, or JavaScript templates.
 
 Documentation site: https://vaultquery.stanton.dev/
 
 Web sandbox: https://sandbox.obsidian.stanton.dev/
 
-## Features
-
-- **Indexing**: Notes, frontmatter, tables, tasks, headings, links, and tags stored in SQLite
-- **Live updates**: File create, modify, rename, and delete events update the index
-- **SQL queries**: Standard SQLite syntax, joins, aggregations, views, and custom functions
-- **Output formats**: SlickGrid tables, Markdown tables, Chart.js charts, FullCalendar calendars, and JavaScript rendering
-- **Write operations**: INSERT, UPDATE, and DELETE previews with database-to-file sync
-
 ## Code Blocks
 
-| Code Block                 | Description                                                      |
-| -------------------------- | ---------------------------------------------------------------- |
+| Code Block                 | Description                                                               |
+| -------------------------- | ------------------------------------------------------------------------- |
 | `vaultquery`               | Execute SQL queries, display results in SlickGrid or JavaScript rendering |
-| `vaultquery-write`         | Execute INSERT, UPDATE, DELETE with before/after preview         |
-| `vaultquery-chart`         | Render query results as Chart.js visualizations                  |
-| `vaultquery-chart-help`    | Display chart output reference and examples                      |
-| `vaultquery-calendar`      | Render query results as FullCalendar calendars                   |
-| `vaultquery-markdown`      | Render query results as markdown tables                          |
-| `vaultquery-markdown-help` | Display markdown output reference and examples                   |
-| `vaultquery-calendar-help` | Display calendar output reference and examples                   |
-| `vaultquery-schema`        | Display database schema documentation                            |
-| `vaultquery-view`          | Define reusable SQL views                                        |
-| `vaultquery-function`      | Define custom SQL functions in JavaScript                        |
-| `vaultquery-help`          | Display built-in help documentation                              |
-| `vaultquery-function-help` | Display function reference                                       |
-| `vaultquery-examples`      | Display example collections                                      |
-| `vaultquery-api-help`      | API guide for third-party plugin developers                      |
+| `vaultquery-nl`            | Turn a natural-language request into a query or visualization             |
+| `vaultquery-write`         | Execute INSERT, UPDATE, DELETE with before/after preview                  |
+| `vaultquery-chart`         | Render query results as Chart.js visualizations                           |
+| `vaultquery-chart-help`    | Display chart output reference and examples                               |
+| `vaultquery-calendar`      | Render query results as a FullCalendar calendar                           |
+| `vaultquery-markdown`      | Render query results as a markdown table                                  |
+| `vaultquery-markdown-help` | Display markdown output reference and examples                            |
+| `vaultquery-calendar-help` | Display calendar output reference and examples                            |
+| `vaultquery-schema`        | Display database schema documentation                                     |
+| `vaultquery-view`          | Define reusable SQL views                                                 |
+| `vaultquery-function`      | Define custom SQL functions in JavaScript                                 |
+| `vaultquery-help`          | Display built-in help documentation                                       |
+| `vaultquery-function-help` | Display function reference                                                |
+| `vaultquery-examples`      | Display example collections                                               |
+| `vaultquery-api-help`      | API guide for third-party plugin developers                               |
 
-## Database Schema
-
-### `notes` table (always available):
-- `path` (TEXT): File path relative to vault root (PRIMARY KEY)
-- `title` (TEXT): Note title (auto-derived from path on INSERT)
-- `content` (TEXT NOT NULL): Note content (without frontmatter, only if content indexing enabled)
-- `created` (INTEGER): Creation timestamp in Unix milliseconds (auto-set on INSERT)
-- `modified` (INTEGER): Last modification timestamp in Unix milliseconds (auto-set on INSERT)
-- `size` (INTEGER): File size in bytes (auto-calculated from content on INSERT)
-
-### `properties` table (when frontmatter/properties indexing is enabled):
-- `path` (TEXT): Foreign key to notes.path
-- `key` (TEXT): Property name (supports nested keys like "author.name")
-- `value` (TEXT): Property value as string
-- `value_type` (TEXT): Type of value (auto-derived: 'number', 'boolean', or 'string')
-- `array_index` (INTEGER): Index for array elements (NULL for non-array values)
-- PRIMARY KEY: (path, key, array_index)
-
-### `table_cells` table (when table indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `table_index` (INTEGER): Index of table within the note (default: 0 = first table)
-- `table_name` (TEXT): Name of the table (from preceding heading, optional)
-- `row_index` (INTEGER): Row index within the table (0-based)
-- `column_name` (TEXT): Column header name
-- `cell_value` (TEXT): Cell content as string
-- `value_type` (TEXT): Type of value (auto-derived: 'number' or 'text')
-- `line_number` (INTEGER): Line number where this table row appears (optional)
-
-### `tables` table (when table indexing is enabled):
-- `path` (TEXT): Foreign key to notes.path
-- `table_index` (INTEGER): Index of table within the note (0-based)
-- `table_name` (TEXT): Name of the table (from preceding heading, optional)
-- `block_id` (TEXT): Obsidian block reference (e.g., ^table-1)
-- `start_offset` (INTEGER): Character offset where table starts
-- `end_offset` (INTEGER): Character offset where table ends
-- `line_number` (INTEGER): Line number for INSERT positioning (optional)
-- PRIMARY KEY: (path, table_index)
-
-### `table_rows` view (when table indexing is enabled):
-A convenience view for row-based table operations. Columns:
-- `path` (TEXT): Foreign key to notes.path
-- `table_index` (INTEGER): Index of table within the note (0-based)
-- `row_index` (INTEGER): Row index within the table (0-based)
-- `row_json` (TEXT): JSON object of column_name→cell_value pairs
-- `table_line_number` (INTEGER): Line number for INSERT positioning (optional)
-
-### `tasks` table (when task indexing is enabled):
-- `id` (INTEGER): Auto-incrementing task ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `task_text` (TEXT): Content of the task
-- `status` (TEXT): Task status - TODO, IN_PROGRESS, DONE, CANCELLED (default: 'TODO')
-- `priority` (TEXT): Priority level - highest, high, medium, low, lowest, or NULL
-- `due_date` (TEXT): Due date in YYYY-MM-DD format or NULL
-- `scheduled_date` (TEXT): Scheduled date in YYYY-MM-DD format or NULL
-- `start_date` (TEXT): Start date in YYYY-MM-DD format or NULL
-- `created_date` (TEXT): Task creation date in YYYY-MM-DD format or NULL
-- `done_date` (TEXT): Completion date in YYYY-MM-DD format or NULL
-- `cancelled_date` (TEXT): Cancellation date in YYYY-MM-DD format or NULL
-- `recurrence` (TEXT): Recurrence rule (e.g., "every week") or NULL
-- `on_completion` (TEXT): Action on completion or NULL
-- `task_id` (TEXT): Custom task identifier or NULL
-- `depends_on` (TEXT): Task dependencies or NULL
-- `tags` (TEXT): Space-separated hashtags or NULL
-- `line_number` (INTEGER): Line number where task appears (optional)
-- `block_id` (TEXT): Obsidian block reference (e.g., ^task-1)
-- `start_offset` (INTEGER): Character offset where task starts
-- `end_offset` (INTEGER): Character offset where task ends
-- `anchor_hash` (TEXT): Content-based hash for change detection
-- `section_heading` (TEXT): Heading under which the task appears
-
-### `headings` table (when heading indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `level` (INTEGER): Heading level (1-6 for H1-H6)
-- `line_number` (INTEGER): Line number where heading appears (1-based)
-- `heading_text` (TEXT): Text content of the heading
-- `block_id` (TEXT): Obsidian block reference (e.g., ^heading-1)
-- `start_offset` (INTEGER): Character offset where heading starts
-- `end_offset` (INTEGER): Character offset where heading ends
-- `anchor_hash` (TEXT): Content-based hash for change detection
-
-### `links` table (when link indexing is enabled):
-- `id` (INTEGER): Auto-incrementing link ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `link_text` (TEXT): Display text of the link (auto-derived from `link_target` if not provided)
-- `link_target` (TEXT): Target of the link (original text for internal, URL for external)
-- `link_target_path` (TEXT): Resolved file path for internal links (NULL when Obsidian cannot resolve the target)
-- `link_type` (TEXT): Type of link - 'internal' for body links, 'frontmatter' for links in YAML properties; 'external' auto-derived on INSERT if target starts with http/https
-- `line_number` (INTEGER): Line number where link appears (NULL for frontmatter links)
-- `insert_position` (TEXT): Position hint for INSERT operations - `new_line` (default), `line_start`, or `line_end`
-- `original` (TEXT): Raw link markup exactly as written (e.g. `[[Target#Heading|alias]]`)
-- `start_offset` (INTEGER): Character offset where the link starts (NULL for frontmatter links)
-- `end_offset` (INTEGER): Character offset where the link ends (NULL for frontmatter links)
-- `frontmatter_key` (TEXT): Frontmatter property holding the link, e.g. `related.0` (NULL for body links)
-
-### `unresolved_links` table (when unresolved link indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Source file path
-- `link_target` (TEXT): Unresolved target text reported by Obsidian
-- `link_count` (INTEGER): Number of unresolved links to the target in `path`
-
-### `embeds` table (when embed indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Source file path
-- `embed_text` (TEXT): Display text of the embed
-- `embed_target` (TEXT): Embed target text
-- `embed_target_path` (TEXT): Resolved target file path, when Obsidian can resolve it
-- `line_number` (INTEGER): Line number where embed appears (optional)
-
-### `tags` table (when tag indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `tag_name` (TEXT): Name of the tag
-- `line_number` (INTEGER): Line number where tag appears (optional)
-- `insert_position` (TEXT): Position hint for INSERT operations - `new_line` (default), `line_start`, or `line_end`
-
-### `list_items` table (when list item indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): Foreign key to notes.path
-- `list_index` (INTEGER): Index of the list within the note (default: 0)
-- `item_index` (INTEGER): Index of the item within all lists in the note (default: 0)
-- `parent_index` (INTEGER): Index of parent item for nested lists, or NULL
-- `content` (TEXT): Text content of the list item
-- `list_type` (TEXT): Type of list - bullet, numbered (default: 'bullet')
-- `indent_level` (INTEGER): Nesting depth (0 = top level, default: 0)
-- `line_number` (INTEGER): Line number where item appears (optional)
-- `block_id` (TEXT): Obsidian block reference
-- `start_offset` (INTEGER): Character offset where item starts
-- `end_offset` (INTEGER): Character offset where item ends
-- `anchor_hash` (TEXT): Content-based hash for change detection
-
-### `blocks` table (when block indexing is enabled):
-- `id` (INTEGER): Auto-incrementing ID (PRIMARY KEY)
-- `path` (TEXT): File path
-- `block_id` (TEXT): Obsidian block reference ID
-- `line_number` (INTEGER): Line number where the block appears (optional)
-- `start_offset` (INTEGER): Character offset where the block starts
-- `end_offset` (INTEGER): Character offset where the block ends
-- `section_type` (TEXT): Containing Obsidian section type
-
-## Usage
+## Getting started
 
 Add a `vaultquery` code block with a SQL query:
 
+~~~markdown
 ```vaultquery
 SELECT title, path, modified FROM notes
 WHERE content LIKE '%important%'
 ORDER BY modified DESC
 LIMIT 10
 ```
+~~~
 
 Results render in a sortable SlickGrid table.
 
+### Reference
+
+Use `vaultquery-help` for in-app help and `vaultquery-schema` for available tables and columns.
+
+- [Queries, placeholders, and output](help-md/vaultquery-help.md)
+- [CSV and JSON files](help-md/vaultquery-help.md#csv-and-json-files)
+- [Remote CSV and JSON](help-md/vaultquery-help.md#remote-csv-and-json)
+- [Other file contents](help-md/vaultquery-help.md#file-contents)
+- [Image metadata](help-md/vaultquery-help.md#image-metadata)
+- [Charts](help-md/vaultquery-chart-help.md) and [calendars](help-md/vaultquery-calendar-help.md)
+- [SQL functions](help-md/vaultquery-function-help.md) and [triggers](help-md/vaultquery-trigger-help.md)
+
 ### Write Operations (INSERT, UPDATE, DELETE)
 
-> **Important**: Write operations permanently modify vault files. VaultQuery has no built-in undo or version history. [Obsidian Sync](https://obsidian.md/sync) provides version history. Write operations require the plugin setting to be enabled.
+See [write limits and failure handling](https://vaultquery.stanton.dev/concepts/writing/).
 
-`vaultquery-write` runs write statements with file synchronization:
+Use `vaultquery-write` to preview and apply changes:
 
+~~~markdown
 ```vaultquery-write
 -- Add a new note
 INSERT INTO notes (path, content)
@@ -223,9 +90,9 @@ VALUES ('Condo Notes.md', 'fake-overtime-assignment', 3, 'line_end');
 INSERT INTO table_rows (path, table_index, row_json, table_line_number)
 VALUES ('Condo Notes.md', 1, json('{"Vendor": "", "Price": ""}'), 5);
 ```
+~~~
 
-CTEs support multi-step inserts.
-
+~~~markdown
 ```vaultquery-write
 WITH
     -- Select all notes in the Projects folder
@@ -248,41 +115,45 @@ SELECT
 ' || COALESCE(list, '_No projects found_')
 FROM flattenedLinks;
 ```
+~~~
 
 #### UPDATE Operations
 
-Existing records can be modified with `vaultquery-write`:
-
+~~~markdown
 ```vaultquery-write
 UPDATE notes
 SET content = content || '\n\nList condo on eBay at 80% of purchase price.'
 WHERE path = 'Condo Notes.md'
 ```
+~~~
 
 #### DELETE Operations
 
-Records can be removed with `vaultquery-write`:
-
+~~~markdown
 ```vaultquery-write
 DELETE FROM notes
 WHERE path = 'Condo Notes.md'
 ```
+~~~
 
 ### Markdown Table Export
 
-`vaultquery-markdown` generates exportable Markdown tables:
+Use `vaultquery-markdown` to render query results as a Markdown table.
 
+~~~markdown
 ```vaultquery-markdown
-SELECT title, path, modified FROM notes 
-WHERE content LIKE '%important%' 
-ORDER BY modified DESC 
+SELECT title, path, modified FROM notes
+WHERE content LIKE '%important%'
+ORDER BY modified DESC
 LIMIT 10
 ```
+~~~
 
 #### Markdown Configuration Options
 
 Configure the markdown output with a `config:` section:
 
+~~~markdown
 ```vaultquery-markdown
 SELECT title, path, size
 FROM notes
@@ -292,20 +163,18 @@ LIMIT 10;
 config:
 alignment: left, left, right
 ```
+~~~
 
 Available config options:
 - `alignment`: Column alignments (left, center, right)
 
-> **Tip**: Format dates directly in SQL using `datetime()` functions.
-
 ### JavaScript Rendering
 
-JavaScript rendering can be enabled in settings for complete control over formatting. Rendering code is user-authored JavaScript and runs with the plugin's permissions. HTML template execution is handled by the local [user-template-renderer](../user-template-renderer) package.
-
+~~~markdown
 ```vaultquery
-SELECT title, path, modified FROM notes 
-WHERE content LIKE '%important%' 
-ORDER BY modified DESC 
+SELECT title, path, modified FROM notes
+WHERE content LIKE '%important%'
+ORDER BY modified DESC
 LIMIT 10;
 
 template:
@@ -315,7 +184,7 @@ return `
     <ul>
       ${results.map(note => `
         <li>
-          ${h.link(note.path, note.title)} - 
+          ${h.link(note.path, note.title)} -
           <em>${h.formatDate(note.modified)}</em>
         </li>
       `).join('')}
@@ -323,6 +192,7 @@ return `
   </div>
 `;
 ```
+~~~
 
 JavaScript rendering code receives these variables:
 - `results` - Array of query result rows
@@ -342,7 +212,7 @@ Inline query values are read-only and only allow `SELECT` or `WITH` statements.
 
 ### Obsidian CLI
 
-When enabled in VaultQuery settings, `vaultquery:query` runs SQL from the Obsidian CLI and waits for indexing to finish before executing:
+`vaultquery:query` runs SQL from the Obsidian CLI and waits for indexing to finish before executing:
 
 ```shell
 obsidian vaultquery:query sql="SELECT title, path FROM notes LIMIT 5" format=json
@@ -354,378 +224,67 @@ Available formats are `json`, `csv`, `tsv`, `md`, and `scalar`. Use `path` to pr
 obsidian vaultquery:query path="Hikes/Trip.md" sql="SELECT value FROM properties WHERE path = '{this.path}' AND key = 'distance' LIMIT 1" format=scalar
 ```
 
-`INSERT`, `UPDATE`, and `DELETE` require both write operations and CLI write operations to be enabled in settings.
+### JavaScript helpers
 
-### Helper Functions
+See the [helper reference](https://vaultquery.stanton.dev/output/javascript-templates/#helpers).
 
-The `h` object provides 50+ utility functions from [placeholder-resolver](https://github.com/bobstanton/placeholder-resolver).
+#### Write operations reference
 
-#### Obsidian Helpers
+| Table/View                | INSERT                   | UPDATE         | DELETE            |
+| ------------------------- | ------------------------ | -------------- | ----------------- |
+| **notes**                 | Creates files            | Modifies files | Deletes files     |
+| **notes_with_properties** | Creates with frontmatter | Modifies all   | Deletes files     |
+| **tasks**                 | Adds tasks               | Modifies tasks | Removes tasks     |
+| **headings**              | Adds headings            | Modifies text  | Removes headings  |
+| **list_items**            | Adds items               | Modifies items | Removes items     |
+| **properties**            | Adds to YAML             | Modifies YAML  | Removes from YAML |
+| **table_cells**           | Adds cells(2)            | Modifies cells | Removes cells     |
+| **table_rows**            | Adds rows(2)             | Modifies rows  | Removes rows      |
+| **tags**                  | Frontmatter or inline(1) | Renames tags   | Removes tags      |
+| **links**                 | Appends or at line(1)    | Updates links  | Removes links     |
 
-| Helper                                       | Description                                  |
-| -------------------------------------------- | -------------------------------------------- |
-| `h.link(path, text?)`                        | Create HTML internal link                    |
-| `h.wikilink(path, alias?)`                   | Create wikilink `[[path]]` or `[[path\|alias]]` |
-| `h.wikilinkHeading(path, heading, display?)` | Link to heading `[[path#heading]]`           |
-| `h.wikilinkBlock(path, blockId, display?)`   | Link to block `[[path#^id]]`                 |
-| `h.pathToTitle(path)`                        | Extract display title from path              |
+(1)With `line_number` and optional `insert_position` (new_line, line_start, line_end)
 
-#### String Manipulation
+(2)With `line_number` (table_cells) or `table_line_number` (table_rows) to position new tables
 
-| Helper                                    | Description                 |
-| ----------------------------------------- | --------------------------- |
-| `h.escape(text)`                          | HTML escape                 |
-| `h.lower(text)`                           | Lowercase                   |
-| `h.upper(text)`                           | Uppercase                   |
-| `h.capitalize(text)`                      | Capitalize first letter     |
-| `h.trim(text)`                            | Trim whitespace             |
-| `h.truncate(text, length?, suffix?)`      | Truncate with ellipsis      |
-| `h.slugify(text)`                         | URL-safe slug               |
-| `h.replace(text, search, replacement)`    | Replace all occurrences     |
-| `h.regexReplace(text, pattern, replacement)` | Regex replace            |
-| `h.split(text, delimiter)`                | Split to array              |
-| `h.before(text, delimiter)`               | Text before first delimiter |
-| `h.after(text, delimiter)`                | Text after first delimiter  |
-| `h.beforeLast(text, delimiter)`           | Text before last delimiter  |
-| `h.afterLast(text, delimiter)`            | Text after last delimiter   |
-| `h.unquote(text)`                         | Remove surrounding quotes   |
-| `h.isBlank(text)`                         | Check if empty/whitespace   |
-| `h.stripHtml(text)`                       | Remove HTML tags            |
-| `h.nl2br(text)`                           | Newlines to `<br>`          |
-
-#### Path Helpers
-
-| Helper                  | Description                |
-| ----------------------- | -------------------------- |
-| `h.filename(path)`      | Filename with extension    |
-| `h.pathBasename(path)`  | Filename without extension |
-| `h.pathExtension(path)` | Extension without dot      |
-| `h.pathParent(path)`    | Parent folder path         |
-
-#### Formatting
-
-| Helper                                  | Description                                    |
-| --------------------------------------- | ---------------------------------------------- |
-| `h.formatDate(timestamp, format?)`      | Format date (tokens: YYYY, MM, DD, HH, mm, ss) |
-| `h.formatNumber(num, decimals?)`        | Format with locale separators                  |
-| `h.formatBytes(bytes, decimals?)`       | Human-readable file size                       |
-| `h.pluralize(count, singular, plural?)` | Pluralize word                                 |
-
-#### Arrays
-
-| Helper                            | Description        |
-| --------------------------------- | ------------------ |
-| `h.join(array, delimiter?)`       | Join array elements|
-| `h.first(array)`                  | First element      |
-| `h.last(array)`                   | Last element       |
-| `h.unique(array)`                 | Remove duplicates  |
-| `h.sortBy(array, key, direction?)`| Sort by property   |
-| `h.groupBy(array, key)`           | Group by property  |
-| `h.sum(array)`                    | Sum numbers        |
-| `h.avg(array)`                    | Average            |
-| `h.min(array)` / `h.max(array)`   | Min/max values     |
-
-#### Objects & JSON
-
-| Helper                  | Description        |
-| ----------------------- | ------------------ |
-| `h.keys(obj)`           | Object keys        |
-| `h.values(obj)`         | Object values      |
-| `h.entries(obj)`        | Key-value pairs    |
-| `h.pick(obj, ...keys)`  | Select properties  |
-| `h.omit(obj, ...keys)`  | Exclude properties |
-| `h.json(value, pretty?)`| Stringify to JSON  |
-| `h.parseJson(text)`     | Parse JSON string  |
-
-#### SQL Helpers (for query templates)
-
-| Helper               | Description                          |
-| -------------------- | ------------------------------------ |
-| `h.sqlIn(array)`     | Format for IN clause: `'a', 'b', 'c'`|
-| `h.sqlEscape(value)` | Escape single quotes                 |
-| `h.sqlLiteral(value)`| Format as SQL literal                |
-
-#### Null Handling
-
-| Helper                           | Description                 |
-| -------------------------------- | --------------------------- |
-| `h.default(value, defaultValue)` | Fallback for null/undefined |
-| `h.ifEmpty(value, replacement)`  | Replace empty strings       |
-
-
-
-#### Quick Reference Table
-
-| Table/View               | INSERT                      | UPDATE             | DELETE               |
-| ------------------------ | --------------------------- | ------------------ | -------------------- |
-| **notes**                | ✅ Creates files            | ✅ Modifies files  | ✅ Deletes files*    |
-| **notes_with_properties**| ✅ Creates with frontmatter | ✅ Modifies all    | ✅ Deletes files*    |
-| **note_properties**      | ✅ Adds to existing note    | ✅ Modifies YAML   | ✅ Removes all props |
-| **tasks**                | ✅ Adds tasks               | ✅ Modifies tasks  | ✅ Removes tasks     |
-| **headings**             | ✅ Adds headings            | ✅ Modifies text   | ✅ Removes headings  |
-| **list_items**           | ✅ Adds items               | ✅ Modifies items  | ✅ Removes items     |
-| **properties**           | ✅ Adds to YAML             | ✅ Modifies YAML   | ✅ Removes from YAML |
-| **table_cells**          | ✅ Adds cells‡              | ✅ Modifies cells  | ✅ Removes cells     |
-| **table_rows**           | ✅ Adds rows‡               | ✅ Modifies rows   | ✅ Removes rows      |
-| **tags**                 | ✅ Frontmatter or inline†   | ✅ Renames tags    | ✅ Removes tags      |
-| **links**                | ✅ Appends or at line†      | ✅ Updates links   | ✅ Removes links     |
-
-†With `line_number` and optional `insert_position` (new_line, line_start, line_end)
-
-‡With `line_number` (table_cells) or `table_line_number` (table_rows) to position new tables
-
-*Requires "Allow file deletion" setting to be enabled
-
-
-**Key Points:**
-- All tables support full CRUD operations with sync back to files
+**Write behavior:**
 - `tasks`, `headings`, `list_items` INSERT at specified `line_number` or end of file (line-based elements)
 - `tags` INSERT adds to frontmatter when no `line_number` specified, or inserts inline with `insert_position`
 - `links` INSERT appends to end of file when no `line_number` specified, or inserts at position with `insert_position`
 - `table_cells` and `table_rows` INSERT can use `line_number`/`table_line_number` to create tables at specific positions
 - `notes_with_properties` creates files with frontmatter in one operation
-- `note_properties` handles properties-only queries (path + property columns, no notes columns)
+- `note_properties` is for properties-only queries; use `notes_with_properties` or `properties` to write frontmatter
 - `table_rows` handles table row manipulation with JSON
 
-## Chart Rendering
+## Chart output
 
-`vaultquery-chart` renders query results with Chart.js.
-
-Charts require columns named `label` and `value` (or `x` and `y` for scatter plots). Add a `series` column for multiple datasets.
+Use `vaultquery-chart` to render query results as a chart. Query must use `label` and `value` columns (or `x`/`y` for scatter). Add a `series` column for multiple datasets.
 
 #### Configuration Options
 
-| Option                   | Description                                           |
-| ------------------------ | ----------------------------------------------------- |
+| Option                   | Description                                                 |
+| ------------------------ | ----------------------------------------------------------- |
 | `type`                   | Chart type: bar, line, pie, doughnut, or scatter (required) |
-| `title`                  | Chart title displayed above the chart                 |
-| `datasetLabel`           | Legend label for the dataset                          |
-| `xLabel`                 | X-axis label (bar, line, scatter only)                |
-| `yLabel`                 | Y-axis label (bar, line, scatter only)                |
-| `datasetBackgroundColor` | Fill color for bars/points                            |
-| `datasetBorderColor`     | Border color for bars/points                          |
+| `title`                  | Chart title displayed above the chart                       |
+| `datasetLabel`           | Legend label for the dataset                                |
+| `xLabel`                 | X-axis label (bar, line, scatter only)                      |
+| `yLabel`                 | Y-axis label (bar, line, scatter only)                      |
+| `datasetBackgroundColor` | Fill color for bars/points                                  |
+| `datasetBorderColor`     | Border color for bars/points                                |
 
 #### SQL Columns for Customization
 
-| Column            | Description                                        |
-| ----------------- | -------------------------------------------------- |
-| `backgroundColor` | Per-point fill color                               |
-| `borderColor`     | Per-point border color                             |
+| Column            | Description                                            |
+| ----------------- | ------------------------------------------------------ |
+| `backgroundColor` | Per-point fill color                                   |
+| `borderColor`     | Per-point border color                                 |
 | `chartType`       | Per-series chart type for mixed charts (`bar`, `line`) |
 
-#### Vault Growth Over Time
-```vaultquery-chart
-SELECT
-    strftime('%Y-%m', created/1000, 'unixepoch') as label,
-    COUNT(*) as value
-FROM notes
-WHERE created > 0
-GROUP BY label
-ORDER BY label;
-config:
-type: line
-title: Notes Created Per Month
-xLabel: Month
-yLabel: Notes
-datasetBackgroundColor: rgba(75, 192, 192, 0.2)
-datasetBorderColor: rgba(75, 192, 192, 1)
-```
-
-#### Content Distribution by Folder
-```vaultquery-chart
-SELECT
-    COALESCE(SUBSTR(path, 1, INSTR(path || '/', '/') - 1), 'Root') as label,
-    COUNT(*) as value
-FROM notes
-GROUP BY label
-ORDER BY value DESC
-LIMIT 8;
-config:
-type: doughnut
-title: Notes by Top-Level Folder
-```
-
-#### Writing Activity by Day of Week
-```vaultquery-chart
-SELECT
-    CASE CAST(strftime('%w', modified/1000, 'unixepoch') AS INTEGER)
-        WHEN 0 THEN 'Sun'
-        WHEN 1 THEN 'Mon'
-        WHEN 2 THEN 'Tue'
-        WHEN 3 THEN 'Wed'
-        WHEN 4 THEN 'Thu'
-        WHEN 5 THEN 'Fri'
-        WHEN 6 THEN 'Sat'
-    END as label,
-    COUNT(*) as value,
-    CASE CAST(strftime('%w', modified/1000, 'unixepoch') AS INTEGER)
-        WHEN 0 THEN 'rgba(255, 99, 132, 0.8)'
-        WHEN 6 THEN 'rgba(255, 99, 132, 0.8)'
-        ELSE 'rgba(54, 162, 235, 0.8)'
-    END as backgroundColor
-FROM notes
-GROUP BY strftime('%w', modified/1000, 'unixepoch')
-ORDER BY CAST(strftime('%w', modified/1000, 'unixepoch') AS INTEGER);
-config:
-type: bar
-title: Files Modified by Day of Week
-```
-
-#### Task Status Breakdown
-```vaultquery-chart
-SELECT
-    status as label,
-    COUNT(*) as value,
-    CASE status
-        WHEN 'DONE' THEN 'rgba(75, 192, 192, 0.8)'
-        WHEN 'TODO' THEN 'rgba(255, 205, 86, 0.8)'
-        WHEN 'IN_PROGRESS' THEN 'rgba(54, 162, 235, 0.8)'
-        WHEN 'CANCELLED' THEN 'rgba(255, 99, 132, 0.8)'
-        ELSE 'rgba(201, 203, 207, 0.8)'
-    END as backgroundColor,
-    CASE status
-        WHEN 'DONE' THEN 'rgba(75, 192, 192, 1)'
-        WHEN 'TODO' THEN 'rgba(255, 205, 86, 1)'
-        WHEN 'IN_PROGRESS' THEN 'rgba(54, 162, 235, 1)'
-        WHEN 'CANCELLED' THEN 'rgba(255, 99, 132, 1)'
-        ELSE 'rgba(201, 203, 207, 1)'
-    END as borderColor
-FROM tasks
-GROUP BY status;
-config:
-type: pie
-title: Task Status
-```
-
-#### Multi-Series: Tasks by Status and Priority
-```vaultquery-chart
-SELECT
-    status as label,
-    COALESCE(priority, 'none') as series,
-    COUNT(*) as value,
-    CASE priority
-        WHEN 'high' THEN 'rgba(255, 99, 132, 0.8)'
-        WHEN 'medium' THEN 'rgba(255, 205, 86, 0.8)'
-        WHEN 'low' THEN 'rgba(75, 192, 192, 0.8)'
-        ELSE 'rgba(201, 203, 207, 0.8)'
-    END as backgroundColor
-FROM tasks
-GROUP BY status, priority;
-config:
-type: bar
-title: Tasks by Status and Priority
-```
-
-#### Mixed Chart: Note Count with Size Trend
-```vaultquery-chart
-SELECT
-    strftime('%Y-%m', created/1000, 'unixepoch') as label,
-    COUNT(*) as value,
-    'Notes' as series,
-    'bar' as chartType,
-    'rgba(54, 162, 235, 0.8)' as backgroundColor
-FROM notes WHERE created > 0
-GROUP BY label
-UNION ALL
-SELECT
-    strftime('%Y-%m', created/1000, 'unixepoch') as label,
-    ROUND(AVG(size)/1024.0, 1) as value,
-    'Avg Size (KB)' as series,
-    'line' as chartType,
-    'rgba(255, 99, 132, 1)' as backgroundColor
-FROM notes WHERE created > 0
-GROUP BY label
-ORDER BY label;
-config:
-type: bar
-title: Monthly Notes with Average Size Trend
-```
-
-#### Scatter: File Size vs Word Count
-```vaultquery-chart
-SELECT
-    ROUND(size/1024.0, 1) as x,
-    LENGTH(content) - LENGTH(REPLACE(content, ' ', '')) as y
-FROM notes
-WHERE size > 0 AND size < 100000
-LIMIT 100;
-config:
-type: scatter
-title: File Size vs Approximate Word Count
-xLabel: Size (KB)
-yLabel: Words
-datasetBackgroundColor: rgba(54, 162, 235, 0.6)
-```
-
-
-### Template Examples
-
-#### Task List Grouped by Status
-```vaultquery
-SELECT status, task_text, path FROM tasks
-WHERE status IN ('TODO', 'DONE', 'IN_PROGRESS')
-ORDER BY status, path;
-
-template:
-const grouped = results.reduce((acc, t) => {
-  (acc[t.status] ||= []).push(t);
-  return acc;
-}, {});
-
-return Object.entries(grouped).map(([status, tasks]) => `
-  <details open>
-    <summary><strong>${status}</strong> (${tasks.length})</summary>
-    <ul>
-      ${tasks.map(t => `<li>${h.link(t.path)} - ${h.renderWikilinks(t.task_text)}</li>`).join('')}
-    </ul>
-  </details>
-`).join('');
-```
-
-#### Recently Modified Notes with Preview
-```vaultquery
-SELECT title, path, modified, SUBSTR(content, 1, 150) as preview
-FROM notes
-ORDER BY modified DESC
-LIMIT 5;
-
-template:
-return `
-<div style="display: flex; flex-direction: column; gap: 1em;">
-  ${results.map(n => `
-    <div style="border-left: 3px solid var(--interactive-accent); padding-left: 1em;">
-      <strong>${h.link(n.path, n.title)}</strong>
-      <small style="color: var(--text-muted);"> — ${h.formatDate(n.modified)}</small>
-      <p style="margin: 0.5em 0; color: var(--text-muted);">${h.escape(n.preview)}...</p>
-    </div>
-  `).join('')}
-</div>
-`;
-```
-
-#### Tag Cloud
-```vaultquery
-SELECT tag_name, COUNT(*) as count
-FROM tags
-GROUP BY tag_name
-ORDER BY count DESC
-LIMIT 20;
-
-template:
-const max = Math.max(...results.map(r => r.count));
-return `
-<div style="display: flex; flex-wrap: wrap; gap: 0.5em;">
-  ${results.map(t => {
-    const size = 0.8 + (t.count / max) * 1.2;
-    return `<span style="font-size: ${size}em; opacity: ${0.5 + t.count/max/2};">#${t.tag_name}</span>`;
-  }).join('')}
-</div>
-`;
-```
+See [chart examples](help-md/vaultquery-chart-help.md) for colors, multiple series, and mixed charts.
 
 ## Usage for Developers
 
-VaultQuery exposes an API for third-party Obsidian plugins. The API includes the ability to execute SQL queries, register custom functions, custom views, write operations when "Allow write operations" is enabled, and managed third-party provider table registration.
+See the [API guide](help-md/api-guide.md) for queries, writes, functions, and provider tables.
 
 ```typescript
 // Get the VaultQuery API
@@ -742,15 +301,13 @@ if (vaultQuery?.api) {
 }
 ```
 
-For third-party provider tables, prefer `registerVaultQueryTableProviders()` from `vaultquery/api`. It handles mobile-safe API waiting, capability checks, retry, database recovery, and cleanup.
-
 The `vaultquery-api-help` code block provides complete API documentation in any note.
 
 ## Settings and Configuration
 
 ### Indexing Features (Configurable)
 - **Content Indexing**: Index note content for full-text search
-- **Frontmatter Indexing**: Index YAML frontmatter properties  
+- **Frontmatter Indexing**: Index YAML frontmatter properties
 - **Table Indexing**: Parse and index markdown tables
 - **Task Indexing**: Index task lists with priorities and due dates
 - **Heading Indexing**: Index note headings and structure
@@ -762,77 +319,36 @@ The `vaultquery-api-help` code block provides complete API documentation in any 
 - **List Item Indexing**: Index bulleted and numbered list items
 
 ### Performance Settings
-- **File Size Limit**: Maximum file size to index (default: 1MB)
+- **Maximum file size (KB)**: Maximum Markdown and other-file size (default: 1000 KB)
 - **Exclude Patterns**: Regex patterns for files to skip
-- **Batch Size**: Number of files to process at once
-
-### Write Operations
-- **Enable Write Operations**: Allow UPDATE, INSERT, DELETE queries (disabled by default)
-- **Auto File Sync**: Update vault files when database rows change
 
 The database is stored in Obsidian's [Configuration Folder](https://help.obsidian.md/configuration-folder) in `/plugins/vaultquery/database.db` when using disk storage.
 
+### Troubleshooting
 
-### Known Issues
+If a grid disappears after scrolling, use its refresh button. Column widths reset when Obsidian restarts.
 
-- **Grid refresh after scrolling**: Obsidian's DOM virtualization may detach grid elements when scrolling long notes. The refresh button restores the grid, and the plugin attempts periodic auto-restore.
+## External folders
 
-- **Block references for updates**: Task and heading updates work best when content has explicit block references (e.g., `^task-1`). Without them, the plugin uses content hashing which is not as accurate.
-
-- **Column width persistence**: Column widths are remembered during a session and are intentionally not remembered when Obsidian restarts.
-
-- **Autocomplete**: Autocomplete is experimental. 
+See [external folders](help-md/vaultquery-help.md#external-folders) for supported platforms and file types.
 
 ## Network Requests
 
-VaultQuery has one network-capable code path: loading the SQL.js WebAssembly binary when a local binary is not available or when CDN loading is selected.
+Network requests depend on enabled features:
 
-| Package | URL | Purpose |
-| ------- | --- | ------- |
-| VaultQuery | `https://sql.js.org/dist/sql-wasm.wasm` | Loads the SQL.js WebAssembly binary required for the local SQLite database when CDN loading is selected or local loading falls back to CDN. |
+| Package    | URL                                                                       | Purpose                                                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VaultQuery | `https://sql.js.org/dist/sql-wasm.wasm`                                   | Loads the SQL.js WebAssembly binary required for the local SQLite database when CDN loading is selected or local loading falls back to CDN.                                                                                                              |
+| VaultQuery | The provider URL configured in settings                                   | Translates a natural language request into SQL and selects a VaultQuery output. Sends the database schema description, known property names, and the natural language request, plus failed SQL and error messages when a generated statement is retried. |
+| VaultQuery | The HTTPS URL in a `vaultquery-remote-csv` or `vaultquery-web-json` block | Downloads a read-only CSV or JSON snapshot during discovery or refresh. Requests contain the source URL and optional cache validators; vault contents are not uploaded.                                                                                  |
 
 SQL.js loading modes:
 
-| Mode | Behavior | Network activity |
-| ---- | -------- | ---------------- |
-| `Auto` | Tries a local `sql-wasm.wasm` file first, then falls back to the SQL.js CDN. | Only if the local file is missing. |
-| `Local only` | Loads `sql-wasm.wasm` from the plugin folder or custom path. | None. Initialization fails if the file is unavailable. |
-| `CDN only` | Downloads `sql-wasm.wasm` from `sql.js.org`. | One request during database initialization. |
+| Mode         | Behavior                                                                     | Network activity                                       |
+| ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `Auto`       | Tries a local `sql-wasm.wasm` file first, then falls back to the SQL.js CDN. | Only if the local file is missing.                     |
+| `Local only` | Loads `sql-wasm.wasm` from the plugin folder or custom path.                 | None. Initialization fails if the file is unavailable. |
+| `CDN only`   | Downloads `sql-wasm.wasm` from `sql.js.org`.                                 | One request during database initialization.            |
 
 When local caching is enabled, a CDN-loaded binary is saved to the plugin folder for later use.
 
-## Background Tasks
-
-VaultQuery uses timers for local indexing, rendering, and UI coordination. Timers are not used for telemetry and do not periodically transmit vault data.
-
-| Timed event | Timing | Purpose | Network activity |
-| ----------- | ------ | ------- | ---------------- |
-| File modification debounce | 300 ms after the latest file change | Groups rapid vault file events before indexing an individual file. | None. |
-| Indexing queue delay | 200 ms | Batches queued file paths before local index updates. | None. |
-| Pending block progress polling | 500 ms while indexing is active | Updates loading/progress text for query and help blocks, then renders pending blocks after indexing finishes. | None. |
-| Settings reindex debounce | 1 second, with 1 second retry while indexing is busy | Delays full reindexing after settings changes that affect indexed data. | None. |
-| Grid restoration interval | 2 seconds while the plugin is loaded | Restores rendered SlickGrid tables that Obsidian DOM virtualization may detach during scrolling or view changes. | None. |
-| Scroll restoration delay | 150 ms after workspace scroll events | Runs a local grid restoration pass after scroll activity settles. | None. |
-| Rebuild button progress polling | 500 ms during a manual rebuild | Updates the settings button text while a user-initiated index rebuild is running. | None. |
-| API availability retry | Exponential backoff for third-party integrations waiting for VaultQuery | Allows dependent plugins to wait for the VaultQuery API during startup. | None. |
-| Provider registration retry | Default 5 seconds after failed provider registration | Retries local registration of third-party provider tables after startup or database recovery. | VaultQuery calls provider registration callbacks only. Network behavior, if any, belongs to the provider plugin. |
-| Render and layout scheduling | 0-50 ms for grid, chart, calendar, and JavaScript-rendered output | Allows Obsidian and browser layout to complete before measuring or rendering UI elements. | None. |
-
-SQL.js WASM loading is not scheduled by a timer. It occurs during database initialization according to the SQL.js loading mode described above.
-
-## Dependencies
-
-| Package                                                     | Description                                                                  |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [sql.js](https://github.com/sql-js/sql.js)                  | SQLite database engine compiled to WebAssembly                               |
-| [SlickGrid](https://github.com/6pac/SlickGrid)              | Data grid for query results                                                  |
-| [Chart.js](https://github.com/chartjs/Chart.js)             | Chart rendering for `vaultquery-chart` blocks                                |
-| [FullCalendar](https://github.com/fullcalendar/fullcalendar) | Calendar rendering for `vaultquery-calendar` blocks                          |
-| [markdown-table](https://github.com/wooorm/markdown-table)  | Markdown table output formatting                                             |
-| [fnv-plus](https://github.com/tjwebb/fnv-plus)              | Non-cryptographic hashes for change detection                                |
-| [placeholder-resolver](../placeholder-resolver)             | Template variable resolution and helper functions                            |
-| [user-template-renderer](../user-template-renderer)          | Shared local renderer for trusted user-authored HTML templates               |
-
-## Similar Plugins
-
-- [Dataview](https://github.com/blacksmithgu/obsidian-dataview) - Dataview's DQL syntax is simpler than SQL. Dataview and its successor [Datacore](https://github.com/blacksmithgu/datacore) are read-only and may index faster than VaultQuery. VaultQuery supports write operations, SQLite-backed queries, custom views, JavaScript SQL functions, and provider tables. Dataview or Datacore fit read-only workloads, especially when indexing speed is the main requirement. VaultQuery fits write workflows or cases where standard SQL syntax is preferred.

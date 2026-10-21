@@ -12,14 +12,16 @@ export class DatabaseSchemaManager {
 
   public onPropertiesViewRebuilt: (() => void) | null = null;
 
-  public constructor(private db: Database) {}
+  public constructor(private db: Database, private beforeSchemaChange: () => void = () => {}) {}
 
   private queryStrings(sql: string, columnIndex: number = 0): string[] {
     try {
       const result = this.db.exec(sql);
+
       if (result.length === 0 || result[0].values.length === 0) {
         return [];
       }
+
       return result[0].values.map(row => row[columnIndex] as string);
     } catch (error) {
       logger.error('Database schema query failed', { sql, columnIndex }, error);
@@ -43,6 +45,7 @@ export class DatabaseSchemaManager {
     try {
       const propertyKeys = this.getAllPropertyKeys();
       const viewSQL = generateDynamicPropertiesView(propertyKeys);
+      this.beforeSchemaChange();
       this.db.exec(viewSQL);
       const notePropertiesSQL = generateNotePropertiesView(propertyKeys);
       this.db.exec(notePropertiesSQL);
@@ -68,39 +71,47 @@ export class DatabaseSchemaManager {
 
     catch (error) {
       logger.error('Error discovering table structures', error);
+
       return [];
     }
   }
 
-  rebuildTableViews(enableDynamicTableViews: boolean): void {
+  rebuildTableViews(enableDynamicTableViews: boolean): boolean {
     if (!enableDynamicTableViews) {
-      return;
+      return false;
     }
 
     try {
       const structures = this.discoverTableStructures();
 
       if (structures.length === 0) {
-        return;
+        return false;
       }
 
       // Skip the DROP/CREATE churn when nothing changed. This runs after every
       // realtime indexing drain, and most saves don't alter table structures.
       const structuresHash = hashString(JSON.stringify(structures));
+
       if (structuresHash === this.lastTableStructuresHash) {
-        return;
+        return false;
       }
 
       const viewSQL = generateDynamicTableViews(structures);
 
       if (viewSQL) {
+        this.beforeSchemaChange();
         this.db.exec(viewSQL);
       }
+
       this.lastTableStructuresHash = structuresHash;
+
+      return Boolean(viewSQL);
     }
 
     catch (error) {
       logger.error('Error rebuilding table views', error);
+
+      return false;
     }
   }
 }

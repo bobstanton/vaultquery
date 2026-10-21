@@ -1,5 +1,8 @@
+import { ensureOtherFileSchema } from '../OtherFiles/OtherFileDatabaseOperations';
+import { ensureImageSchema } from '../Images/ImageDatabaseOperations';
+import { ensureExternalFolderSchema } from '../External/ExternalFolderSchema';
 import type { Database } from 'sql.js';
-import { getTablesOnlySQL, getIndexesForFeatures, migrateLinksColumns, generatePropertiesMatRefreshSql, PROPERTIES_MAT_TABLE } from './DatabaseSchema';
+import { getTablesOnlySQL, getIndexesForFeatures, generatePropertiesMatRefreshSql, PROPERTIES_MAT_TABLE } from './DatabaseSchema';
 import type { EnabledFeatures } from './DatabaseSchema';
 import { PRAGMA_STATEMENTS } from './SchemaQueries';
 
@@ -17,10 +20,9 @@ export const DEFAULT_ENABLED_FEATURES: EnabledFeatures = {
   indexBlocks: true
 };
 
-export const LINKS_MIGRATED_LOG_MESSAGE = 'links table migrated to enriched columns; full reindex scheduled via mtime reset';
-
 export function execSchemaBundle(db: Database, sql: string): void {
   db.run('BEGIN');
+
   try {
     db.run('PRAGMA foreign_keys = ON;');
     db.exec(sql);
@@ -31,11 +33,12 @@ export function execSchemaBundle(db: Database, sql: string): void {
   }
 }
 
-export function createSchema(db: Database, onLinksMigrated: (message: string) => void): void {
+export function createSchema(db: Database): void {
   execSchemaBundle(db, getTablesOnlySQL());
-  if (migrateLinksColumns(db)) {
-    onLinksMigrated(LINKS_MIGRATED_LOG_MESSAGE);
-  }
+
+  ensureOtherFileSchema(db);
+  ensureImageSchema(db);
+  ensureExternalFolderSchema(db);
 }
 
 export interface IndexCreationState {
@@ -43,12 +46,7 @@ export interface IndexCreationState {
   enabledFeatures: EnabledFeatures | null;
 }
 
-export function createIndexes(
-  db: Database,
-  features: EnabledFeatures | undefined,
-  state: IndexCreationState,
-  logError: (message: string, error: unknown) => void
-): void {
+export function createIndexes(db: Database, features: EnabledFeatures | undefined, state: IndexCreationState, logError: (message: string, error: unknown) => void): void {
   if (features) {
     state.enabledFeatures = features;
   }
@@ -76,23 +74,17 @@ export function runPragmaStatements(db: Database, onWarn: (error: unknown) => vo
 export class MatRefreshSqlCache {
   private cache: { deleteSql: string; insertSql: string } | null | undefined = undefined;
 
-  public constructor(private warn: (message: string, error: unknown) => void) {}
-
   public invalidate(): void {
     this.cache = undefined;
   }
 
   public get(db: Database, getAllPropertyKeys: () => string[]): { deleteSql: string; insertSql: string } | null {
     if (this.cache === undefined) {
-      try {
-        const pragma = db.exec(`PRAGMA table_info(${PROPERTIES_MAT_TABLE})`);
-        const columns = (pragma[0]?.values ?? []).map(row => String(row[1]));
-        this.cache = columns.length === 0 ? null : generatePropertiesMatRefreshSql(getAllPropertyKeys(), columns);
-      } catch (error) {
-        this.warn('Failed to compute properties mat refresh SQL; treating mat table as absent', error);
-        this.cache = null;
-      }
+      const pragma = db.exec(`PRAGMA table_info(${PROPERTIES_MAT_TABLE})`);
+      const columns = (pragma[0]?.values ?? []).map(row => String(row[1]));
+      this.cache = columns.length === 0 ? null : generatePropertiesMatRefreshSql(getAllPropertyKeys(), columns);
     }
+
     return this.cache;
   }
 }

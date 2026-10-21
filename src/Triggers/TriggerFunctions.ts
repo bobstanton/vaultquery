@@ -1,34 +1,11 @@
 import type { Database } from 'sql.js';
-import { CustomSQLFunctions } from '../Database/CustomSQLFunctions';
+import { registerSyncHandler } from '../Database/SyncHandlers';
 import { logger as rootLogger } from '../utils/logger';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
 import { createTableKey } from '../utils/StringUtils';
-
-declare const activeWindow: Window;
-
-const logger = rootLogger.scope('Triggers');
-
-export interface SetPropertyParams { path: string; key: string; value: string }
-export interface RemovePropertyParams { path: string; key: string }
-interface NotifyParams { message: string }
-export interface RenameNoteParams { path: string; newName: string }
-export interface SetContentParams { path: string; content: string }
-export interface ReplaceContentParams { path: string; search: string; replacement: string }
-export interface UpdateTaskParams { path: string; lineNumber: number; status: string | null; taskText: string | null }
-export interface CompleteTaskParams { path: string; lineNumber: number; status: string }
-export interface AddTaskParams { path: string; text: string; afterLine: number }
-export interface DeleteTaskParams { path: string; lineNumber: number }
-export interface UpdateHeadingParams { path: string; lineNumber: number; level: number | null; headingText: string | null }
-export interface AddHeadingParams { path: string; level: number; text: string; afterLine: number }
-export interface DeleteHeadingParams { path: string; lineNumber: number }
-export interface UpdateListItemParams { path: string; lineNumber: number; itemText: string }
-export interface AddListItemParams { path: string; text: string; afterLine: number }
-export interface DeleteListItemParams { path: string; lineNumber: number }
-export interface AddTableRowParams { path: string; tableIndex: number; values: Record<string, string> }
-export interface SetTableCellParams { path: string; tableIndex: number; rowIndex: number; columnName: string; value: string }
-export interface DeleteTableRowParams { path: string; tableIndex: number; rowIndex: number }
-export interface CreateNoteParams { path: string; content: string }
-
+import type { PendingAction } from './PendingAction';
+export type * from './PendingAction';
+export { TRIGGER_FUNCTION_NAMES } from '../Constants/TriggerFunctionNames';
 interface DeferTimer {
   id: number;
   win: Window;
@@ -42,27 +19,9 @@ interface TriggerArgumentSpec {
   type: TriggerArgumentType;
 }
 
-export type PendingAction =
-  | { type: 'set_property'; params: SetPropertyParams }
-  | { type: 'remove_property'; params: RemovePropertyParams }
-  | { type: 'notify'; params: NotifyParams }
-  | { type: 'rename_note'; params: RenameNoteParams }
-  | { type: 'set_content'; params: SetContentParams }
-  | { type: 'replace_content'; params: ReplaceContentParams }
-  | { type: 'update_task'; params: UpdateTaskParams }
-  | { type: 'complete_task'; params: CompleteTaskParams }
-  | { type: 'add_task'; params: AddTaskParams }
-  | { type: 'delete_task'; params: DeleteTaskParams }
-  | { type: 'update_heading'; params: UpdateHeadingParams }
-  | { type: 'add_heading'; params: AddHeadingParams }
-  | { type: 'delete_heading'; params: DeleteHeadingParams }
-  | { type: 'update_list_item'; params: UpdateListItemParams }
-  | { type: 'add_list_item'; params: AddListItemParams }
-  | { type: 'delete_list_item'; params: DeleteListItemParams }
-  | { type: 'add_table_row'; params: AddTableRowParams }
-  | { type: 'set_table_cell'; params: SetTableCellParams }
-  | { type: 'delete_table_row'; params: DeleteTableRowParams }
-  | { type: 'create_note'; params: CreateNoteParams };
+declare const activeWindow: Window;
+
+const logger = rootLogger.scope('Triggers');
 
 export function assertNever(value: never): never {
   throw new Error(`Unhandled trigger action: ${JSON.stringify(value)}`);
@@ -74,19 +33,11 @@ interface QueueOptions {
   deferWindow?: 'honor' | 'bypass';
 }
 
-export const TRIGGER_FUNCTION_NAMES = [
-  'vq_set_property', 'vq_remove_property', 'vq_notify', 'vq_log', 'vq_rename_note',
-  'vq_set_content', 'vq_replace_content', 'vq_sync_content', 'vq_debounce', 'vq_defer',
-  'vq_complete_task', 'vq_uncomplete_task', 'vq_set_task_status', 'vq_set_task_text', 'vq_add_task', 'vq_delete_task',
-  'vq_set_heading_text', 'vq_set_heading_level', 'vq_add_heading', 'vq_delete_heading',
-  'vq_set_list_item_text', 'vq_add_list_item', 'vq_delete_list_item',
-  'vq_add_table_row', 'vq_set_table_cell', 'vq_delete_table_row', 'vq_create_note',
-] as const;
-
 export class TriggerFunctions {
   private pendingActions: PendingAction[] = [];
   private isProcessingTriggers = false;
   private isPreviewMode = false;
+  private readOnlyDepth = 0;
   private debounceTimestamps: Map<string, number> = new Map();
 
   private deferredActionsByKey: Map<string, PendingAction[]> = new Map();
@@ -100,11 +51,29 @@ export class TriggerFunctions {
 
   private static readonly AUTO_SYNC_QUEUE_OPTIONS: QueueOptions = { duringPreview: 'allow', deferWindow: 'bypass' };
 
+  public withReadOnlyExecution<T>(read: () => T): T {
+    this.readOnlyDepth++;
+
+    try {
+      return read();
+    }
+    finally {
+      this.readOnlyDepth--;
+    }
+  }
+
+  private assertActionsAllowed(): void {
+    if (this.readOnlyDepth > 0) {
+      throw new Error('Read-only queries cannot invoke trigger actions.');
+    }
+  }
+
   private guarded(fn: () => PendingAction | null, allowInPreview = false): 0 | 1 {
     const options: QueueOptions = allowInPreview ? { duringPreview: 'allow' } : {};
     if (!this.canQueue(options)) return 0;
     const action = fn();
     if (action === null) return 0;
+
     return this.queueAction(action, options) ? 1 : 0;
   }
 
@@ -115,15 +84,18 @@ export class TriggerFunctions {
     for (let index = 0; index < specs.length; index++) {
       const spec = specs[index];
       const value = args[index];
+
       if (typeof value !== spec.type) {
         invalidValues[spec.name] = value;
         continue;
       }
+
       values[spec.name] = value as string | number;
     }
 
     if (Object.keys(invalidValues).length > 0) {
       logger.warn(`${functionName}: invalid arguments`, invalidValues);
+
       return null;
     }
 
@@ -131,8 +103,10 @@ export class TriggerFunctions {
   }
 
   private canQueue(options: QueueOptions = {}): boolean {
+    this.assertActionsAllowed();
     if ((options.duringProcessing ?? 'block') === 'block' && this.isProcessingTriggers) return false;
     if ((options.duringPreview ?? 'block') === 'block' && this.isPreviewMode) return false;
+
     return true;
   }
 
@@ -146,6 +120,7 @@ export class TriggerFunctions {
     } else {
       this.pendingActions.push(action);
     }
+
     return true;
   }
 
@@ -160,8 +135,7 @@ export class TriggerFunctions {
       })))
     );
 
-    db.create_function('vq_remove_property', (path: unknown, key: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_remove_property', [path, key], [{ name: 'path', type: 'string' }, { name: 'key', type: 'string' }], values => ({
+    db.create_function('vq_remove_property', (path: unknown, key: unknown) => this.guarded(() => this.actionFromArgs('vq_remove_property', [path, key], [{ name: 'path', type: 'string' }, { name: 'key', type: 'string' }], values => ({
         type: 'remove_property',
         params: { path: values.path as string, key: values.key as string }
       })))
@@ -169,27 +143,26 @@ export class TriggerFunctions {
 
     // Allow during preview mode since notifications don't modify files.
     // Still block during isProcessingTriggers to prevent cascade spam.
-    db.create_function('vq_notify', (message: unknown) =>
-      this.guarded(() => ({
+    db.create_function('vq_notify', (message: unknown) => this.guarded(() => ({
         type: 'notify',
         params: { message: formatUnknownValue(message) }
       }), true)
     );
 
     db.create_function('vq_log', (message: unknown) => {
+      this.assertActionsAllowed();
       logger.debug('vq_log', message);
+
       return 1;
     });
 
-    db.create_function('vq_rename_note', (path: unknown, newName: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_rename_note', [path, newName], [{ name: 'path', type: 'string' }, { name: 'newName', type: 'string' }], values => ({
+    db.create_function('vq_rename_note', (path: unknown, newName: unknown) => this.guarded(() => this.actionFromArgs('vq_rename_note', [path, newName], [{ name: 'path', type: 'string' }, { name: 'newName', type: 'string' }], values => ({
         type: 'rename_note',
         params: { path: values.path as string, newName: values.newName as string }
       })))
     );
 
-    db.create_function('vq_set_content', (path: unknown, content: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_set_content', [path], [{ name: 'path', type: 'string' }], values => ({
+    db.create_function('vq_set_content', (path: unknown, content: unknown) => this.guarded(() => this.actionFromArgs('vq_set_content', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'set_content',
         params: { path: values.path as string, content: formatUnknownValue(content) }
       })))
@@ -207,16 +180,23 @@ export class TriggerFunctions {
     //   SELECT vq_sync_content(NEW.path);
     db.create_function('vq_sync_content', (path: unknown) => {
       if (!this.canQueue()) return 0;
+
       if (typeof path !== 'string') {
         logger.warn('vq_sync_content: invalid arguments', { path });
+
         return 0;
       }
+
       const result = db.exec('SELECT content FROM notes WHERE path = ?', [path]);
+
       if (result.length === 0 || !result[0].values || result[0].values.length === 0) {
         logger.warn('vq_sync_content: note not found', { path });
+
         return 0;
       }
+
       const content = result[0].values[0][0] as string;
+
       return this.queueAction({ type: 'set_content', params: { path, content } }) ? 1 : 0;
     });
 
@@ -225,8 +205,11 @@ export class TriggerFunctions {
     // Or per-path debouncing:
     //   WHEN vq_debounce('my_trigger:' || NEW.path, 500)
     db.create_function('vq_debounce', (key: unknown, ms: unknown) => {
+      this.assertActionsAllowed();
+
       if (typeof key !== 'string' || typeof ms !== 'number') {
         logger.warn('vq_debounce: invalid arguments', { key, ms });
+
         return 0;
       }
 
@@ -239,6 +222,7 @@ export class TriggerFunctions {
 
       this.debounceTimestamps.set(key, now);
       this.prunedDebounceTimestamps(now);
+
       return 1;
     });
 
@@ -249,12 +233,16 @@ export class TriggerFunctions {
     //   END
     // If the trigger fires again within ms, the timer resets and previous actions are discarded.
     db.create_function('vq_defer', (key: unknown, ms: unknown) => {
+      this.assertActionsAllowed();
+
       if (typeof key !== 'string' || typeof ms !== 'number') {
         logger.warn('vq_defer: invalid arguments', { key, ms });
+
         return 0;
       }
 
       const existingTimer = this.deferTimers.get(key);
+
       if (existingTimer) {
         existingTimer.win.clearTimeout(existingTimer.id);
       }
@@ -263,10 +251,12 @@ export class TriggerFunctions {
       this.currentDeferKey = key;
 
       const timerWindow = activeWindow;
+
       const timer = timerWindow.setTimeout(() => {
         this.deferTimers.delete(key);
 
         const deferred = this.deferredActionsByKey.get(key);
+
         if (deferred && deferred.length > 0) {
           this.pendingActions.push(...deferred);
           this.deferredActionsByKey.delete(key);
@@ -310,8 +300,7 @@ export class TriggerFunctions {
       })))
     );
 
-    db.create_function('vq_add_task', (path: unknown, text: unknown, afterLine: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_add_task', [path], [{ name: 'path', type: 'string' }], values => ({
+    db.create_function('vq_add_task', (path: unknown, text: unknown, afterLine: unknown) => this.guarded(() => this.actionFromArgs('vq_add_task', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'add_task',
         params: { path: values.path as string, text: formatUnknownValue(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
       })))
@@ -364,8 +353,7 @@ export class TriggerFunctions {
       })))
     );
 
-    db.create_function('vq_add_list_item', (path: unknown, text: unknown, afterLine: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_add_list_item', [path], [{ name: 'path', type: 'string' }], values => ({
+    db.create_function('vq_add_list_item', (path: unknown, text: unknown, afterLine: unknown) => this.guarded(() => this.actionFromArgs('vq_add_list_item', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'add_list_item',
         params: { path: values.path as string, text: formatUnknownValue(text), afterLine: typeof afterLine === 'number' ? afterLine : 0 }
       })))
@@ -381,10 +369,13 @@ export class TriggerFunctions {
     db.create_function('vq_add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) =>
       this.guarded(() => this.actionFromArgs('vq_add_table_row', [path, tableIndex, valuesJson], [{ name: 'path', type: 'string' }, { name: 'tableIndex', type: 'number' }, { name: 'valuesJson', type: 'string' }], values => {
         const parsedValues = parseStringRecord(values.valuesJson as string);
+
         if (!parsedValues) {
           logger.warn('vq_add_table_row: JSON must be an object with string values', { valuesJson });
+
           return null;
         }
+
         return { type: 'add_table_row', params: { path: values.path as string, tableIndex: values.tableIndex as number, values: parsedValues } };
       }))
     );
@@ -404,8 +395,7 @@ export class TriggerFunctions {
     );
 
     // If the note already exists, this does nothing (use vq_set_content to overwrite)
-    db.create_function('vq_create_note', (path: unknown, content: unknown) =>
-      this.guarded(() => this.actionFromArgs('vq_create_note', [path], [{ name: 'path', type: 'string' }], values => ({
+    db.create_function('vq_create_note', (path: unknown, content: unknown) => this.guarded(() => this.actionFromArgs('vq_create_note', [path], [{ name: 'path', type: 'string' }], values => ({
         type: 'create_note',
         params: { path: values.path as string, content: formatUnknownValue(content) }
       })))
@@ -420,7 +410,7 @@ export class TriggerFunctions {
    *
    */
   private registerSyncHandlers(): void {
-    CustomSQLFunctions.registerSyncHandler('add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) => {
+    registerSyncHandler('add_table_row', (path: unknown, tableIndex: unknown, valuesJson: unknown) => {
       // - During previewDML: Block all (WriteSyncService handles sync)
       // - During applyDML: Block only DIRECT target (handled by WriteSyncService),
       //   but ALLOW cascade (different table indices) to queue
@@ -440,23 +430,28 @@ export class TriggerFunctions {
       }
 
       const values = parseStringRecord(valuesJson);
+
       if (!values) {
         return 0;
       }
+
       return this.queueAction({
         type: 'add_table_row',
         params: { path, tableIndex, values }
       }, { duringProcessing: 'allow', duringPreview: 'allow' }) ? 1 : 0;
     });
 
-    CustomSQLFunctions.registerSyncHandler('update_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown, valuesJson: unknown) => {
+    registerSyncHandler('update_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown, valuesJson: unknown) => {
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number' || typeof valuesJson !== 'string') {
         return 0;
       }
+
       const values = parseStringRecord(valuesJson);
+
       if (!values) {
         return 0;
       }
+
       // The schema trigger already handled the database side
       return this.queueAction({
         type: 'add_table_row',
@@ -464,10 +459,11 @@ export class TriggerFunctions {
       }, { duringProcessing: 'allow' }) ? 1 : 0;
     });
 
-    CustomSQLFunctions.registerSyncHandler('delete_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown) => {
+    registerSyncHandler('delete_table_row', (path: unknown, tableIndex: unknown, rowIndex: unknown) => {
       if (typeof path !== 'string' || typeof tableIndex !== 'number' || typeof rowIndex !== 'number') {
         return 0;
       }
+
       return this.queueAction({
         type: 'delete_table_row',
         params: { path, tableIndex, rowIndex }
@@ -515,9 +511,11 @@ export class TriggerFunctions {
     if ('lineNumber' in action.params) {
       return action.params.lineNumber;
     }
+
     if ('afterLine' in action.params) {
       return action.params.afterLine;
     }
+
     return null;
   }
 
@@ -526,6 +524,7 @@ export class TriggerFunctions {
     if (action.type === 'set_table_cell' || action.type === 'delete_table_row') {
       return { tableIndex: action.params.tableIndex, rowIndex: action.params.rowIndex };
     }
+
     return null;
   }
 
@@ -534,6 +533,7 @@ export class TriggerFunctions {
     this.pendingActions = [];
 
     const pathsWithLineActions = new Set<string>();
+
     for (const action of actions) {
       if (this.getActionPriority(action) === 1 && 'path' in action.params) {
         pathsWithLineActions.add(action.params.path);
@@ -543,10 +543,12 @@ export class TriggerFunctions {
     const filteredActions = actions.filter(action => {
       if (action.type === 'set_content' || action.type === 'replace_content') {
         const { path } = action.params;
+
         if (pathsWithLineActions.has(path)) {
           return false;
         }
       }
+
       return true;
     });
 
@@ -556,6 +558,7 @@ export class TriggerFunctions {
     // so actions without a comparable position keep their queue order.
     filteredActions.sort((a, b) => {
       const priorityDelta = this.getActionPriority(a) - this.getActionPriority(b);
+
       if (priorityDelta !== 0) {
         return priorityDelta;
       }
@@ -566,15 +569,18 @@ export class TriggerFunctions {
 
       const tableA = this.getActionTablePosition(a);
       const tableB = this.getActionTablePosition(b);
+
       if (tableA && tableB && tableA.tableIndex === tableB.tableIndex) {
         return tableB.rowIndex - tableA.rowIndex;
       }
+
       if (tableA || tableB) {
         return 0;
       }
 
       const lineA = this.getActionLine(a);
       const lineB = this.getActionLine(b);
+
       if (lineA !== null && lineB !== null) {
         return lineB - lineA;
       }
@@ -595,6 +601,7 @@ export class TriggerFunctions {
     }
 
     const MAX_AGE_MS = 60 * 60 * 1000;
+
     for (const [key, timestamp] of this.debounceTimestamps) {
       if (now - timestamp > MAX_AGE_MS) {
         this.debounceTimestamps.delete(key);
@@ -651,11 +658,13 @@ export class TriggerFunctions {
 
   public getPendingPropertyKeys(path: string): Set<string> {
     const keys = new Set<string>();
+
     for (const action of this.pendingActions) {
       if (action.type === 'set_property' && action.params.path === path) {
         keys.add(action.params.key);
       }
     }
+
     return keys;
   }
 
@@ -692,6 +701,7 @@ export class TriggerFunctions {
     for (const timer of this.deferTimers.values()) {
       timer.win.clearTimeout(timer.id);
     }
+
     this.deferTimers.clear();
     this.deferredActionsByKey.clear();
   }
@@ -708,6 +718,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 function parseStringRecord(json: string): Record<string, string> | null {
   try {
     const parsed: unknown = JSON.parse(json);
+
     return isStringRecord(parsed) ? parsed : null;
   } catch {
     return null;

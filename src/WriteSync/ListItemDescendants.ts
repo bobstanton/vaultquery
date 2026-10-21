@@ -31,6 +31,7 @@ function dedupeDescendants(batches: RowRecord[][]): RowRecord[] {
   for (const descendants of batches) {
     for (const descendant of descendants) {
       const key = `${asStr(descendant.path)}:${asNum(descendant.list_index, 0)}:${asNum(descendant.item_index, 0)}`;
+
       if (!seen.has(key)) {
         seen.add(key);
         expandedRows.push(descendant);
@@ -45,17 +46,18 @@ function descendantQueryParams(row: RowRecord): (string | number | null)[] {
   const path = asStr(row.path);
   const listIndex = asNum(row.list_index, 0);
   const itemIndex = asNum(row.item_index, 0);
+
   return [itemIndex, path, listIndex, path, listIndex];
 }
 
-export function expandListItemViewDeletesSync(rows: RowRecord[], queryDatabase: QueryRowsSync,
-  table: DescendantTable = 'list_items'): RowRecord[] {
+export function expandListItemViewDeletesSync(rows: RowRecord[], queryDatabase: QueryRowsSync, table: DescendantTable = 'list_items'): RowRecord[] {
   const sql = descendantQuery(table);
+
   return dedupeDescendants(rows.map(row => queryDatabase(sql, descendantQueryParams(row))));
 }
 
-export async function expandListItemViewDeletesAsync(rows: RowRecord[], queryDatabase: QueryRowsAsync,
-  table: DescendantTable = 'list_items'): Promise<RowRecord[]> {
+export async function expandListItemViewDeletesAsync(rows: RowRecord[], queryDatabase: QueryRowsAsync, table: DescendantTable = 'list_items'): Promise<RowRecord[]> {
   const sql = descendantQuery(table);
+
   return dedupeDescendants(await Promise.all(rows.map(row => queryDatabase(sql, descendantQueryParams(row)))));
 }

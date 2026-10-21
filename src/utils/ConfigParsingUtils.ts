@@ -9,6 +9,22 @@ export interface DimensionParseOptions {
 
 const DEFAULT_DIMENSION_UNITS = ['px', 'rem', 'em', 'vh', 'vw', 'vmin', 'vmax', 'svh', 'lvh', 'dvh', '%'];
 
+export function parseKeyValueLines(text: string | null): Record<string, string> {
+  const config: Record<string, string> = {};
+  if (!text) return config;
+
+  for (const line of text.split('\n')) {
+    const colonIndex = line.indexOf(':');
+    if (colonIndex === -1) continue;
+
+    const key = line.slice(0, colonIndex).trim().toLowerCase();
+    const value = line.slice(colonIndex + 1).trim();
+    if (key && value) config[key] = value;
+  }
+
+  return config;
+}
+
 export function parseBooleanOption(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') {
     return value;
@@ -50,6 +66,7 @@ export function parseCssDimension(value: unknown, options: DimensionParseOptions
   }
 
   const trimmed = value.trim();
+
   if (!trimmed) {
     return undefined;
   }
@@ -64,6 +81,7 @@ export function parseCssDimension(value: unknown, options: DimensionParseOptions
 
   const units = options.units ?? DEFAULT_DIMENSION_UNITS;
   const unitPattern = units.map(escapeRegex).join('|');
+
   return new RegExp(`^\\d+(\\.\\d+)?(${unitPattern})$`, 'i').test(trimmed)
     ? trimmed
     : undefined;

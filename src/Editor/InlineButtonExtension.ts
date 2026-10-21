@@ -2,7 +2,7 @@ import { EditorView, WidgetType } from '@codemirror/view';
 import { Notice } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { logger as rootLogger } from '../utils/logger';
-import { detectDmlOperationInSql, stripSqlComments } from '../utils/SQLParsingUtils';
+import { detectDmlOperationInSql, extractSqlFunctionCalls, hasSqlActionFunctions } from '../utils/SQLParsingUtils';
 import { formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
 import { processReadingViewInlineCode } from './InlineMarkdownUtils';
 import { createInlineDecorationExtension } from './InlineDecorationUtils';
@@ -38,6 +38,7 @@ const INLINE_BUTTON_TEXT_PATTERN = new RegExp(`^${INLINE_BUTTON_PATTERN}$`);
 
 function parseButtonParts(classesStr: string | undefined, label: string, sql: string): InlineButtonSpec {
   const hasExplicitDotSyntax = classesStr !== undefined && classesStr.startsWith('.');
+
   return {
     label,
     sql,
@@ -48,6 +49,7 @@ function parseButtonParts(classesStr: string | undefined, label: string, sql: st
 
 function parseInlineButtonText(text: string): InlineButtonSpec | null {
   const match = text.match(INLINE_BUTTON_TEXT_PATTERN);
+
   return match ? parseButtonParts(match[1], match[2], match[3]) : null;
 }
 
@@ -59,42 +61,52 @@ function getButtonClasses(spec: Pick<InlineButtonSpec, 'customClasses' | 'useDef
 }
 
 function callsVqNotify(sql: string): boolean {
-  return /\bvq_notify\s*\(/i.test(stripSqlComments(sql));
+  return extractSqlFunctionCalls(sql).has('vq_notify');
 }
 
 async function executeInlineButtonQuery(plugin: VaultQueryPluginContext, sql: string, sourcePath: string): Promise<InlineButtonResult> {
   const api = await waitForInlineVaultQueryReady(plugin);
 
   if (detectDmlOperationInSql(sql) === null) {
-    const notificationOnly = callsVqNotify(sql);
-    const results = await api.query(sql, sourcePath);
-    await api.processPendingTriggerActions();
+    if (hasSqlActionFunctions(sql)) {
+      await api.execute(sql, [], sourcePath);
 
-    if (notificationOnly) {
-      return { applied: false, isSelect: true, notificationOnly, rowCount: results.length };
+      return { applied: true, notificationOnly: callsVqNotify(sql) };
     }
 
+    const results = await api.query(sql, sourcePath);
+    const dataFileColumns = await api.getDataFileColumnNames(results);
+
     const markdown = formatResultsAsMarkdown(results, {
-      includeHidden: true,
+      columns: dataFileColumns ? [...dataFileColumns] : undefined,
+      escapeColumnNames: Boolean(dataFileColumns),
+      formatValues: !dataFileColumns,
       emptyResult: '(no results)',
       emptyColumns: '(no columns)',
       newlineReplacement: ' '
     });
+
     await navigator.clipboard.writeText(markdown);
+
     return { applied: false, isSelect: true, rowCount: results.length };
   }
 
   const preview = await api.previewQuery(sql, [], sourcePath);
+
   const hasChanges = preview.sqlToApply.length > 0 ||
     preview.before.length > 0 ||
     preview.after.length > 0 ||
     (preview.multiResults?.some(r => r.sqlToApply.length > 0 || r.before.length > 0 || r.after.length > 0) ?? false);
 
   if (!hasChanges) {
+    if (preview.planId) api.discardPreview(preview.planId);
+
     return { applied: false };
   }
 
+  await plugin.indexingStateManager.waitForIndexingComplete();
   const affectedPaths = await api.applyPreview(preview);
+
   for (const path of affectedPaths) {
     plugin.indexingStateManager.queueIndexing(path);
   }
@@ -135,9 +147,11 @@ function createInlineButtonElement(owner: Document, plugin: VaultQueryPluginCont
 
     if (debounce) {
       const now = Date.now();
+
       if (now - lastClickTime < plugin.settings.inlineButtonDebounceMs) {
         return;
       }
+
       lastClickTime = now;
     }
 
@@ -198,6 +212,7 @@ export function processReadingViewInlineButtons(plugin: VaultQueryPluginContext,
 
   processReadingViewInlineCode(element, (text) => {
     const spec = parseInlineButtonText(text);
+
     return spec ? createInlineButtonElement(element.ownerDocument, plugin, spec, sourcePath, false) : null;
   });
 }

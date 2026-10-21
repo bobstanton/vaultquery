@@ -20,14 +20,17 @@ export class MarkdownTableUtils {
 
   private static *iterateTables(lines: string[]): Generator<{ startLine: number; endLineExclusive: number }> {
     let i = 0;
+
     while (i < lines.length - 1) {
       if (this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
         let j = i + 2;
         while (j < lines.length && this.isTableRow(lines[j])) j++;
+
         yield { startLine: i, endLineExclusive: j };
         i = j;
         continue;
       }
+
       i++;
     }
   }
@@ -64,6 +67,7 @@ export class MarkdownTableUtils {
     if (cells.length > 0 && cells[0] === '') {
       cells.shift();
     }
+
     if (cells.length > 0 && cells[cells.length - 1] === '') {
       cells.pop();
     }
@@ -82,6 +86,7 @@ export class MarkdownTableUtils {
     for (const { startLine, endLineExclusive } of this.iterateTables(lines)) {
       for (let i = headingScanFrom; i <= startLine; i++) {
         const headingMatch = lines[i].match(/^(#{1,6})\s+(.+)$/);
+
         if (headingMatch) {
           currentHeading = headingMatch[2].trim();
         }
@@ -89,8 +94,10 @@ export class MarkdownTableUtils {
 
       let j = endLineExclusive;
       let block_id: string | undefined;
+
       if (j < lines.length) {
         const blockMatch = lines[j].match(/\^([\w-]+)\s*$/);
+
         if (blockMatch) {
           block_id = blockMatch[1];
           j++;
@@ -105,6 +112,7 @@ export class MarkdownTableUtils {
         end_offset: lineOffsets[j] + contentOffset,
         line_number: startLine + 1
       });
+
       headingScanFrom = j;
       currentHeading = undefined;
     }
@@ -121,6 +129,7 @@ export class MarkdownTableUtils {
       if (found === tableIndex) {
         return { start: lineOffsets[startLine], end: lineOffsets[endLineExclusive] };
       }
+
       found++;
     }
 
@@ -132,11 +141,13 @@ export class MarkdownTableUtils {
     if (lines.length < 2) return false;
     if (!this.isTableRow(lines[0])) return false;
     if (!this.isAlignRow(lines[1])) return false;
+
     return true;
   }
 
   static parseMarkdownTable(tableMd: string): { header: string[]; rows: string[][] } | null {
     const parsed = this.parseMarkdownTableAt(tableMd.split('\n'), 0);
+
     if (parsed.headers.length === 0) {
       return null;
     }
@@ -184,6 +195,7 @@ export class MarkdownTableUtils {
 
     for (let i = separatorLineIndex + 1; i < tableLines.length; i++) {
       const cells = this.splitTableRow(tableLines[i]);
+
       if (this.isSeparatorCells(cells) || cells.length === 0) {
         continue;
       }
@@ -191,9 +203,11 @@ export class MarkdownTableUtils {
       while (cells.length < headers.length) {
         cells.push('');
       }
+
       if (cells.length > headers.length) {
         cells.splice(headers.length);
       }
+
       rows.push(cells);
     }
 
@@ -220,11 +234,14 @@ export class MarkdownTableUtils {
   private static buildLineStartOffsets(lines: string[]): number[] {
     const offsets = new Array<number>(lines.length + 1);
     let offset = 0;
+
     for (let i = 0; i < lines.length; i++) {
       offsets[i] = offset;
       offset += lines[i].length + 1;
     }
+
     offsets[lines.length] = offset;
+
     return offsets;
   }
 }

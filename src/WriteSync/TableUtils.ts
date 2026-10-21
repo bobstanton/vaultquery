@@ -13,18 +13,22 @@ type QueryMaxRow = (path: string, tableIndex: number) => Promise<number>;
 
 function parseRowJson(row: Row, context: string): Row {
   const raw = row.row_json;
+
   try {
     if (typeof raw === 'string') {
       const parsed: unknown = JSON.parse(raw);
       if (isRow(parsed)) return parsed;
       logger.warn(`${context}: row_json must be an object`, raw);
+
       return {};
     }
+
     if (isRow(raw)) return raw;
   }
   catch (e) {
     logger.warn(`${context}: Failed to parse row_json`, e);
   }
+
   return {};
 }
 
@@ -38,16 +42,18 @@ function extractRowTableKey(r: Row, affectedTables: Set<string>, tableLineNumber
   const tableKey = createTableKey(path, table_index);
   affectedTables.add(tableKey);
   const tableLineNumber = asNum(r.table_line_number, null);
+
   if (!tableLineNumbers.has(tableKey) || (tableLineNumber != null && tableLineNumbers.get(tableKey) == null)) {
     tableLineNumbers.set(tableKey, tableLineNumber);
   }
+
   return { path, table_index, tableKey };
 }
 
-function appendCellsFromObject(cellsByTable: CellsByTable, tableKey: string, path: string, table_index: number,
-  row_index: number, obj: Row, tableLineNumbers: TableLineNumbers): void {
+function appendCellsFromObject(cellsByTable: CellsByTable, tableKey: string, path: string, table_index: number, row_index: number, obj: Row, tableLineNumbers: TableLineNumbers): void {
   const tableCells = cellsByTable.get(tableKey) || [];
   let isFirstCellForTable = tableCells.length === 0;
+
   for (const [column_name, v] of Object.entries(obj)) {
     const cell: TableCellRow = {
       path,
@@ -58,12 +64,15 @@ function appendCellsFromObject(cellsByTable: CellsByTable, tableKey: string, pat
       start_offset: null,
       end_offset: null,
     };
+
     if (isFirstCellForTable && tableLineNumbers.get(tableKey) != null) {
       cell.line_number = tableLineNumbers.get(tableKey);
       isFirstCellForTable = false;
     }
+
     tableCells.push(cell);
   }
+
   cellsByTable.set(tableKey, tableCells);
 }
 
@@ -75,6 +84,7 @@ export async function appendCellsFromTableRows(rows: Row[], affectedTables: Set<
     const path = asStr(row.path);
     const tableIndex = asNum(row.table_index, 0);
     const tableKey = createTableKey(path, tableIndex);
+
     if (!maxRowByTable.has(tableKey)) {
       maxRowByTable.set(tableKey, await queryMaxRow(path, tableIndex));
     }

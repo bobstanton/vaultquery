@@ -1,7 +1,7 @@
 import Prism from 'prismjs';
 import loadLanguages from 'prismjs/components/index.js';
 
-loadLanguages(['sql']);
+loadLanguages(['sql', 'yaml', 'typescript', 'bash']);
 
 const sqlWithConfig = {
   'config-section': {
@@ -43,6 +43,11 @@ const GRAMMARS = {
   'vaultquery-view': Prism.languages.sql,
   'vaultquery-trigger': Prism.languages.sql,
   'vaultquery-function': Prism.languages.javascript,
+  'vaultquery-remote-csv': Prism.languages.yaml,
+  'vaultquery-web-json': Prism.languages.yaml,
+  'vaultquery-nl': { 'config-section': sqlWithConfig['config-section'] },
+  'typescript': Prism.languages.typescript,
+  'bash': Prism.languages.bash,
 };
 
 export function covers(language) {

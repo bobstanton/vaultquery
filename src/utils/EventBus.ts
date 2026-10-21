@@ -9,17 +9,11 @@ export class EventBus<EventMap extends object> {
   private events = new Events();
   private eventNames: Set<string>;
 
-  public constructor(
-    eventNames: Array<keyof EventMap & string>,
-    private onListenerError?: (event: string, error: unknown) => void
-  ) {
+  public constructor(eventNames: Array<keyof EventMap & string>, private onListenerError?: (event: string, error: unknown) => void) {
     this.eventNames = new Set(eventNames);
   }
 
-  public on<EventName extends keyof EventMap & string>(
-    event: EventName,
-    callback: EventCallback<EventMap[EventName]>
-  ): EventRef {
+  public on<EventName extends keyof EventMap & string>(event: EventName, callback: EventCallback<EventMap[EventName]>): EventRef {
     if (!this.eventNames.has(event)) {
       throw new Error(`Unknown event: ${event}`);
     }
@@ -38,10 +32,7 @@ export class EventBus<EventMap extends object> {
     this.events.offref(ref);
   }
 
-  public emit<EventName extends keyof EventMap & string>(
-    event: EventName,
-    data: EventMap[EventName]
-  ): void {
+  public emit<EventName extends keyof EventMap & string>(event: EventName, data: EventMap[EventName]): void {
     if (!this.eventNames.has(event)) {
       return;
     }

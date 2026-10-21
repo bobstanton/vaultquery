@@ -1,3 +1,11 @@
+export function sqliteIdentifierKey(value: string): string {
+  return value.replace(/[A-Z]/g, char => char.toLowerCase());
+}
+
+export function normalizeOwnedSchemaSql(sql: unknown): string {
+  return String(sql).replace(/[\s"]/g, '').toLowerCase();
+}
+
 export function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
 }
@@ -6,7 +14,7 @@ export function quoteIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-function validateSqlIdentifier(identifier: string, label: string = 'SQL identifier'): void {
+export function validateSqlIdentifier(identifier: string, label: string = 'SQL identifier'): void {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
     throw new Error(`Invalid ${label}: ${identifier}`);
   }
@@ -14,5 +22,6 @@ function validateSqlIdentifier(identifier: string, label: string = 'SQL identifi
 
 export function quoteValidatedIdentifier(identifier: string, label: string = 'SQL identifier'): string {
   validateSqlIdentifier(identifier, label);
+
   return quoteIdentifier(identifier);
 }

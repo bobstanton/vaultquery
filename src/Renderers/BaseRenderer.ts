@@ -2,7 +2,8 @@ import { App, Component, MarkdownRenderer, setIcon } from 'obsidian';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { splitQuerySections } from '../utils/QueryParsingUtils';
-import { formatResultsAsMarkdown } from '../utils/ResultFormatUtils';
+import { showExportMenu } from './ExportMenu';
+import type { ExportSource } from './ExportMenu';
 import type { ParsedQuery } from '../utils/QueryParsingUtils';
 import { logger as rootLogger } from '../utils/logger';
 
@@ -12,7 +13,10 @@ interface FloatingButtonConfig {
   ariaLabel: string;
   icon: string;
   spinnerClass?: string;
+  suppressFeedback?: boolean;
+  openMenu?: (event: MouseEvent) => void;
   onClick: () => Promise<void>;
+  signal?: AbortSignal;
 }
 
 /**
@@ -41,11 +45,15 @@ export interface RenderContext {
   /** `force: true` is passed by the manual refresh button to bypass skip-if-unchanged. */
   onRefresh?: (force?: boolean) => Promise<void>;
   sourcePath?: string;
+  dataFileColumns?: readonly string[];
+  readResults?: () => Record<string, unknown>[];
+  readColumns?: () => readonly string[] | undefined;
 }
 
 export abstract class BaseRenderer {
   static renderError(container: HTMLElement, options: ErrorRenderOptions): HTMLElement {
     const classes = ['vaultquery-error'];
+
     if (options.className) {
       classes.push(...options.className.split(/\s+/).filter(Boolean).map(cls => `vaultquery-${cls}`));
     }
@@ -70,10 +78,12 @@ export abstract class BaseRenderer {
 
   static setupInternalLinks(container: HTMLElement, openFile: (path: string) => void): void {
     const links = container.querySelectorAll('a.internal-link[data-path]');
+
     links.forEach(link => {
       link.addEventListener('click', (e) => {
         e.preventDefault();
         const path = (link as HTMLElement).dataset.path;
+
         if (path) {
           openFile(path);
         }
@@ -93,19 +103,27 @@ export abstract class BaseRenderer {
       if (!host) return () => undefined;
       host.addClass('vaultquery-refresh-progress-host');
       const bar = host.createDiv('vaultquery-refresh-progress');
+
       return () => {
         bar.remove();
         host.removeClass('vaultquery-refresh-progress-host');
       };
     };
 
-    button.addEventListener('click', () => {
+    button.addEventListener('click', event => {
+      if (config.openMenu) {
+        config.openMenu(event);
+
+        return;
+      }
+
       if (isProcessing) return;
       isProcessing = true;
       button.setAttribute('aria-disabled', 'true');
 
       const isRefreshButton = Boolean(config.spinnerClass);
       let endRefreshProgress: (() => void) | null = null;
+
       if (isRefreshButton) {
         container.addClass('vaultquery-floating-buttons-active');
         button.addClass(config.spinnerClass!);
@@ -113,17 +131,20 @@ export abstract class BaseRenderer {
         setIcon(button, 'loader');
         endRefreshProgress = beginRefreshProgress();
       }
+
       const startedAt = Date.now();
 
       void (async () => {
         try {
           await config.onClick();
-          if (!isRefreshButton) {
+
+          if (!isRefreshButton && !config.suppressFeedback) {
             this.showButtonFeedback(button, 'check', config.icon);
           }
         } catch (err) {
           logger.error(`${config.ariaLabel} failed`, err);
-          if (!isRefreshButton) {
+
+          if (!isRefreshButton && !config.suppressFeedback) {
             this.showButtonFeedback(button, 'x', config.icon);
           }
         } finally {
@@ -131,9 +152,11 @@ export abstract class BaseRenderer {
             // Keep the busy state visible for a minimum window to absorb double clicks
             // even when the refresh is effectively instantaneous.
             const remainingMs = MIN_REFRESH_BUSY_MS - (Date.now() - startedAt);
+
             if (remainingMs > 0) {
               await new Promise(resolve => window.setTimeout(resolve, remainingMs));
             }
+
             endRefreshProgress?.();
             button.removeClass(config.spinnerClass!);
             container.removeClass('vaultquery-floating-buttons-active');
@@ -149,7 +172,7 @@ export abstract class BaseRenderer {
           }
         }
       })();
-    });
+    }, { signal: config.signal });
 
     return button;
   }
@@ -157,38 +180,41 @@ export abstract class BaseRenderer {
   private static showButtonFeedback(button: HTMLElement, feedbackIcon: string, originalIcon: string): void {
     button.empty();
     setIcon(button, feedbackIcon);
+
     window.setTimeout(() => {
       button.empty();
       setIcon(button, originalIcon);
     }, 2000);
   }
 
-  static addCopyAsMarkdownButton(buttonContainer: HTMLElement, results: Record<string, unknown>[] | (() => Record<string, unknown>[]), columns?: string[]): void {
+  static addExportButton(buttonContainer: HTMLElement, source: ExportSource, signal?: AbortSignal): void {
     this.createFloatingButton(buttonContainer, {
-      ariaLabel: 'Copy as Markdown',
-      icon: 'clipboard',
-      onClick: async () => {
-        const currentResults = typeof results === 'function' ? results() : results;
-        const markdownTable = this.generateMarkdownTable(currentResults, columns);
-        await navigator.clipboard.writeText(markdownTable);
-      }
+      ariaLabel: 'Copy or export',
+      icon: 'download',
+      signal,
+      suppressFeedback: true,
+      onClick: async () => undefined,
+      openMenu: event => showExportMenu(event, source),
     });
   }
 
-  static generateMarkdownTable(results: Record<string, unknown>[], columns?: string[]): string {
-    return formatResultsAsMarkdown(results, {
-      columns,
-      formatValues: true
-    });
-  }
-
-  static addRefreshButton(buttonContainer: HTMLElement, onRefresh: (force?: boolean) => Promise<void>): void {
+  static addRefreshButton(buttonContainer: HTMLElement, onRefresh: (force?: boolean) => Promise<void>, signal?: AbortSignal): void {
     this.createFloatingButton(buttonContainer, {
       ariaLabel: 'Refresh',
       icon: 'refresh-cw',
+      signal,
       spinnerClass: 'vaultquery-refresh-spinning',
       // Manual refresh forces a redraw even when results are unchanged.
       onClick: () => onRefresh(true)
+    });
+  }
+
+  static addRegenerateButton(buttonContainer: HTMLElement, onRegenerate: () => Promise<void>): HTMLElement {
+    return this.createFloatingButton(buttonContainer, {
+      ariaLabel: 'Regenerate SQL',
+      icon: 'sparkles',
+      spinnerClass: 'vaultquery-refresh-spinning',
+      onClick: onRegenerate
     });
   }
 
@@ -199,6 +225,7 @@ export abstract class BaseRenderer {
     let sqlQuery = querySource;
     let templateConfigText: string | null = null;
     let configSectionText: string | null = null;
+
     try {
       const sections = splitQuerySections(querySource);
       sqlQuery = sections.sqlQuery;
@@ -231,6 +258,5 @@ export abstract class BaseRenderer {
       const pre = configEl.createEl('pre', { cls: 'vaultquery-error-help' });
       pre.createEl('code', { text: configSectionText.trim() });
     }
-
   }
 }

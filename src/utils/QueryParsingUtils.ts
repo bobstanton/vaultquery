@@ -1,5 +1,6 @@
 import type { ParsedQuery } from '../types';
 import { stripTrailingSemicolon } from './SQLParsingUtils';
+import { parseKeyValueLines } from './ConfigParsingUtils';
 
 interface ParsedQuerySections {
   sqlQuery: string;
@@ -23,9 +24,11 @@ function findSectionMarker(lines: string[], sectionName: 'template' | 'config'):
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
+
     if (line.toLowerCase().startsWith(marker)) {
       return { lineIndex, sameLineText: line.slice(marker.length) };
     }
+
     if (line.trim().toLowerCase() === marker) {
       return { lineIndex, sameLineText: '' };
     }
@@ -44,6 +47,7 @@ export function splitQuerySections(source: string): ParsedQuerySections {
   }
 
   const marker = templateMarker ?? configMarker;
+
   if (!marker) {
     return {
       sqlQuery: lines.join('\n'),
@@ -63,29 +67,14 @@ export function splitQuerySections(source: string): ParsedQuerySections {
 }
 
 function parseConfigSection(configText: string): Record<string, string> {
-  const config: Record<string, string> = {};
+  const { output: _output, ...rest } = parseKeyValueLines(configText);
 
-  for (const line of configText.split('\n')) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const key = line.substring(0, colonIndex).trim().toLowerCase();
-    const value = line.substring(colonIndex + 1).trim();
-
-    if (key === 'output') {
-      continue;
-    }
-
-    if (key && value) {
-      config[key] = value;
-    }
-  }
-
-  return config;
+  return rest;
 }
 
 export function parseQueryBlock(source: string, options: ParseQueryBlockOptions = {}): ParsedQuery {
   const sections = splitQuerySections(source);
+
   const result: ParsedQuery = {
     query: sections.sqlQuery
   };
@@ -93,6 +82,7 @@ export function parseQueryBlock(source: string, options: ParseQueryBlockOptions 
   if (sections.templateConfigText) {
     result.template = sections.templateConfigText;
     result.output = { kind: 'template' };
+
     return result;
   }
 
@@ -104,6 +94,7 @@ export function parseQueryBlock(source: string, options: ParseQueryBlockOptions 
       kind: options.forceOutputKind,
       options: outputOptions
     };
+
     return result;
   }
 

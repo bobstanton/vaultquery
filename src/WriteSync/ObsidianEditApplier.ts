@@ -1,8 +1,13 @@
-import { App, TFile, normalizePath } from 'obsidian';
+import { App, TFile, normalizePath, getFrontMatterInfo, parseYaml } from 'obsidian';
 import { ContentLocationService } from '../Services/ContentLocationService';
 import { HeadingEditPlanner, ListItemEditPlanner, TableEditPlanner, TaskEditPlanner } from '../EditPlanner';
 import { parseFrontmatterValue } from '../utils/FrontmatterValueParser';
-import { createNoteWithFolders } from '../utils/VaultUtils';
+import { createFileWithFolders, resolveVaultFile } from '../utils/VaultUtils';
+import { pathParent } from '../utils/PathUtils';
+import { assertTextFileSource, processFileContents, readTextFileSource } from './FileWriteOperations';
+import type { TextFileSource } from './FileWriteOperations';
+import { FilePreviewStaleError, FileWriteApplyError } from './FileWriteTypes';
+import { getErrorMessage } from '../utils/ErrorMessages';
 import { logger as rootLogger } from '../utils/logger';
 
 import type { ObsidianEditIntent } from './ObsidianEditIntent';
@@ -25,8 +30,20 @@ interface PathIntentGroup {
   properties: Array<Extract<ObsidianEditIntent, { type: 'setProperty' | 'deleteProperty' }>>;
 }
 
-/** Re-plan attempts when a concurrent edit lands between planning and applying. */
-const MAX_CONTENT_APPLY_ATTEMPTS = 3;
+interface PreparedPathEdits {
+  content: string;
+  properties: PathIntentGroup['properties'];
+  frontmatter: unknown;
+}
+
+interface ApplyContext {
+  sources: Map<string, TextFileSource>;
+  assertAccess: () => void;
+  completed: Set<string>;
+  changed: Set<string>;
+  currentPath?: string;
+  writing: boolean;
+}
 
 export interface ApplyIntentsResult {
   affectedPaths: string[];
@@ -47,51 +64,68 @@ export class ObsidianEditApplier {
     this.tablePlanner = new TableEditPlanner();
   }
 
-  public async applyIntents(intents: ObsidianEditIntent[]): Promise<ApplyIntentsResult> {
-    const affectedPaths = new Set<string>();
+  public async applyIntents(intents: ObsidianEditIntent[], sources: ReadonlyMap<string, TextFileSource>, assertAccess: () => void): Promise<ApplyIntentsResult> {
     const warnings: string[] = [];
-    const pathGroups = new Map<string, PathIntentGroup>();
+    const context: ApplyContext = { sources: new Map(sources), assertAccess, completed: new Set(), changed: new Set(), writing: false };
 
-    for (const intent of intents) {
-      if (intent.type === 'createNote') {
-        await createNoteWithFolders(this.app.vault, intent.path, intent.content);
-        affectedPaths.add(intent.path);
-        continue;
+    try {
+      for (const path of sources.keys()) {
+        await this.checkSource(path, context);
       }
 
-      if (intent.type === 'deleteNote') {
-        await this.deleteNote(intent.path);
-        affectedPaths.add(intent.path);
-        continue;
+      const prepared = await this.preparePathGroups(intents, warnings, context);
+
+      for (const intent of intents) {
+        if (intent.type === 'createNote' || intent.type === 'deleteNote') {
+          const path = normalizePath(intent.path);
+          await this.checkSource(path, context);
+          context.writing = true;
+
+          if (intent.type === 'createNote') {
+            await createFileWithFolders(this.app.vault, path, intent.content);
+            context.sources.set(path, { file: this.getFile(path), content: intent.content });
+          } else {
+            await this.app.fileManager.trashFile(this.getFile(path));
+            context.sources.set(path, { file: null, content: null });
+          }
+
+          context.changed.add(path);
+          context.completed.add(path);
+          context.writing = false;
+        }
       }
 
-      this.addPathIntent(pathGroups, intent);
-    }
+      await this.applyPathGroups(prepared, context);
 
-    for (const path of await this.applyPathGroups(pathGroups, warnings)) {
-      affectedPaths.add(path);
+      return { affectedPaths: [...context.changed], warnings };
+    } catch (error) {
+      if (!context.changed.size && error instanceof FilePreviewStaleError) throw error;
+      const path = context.currentPath;
+      const unknown = path && (context.changed.has(path) || context.writing && !(error instanceof FilePreviewStaleError)) ? [path] : [];
+      const completed = [...context.completed].filter(item => !unknown.includes(item));
+      const untouched = [...sources.keys()].filter(item => !completed.includes(item) && !unknown.includes(item));
+      throw new FileWriteApplyError(getErrorMessage(error), context.writing ? 'write' : 'preflight', completed, unknown, untouched, path);
     }
-
-    return { affectedPaths: Array.from(affectedPaths), warnings };
   }
 
-  private intentPath(intent: PathIntent): string {
-    switch (intent.type) {
-      case 'replaceTask':
-      case 'deleteTask':
-      case 'replaceHeading':
-      case 'deleteHeading':
-      case 'replaceListItem':
-      case 'deleteListItem':
-        return intent.location.path;
-      default:
-        return intent.path;
-    }
+  private async checkSource(path: string, context: ApplyContext): Promise<void> {
+    context.currentPath = path;
+    context.writing = false;
+    context.assertAccess();
+    const expected = context.sources.get(path);
+    if (!expected) throw new FilePreviewStaleError(`File is missing from the prepared preview: ${path}`);
+    assertTextFileSource(path, expected, await readTextFileSource(this.app.vault, path, expected.frontmatterOnly));
+    context.assertAccess();
+  }
+
+  private intentPath(intent: ObsidianEditIntent): string {
+    return normalizePath('location' in intent ? intent.location.path : intent.path);
   }
 
   private addPathIntent(groups: Map<string, PathIntentGroup>, intent: PathIntent): void {
     const path = this.intentPath(intent);
     let group = groups.get(path);
+
     if (!group) {
       group = { ordered: [], tasks: [], headings: [], listItems: [], tables: [], properties: [] };
       groups.set(path, group);
@@ -116,89 +150,118 @@ export class ObsidianEditApplier {
     }
   }
 
-  private async deleteNote(path: string): Promise<void> {
-    const file = this.getFile(path);
-    await this.app.fileManager.trashFile(file);
-  }
+  private async preparePathGroups(intents: ObsidianEditIntent[], warnings: string[], context: ApplyContext): Promise<Map<string, PreparedPathEdits>> {
+    const groups = new Map<string, PathIntentGroup>();
+    const sources = new Map(context.sources);
+    const requiredFolders = new Set<string>();
 
-  private async updateProperty(path: string, mutate: (frontmatter: Record<string, unknown>) => void): Promise<void> {
-    const file = this.getFile(path);
-    await this.app.fileManager.processFrontMatter(file, mutate);
-  }
+    for (const intent of intents) {
+      const path = this.intentPath(intent);
+      context.currentPath = path;
+      if (!sources.has(path)) throw new FilePreviewStaleError(`File is missing from the prepared preview: ${path}`);
 
-  private async applyPathGroups(groups: Map<string, PathIntentGroup>, warnings: string[]): Promise<string[]> {
-    const affectedPaths: string[] = [];
+      if (intent.type === 'createNote' || intent.type === 'deleteNote') {
+        if (intent.type === 'createNote' ? sources.get(path)!.content !== null : sources.get(path)!.content === null) {
+          throw new FilePreviewStaleError(`File creation or deletion conflicts with the preview: ${path}`);
+        }
+
+        if (intent.type === 'createNote') {
+          if (requiredFolders.has(path)) throw new Error(`File path is occupied by a planned folder: ${path}`);
+
+          for (let parent = pathParent(path); parent; parent = pathParent(parent)) {
+            const parentSource = sources.get(parent);
+
+            if (parentSource ? parentSource.content !== null : this.app.vault.getAbstractFileByPath(parent) instanceof TFile) {
+              throw new Error(`Parent path is not a folder: ${parent}`);
+            }
+
+            requiredFolders.add(parent);
+          }
+        }
+
+        sources.set(path, { file: null, content: intent.type === 'createNote' ? intent.content : null });
+      } else {
+        if (intent.type === 'replaceTask' || intent.type === 'insertTask') {
+          TaskEditPlanner.getTaskCheckbox(intent.task.status, !!intent.task.completed);
+        }
+
+        this.addPathIntent(groups, intent);
+      }
+    }
+
+    const prepared = new Map<string, PreparedPathEdits>();
 
     for (const [path, group] of groups) {
+      context.currentPath = path;
+      context.assertAccess();
+      const source = sources.get(path)!;
+      if (source.content === null) throw new FilePreviewStaleError(`File is unavailable for the prepared edits: ${path}`);
+      const snapshot = source.frontmatterOnly ? '' : source.content;
+      let planned = this.applyWholeNoteIntents(snapshot, group.ordered);
+      const rangeEdits = await this.planRangeEdits(path, planned, group, warnings);
+      if (rangeEdits.length) planned = this.applyRangeEdits(planned, rangeEdits);
+
+      const frontmatter: unknown = group.properties.length
+        ? parseYaml(source.frontmatterOnly ? source.content : getFrontMatterInfo(planned).frontmatter) ?? {}
+        : undefined;
+
+      if (group.properties.length && Object.prototype.toString.call(frontmatter) !== '[object Object]') {
+        throw new Error(`Frontmatter must be a mapping to edit its properties: ${path}`);
+      }
+
+      prepared.set(path, { content: planned, properties: group.properties, frontmatter });
+    }
+
+    return prepared;
+  }
+
+  private async applyPathGroups(prepared: Map<string, PreparedPathEdits>, context: ApplyContext): Promise<void> {
+    for (const [path, edits] of prepared) {
+      context.currentPath = path;
+      context.writing = false;
+      context.assertAccess();
       const file = this.getFile(path);
-      const contentChanged = await this.applyContentIntentsAtomically(file, path, group, warnings);
+      const source = context.sources.get(path)!;
+      if (source.file !== file) throw new FilePreviewStaleError(`File changed since preview: ${path}`);
+      const snapshot = source.frontmatterOnly ? '' : source.content!;
+      const planned = edits.content;
 
-      if (group.properties.length > 0) {
-        await this.updateProperty(path, fm => {
-          this.applyPropertyMutations(fm, group.properties);
+      if (planned !== snapshot) {
+        context.writing = true;
+        await processFileContents(this.app.vault, file, path, snapshot, planned, context.assertAccess);
+        context.changed.add(path);
+        context.sources.set(path, { file, content: planned });
+        context.writing = false;
+      }
+
+      if (edits.properties.length) {
+        context.writing = true;
+
+        await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+          context.assertAccess();
+
+          if (file.path !== path || this.app.vault.getAbstractFileByPath(path) !== file || !sameProperties(edits.frontmatter, frontmatter)) {
+            throw new FilePreviewStaleError(`Frontmatter changed before writing: ${path}`);
+          }
+
+          this.applyPropertyMutations(frontmatter, edits.properties);
         });
+
+        context.changed.add(path);
+        context.writing = false;
       }
 
-      if (contentChanged || group.properties.length > 0) {
-        affectedPaths.push(path);
-      }
+      if (context.changed.has(path)) context.completed.add(path);
+      prepared.delete(path);
     }
-
-    return affectedPaths;
   }
 
-  /**
-   * Planning is async (list item planning queries the index), so it cannot
-   * run inside vault.process's synchronous transform; instead the edits are
-   * planned against a snapshot and applied atomically only while the file
-   * still matches that snapshot. A concurrent edit - the user typing in the
-   * same note - triggers a re-plan against the new content instead of being
-   * silently overwritten by a write based on a stale read.
-   */
-  private async applyContentIntentsAtomically(file: TFile, path: string, group: PathIntentGroup, warnings: string[]): Promise<boolean> {
-    for (let attempt = 0; attempt < MAX_CONTENT_APPLY_ATTEMPTS; attempt++) {
-      const attemptWarnings: string[] = [];
-      const snapshot = await this.app.vault.read(file);
-      let planned = this.applyWholeNoteIntents(file, snapshot, group.ordered);
-      const rangeEdits = await this.planRangeEdits(path, planned, group, attemptWarnings);
-
-      if (rangeEdits.length > 0) {
-        planned = this.applyRangeEdits(planned, rangeEdits);
-      }
-
-      if (planned === snapshot) {
-        warnings.push(...attemptWarnings);
-        return false;
-      }
-
-      let conflicted = false;
-      await this.app.vault.process(file, (current) => {
-        if (current !== snapshot) {
-          conflicted = true;
-          return current;
-        }
-        return planned;
-      });
-
-      if (!conflicted) {
-        warnings.push(...attemptWarnings);
-        return true;
-      }
-
-      logger.debug('Concurrent edit landed while applying write intents; re-planning', { path, attempt: attempt + 1 });
-    }
-
-    logger.warn('Gave up applying write intents after repeated concurrent edits', { path });
-    warnings.push(`${path}: gave up applying changes after repeated concurrent edits`);
-    return false;
-  }
-
-  private applyWholeNoteIntents(file: TFile, originalContent: string, intents: PathIntent[]): string {
+  private applyWholeNoteIntents(originalContent: string, intents: PathIntent[]): string {
     let content = originalContent;
 
     for (const intent of intents) {
       if (intent.type === 'replaceNoteBody') {
-        content = content.slice(0, this.getBodyStartOffset(file, content)) + intent.content;
+        content = content.slice(0, getFrontMatterInfo(content).contentStart) + intent.content;
       }
       else if (intent.type === 'replaceNoteContent') {
         content = this.applyContentPatch(content, intent.baselineContent, intent.content);
@@ -214,12 +277,15 @@ export class ObsidianEditApplier {
 
     const { after: tasksAfter, toDelete: tasksToDelete } =
       this.partitionIntentRows(group.tasks, intent => intent.type === 'deleteTask', intent => intent.task);
+
     const { after: headingsAfter, toDelete: headingsToDelete } =
       this.partitionIntentRows(group.headings, intent => intent.type === 'deleteHeading', intent => intent.heading);
+
     const { after: listItemsAfter, toDelete: listItemsToDelete } =
       this.partitionIntentRows(group.listItems, intent => intent.type === 'deleteListItem', intent => intent.listItem);
 
     const tableCells: TableCellRow[] = [];
+
     for (const intent of group.tables) {
       tableCells.push(...intent.tableCells);
     }
@@ -241,8 +307,7 @@ export class ObsidianEditApplier {
     return this.sortAndValidateEdits(edits, warnings);
   }
 
-  private partitionIntentRows<TIntent, TRow>(intents: TIntent[], isDelete: (intent: TIntent) => boolean,
-    getRow: (intent: TIntent) => TRow): { after: TRow[]; toDelete: TRow[] } {
+  private partitionIntentRows<TIntent, TRow>(intents: TIntent[], isDelete: (intent: TIntent) => boolean, getRow: (intent: TIntent) => TRow): { after: TRow[]; toDelete: TRow[] } {
     const after: TRow[] = [];
     const toDelete: TRow[] = [];
 
@@ -298,12 +363,14 @@ export class ObsidianEditApplier {
 
     let prefixLength = 0;
     const minLength = Math.min(baselineContent.length, nextContent.length);
+
     while (prefixLength < minLength && baselineContent[prefixLength] === nextContent[prefixLength]) {
       prefixLength++;
     }
 
     let baselineSuffix = baselineContent.length;
     let nextSuffix = nextContent.length;
+
     while (
       baselineSuffix > prefixLength &&
       nextSuffix > prefixLength &&
@@ -319,6 +386,7 @@ export class ObsidianEditApplier {
 
     if (!removed) {
       const suffixAt = unchangedSuffix ? content.indexOf(unchangedSuffix, prefixLength) : content.length;
+
       if (suffixAt >= 0) {
         return content.slice(0, suffixAt) + inserted + content.slice(suffixAt);
       }
@@ -329,6 +397,7 @@ export class ObsidianEditApplier {
     }
 
     const foundAt = removed ? this.findUniqueOccurrence(content, removed) : prefixLength;
+
     if (foundAt !== null) {
       return content.slice(0, foundAt) + inserted + content.slice(foundAt + removed.length);
     }
@@ -338,6 +407,7 @@ export class ObsidianEditApplier {
 
   private findUniqueOccurrence(content: string, needle: string): number | null {
     const first = content.indexOf(needle);
+
     if (first < 0) {
       return null;
     }
@@ -350,9 +420,11 @@ export class ObsidianEditApplier {
 
     for (const edit of edits) {
       const { start, end } = edit.range;
+
       if (end > modifiedContent.length) {
         throw new Error(`Edit range ${start}-${end} exceeds content length for ${edit.path}`);
       }
+
       modifiedContent = modifiedContent.slice(0, start) + edit.text + modifiedContent.slice(end);
     }
 
@@ -376,20 +448,22 @@ export class ObsidianEditApplier {
   }
 
   private getFile(path: string): TFile {
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-    if (!(file instanceof TFile)) {
+    const file = resolveVaultFile(this.app.vault, path);
+
+    if (!file) {
       throw new Error(`File not found: ${path}`);
     }
+
     return file;
   }
+}
 
-  private getBodyStartOffset(file: TFile, content: string): number {
-    const frontmatterEnd = this.app.metadataCache.getFileCache(file)?.frontmatterPosition?.end.offset;
-    if (frontmatterEnd != null) {
-      return frontmatterEnd;
-    }
+function sameProperties(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left instanceof Date || right instanceof Date) return left instanceof Date && right instanceof Date && left.getTime() === right.getTime();
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) !== Array.isArray(right)) return false;
+  const a = Object.keys(left), b = Object.keys(right);
 
-    const frontmatterMatch = content.match(/^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/);
-    return frontmatterMatch ? frontmatterMatch[0].length : 0;
-  }
+  return a.length === b.length && a.every(key => Object.prototype.hasOwnProperty.call(right, key)
+    && sameProperties((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]));
 }

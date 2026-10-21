@@ -1,5 +1,6 @@
 import { App, TFile, MetadataCache, normalizePath } from 'obsidian';
-import { escapeRegex, hashString } from '../utils/StringUtils';
+import { escapeRegex } from '../utils/StringUtils';
+import { computeAnchorHash, computeContextKey } from '../utils/AnchorHash';
 import type { TaskMetadataFields } from '../types';
 
 export type Range = { start: number; end: number };
@@ -67,14 +68,12 @@ interface StableLocationRow {
   anchor_hash?: string | null;
 }
 
-/** Map of checkbox characters to task status */
 const TASK_STATUS_MAP: ReadonlyMap<string, { completed: boolean; status: string }> = new Map([
   ['x', { completed: true, status: 'DONE' }],
   ['/', { completed: false, status: 'IN_PROGRESS' }],
   ['-', { completed: false, status: 'CANCELLED' }],
 ]);
 
-/** Default task status for unrecognized checkbox characters */
 const DEFAULT_TASK_STATUS_ENTRY = { completed: false, status: 'TODO' };
 
 const DEFAULT_STATUS_CHECKBOX = ' ';
@@ -84,12 +83,11 @@ const STATUS_CHECKBOX_MAP: ReadonlyMap<string, string> = new Map([
   [DEFAULT_TASK_STATUS_ENTRY.status, DEFAULT_STATUS_CHECKBOX],
 ]);
 
+const TASK_LINE = /^(\s*)([-*+])(\s+)\[([^\]])\](\s+)(.*)$/;
+
 export class ContentLocationService {
   public constructor(private app: App, private metadataCache: MetadataCache) {}
 
-  /**
-   * Get task completed/status from checkbox character.
-   */
   public static getTaskStatus(checkbox: string): { completed: boolean; status: string } {
     return TASK_STATUS_MAP.get(checkbox.toLowerCase()) ?? DEFAULT_TASK_STATUS_ENTRY;
   }
@@ -106,6 +104,7 @@ export class ContentLocationService {
     const line = lineContent ?? lines[lineIndex] ?? '';
 
     const inlineMatch = line.match(/\^([\w-]+)\s*$/);
+
     if (inlineMatch) {
       return inlineMatch[1];
     }
@@ -113,6 +112,7 @@ export class ContentLocationService {
     if (lineIndex < lines.length - 1) {
       const nextLine = lines[lineIndex + 1];
       const nextLineMatch = nextLine?.match(/^\s*\^([\w-]+)\s*$/);
+
       if (nextLineMatch) {
         return nextLineMatch[1];
       }
@@ -127,26 +127,14 @@ export class ContentLocationService {
    * so moving an item doesn't change its identity.
    */
   public static computeAnchorHash(lineIndex: number, lines: string[], occurrence: number = 0): string {
-    const contextWindow = ContentLocationService.computeContextKey(lineIndex, lines);
-
-    // Include occurrence number to distinguish items with identical context.
-    // Occurrence 0 means "first item with this context", 1 means "second", etc.
-    const hashInput = occurrence > 0 ? `${contextWindow}::O${occurrence}` : contextWindow;
-
-    return hashString(hashInput);
+    return computeAnchorHash(lineIndex, lines, occurrence);
   }
 
   /**
    * Compute the context key used to track occurrences (before adding occurrence number).
    */
   public static computeContextKey(lineIndex: number, lines: string[]): string {
-    const prevLine = lineIndex > 0 ? lines[lineIndex - 1] : '';
-    const currentLine = lines[lineIndex] || '';
-    const nextLine = lineIndex < lines.length - 1 ? lines[lineIndex + 1] : '';
-
-    return [prevLine, currentLine, nextLine]
-      .map(line => line.trim().toLowerCase())
-      .join('\n');
+    return computeContextKey(lineIndex, lines);
   }
 
   public static getLineOffsets(content: string, lineIndex: number): Range {
@@ -162,24 +150,26 @@ export class ContentLocationService {
   public rangeFromBlockId(path: string, blockId: string): Range | null {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(file instanceof TFile)) return null;
-    
+
     const cache = this.metadataCache.getFileCache(file);
     const block = cache?.blocks?.[blockId];
     if (!block) return null;
-    
-    return { 
-      start: block.position.start.offset, 
-      end: block.position.end.offset 
+
+    return {
+      start: block.position.start.offset,
+      end: block.position.end.offset
     };
   }
 
   public locateTask(content: string, row: TaskRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeTask);
+
     if (stableRange) {
       return { kind: "ok", range: stableRange };
     }
 
     const fuzzyResult = this.fuzzyTaskInSection(content, row);
+
     if (fuzzyResult) {
       return { kind: "ok", range: fuzzyResult };
     }
@@ -189,6 +179,7 @@ export class ContentLocationService {
 
   public locateHeading(content: string, row: HeadingRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeHeading);
+
     if (stableRange) {
       return { kind: "ok", range: stableRange };
     }
@@ -197,10 +188,12 @@ export class ContentLocationService {
     const escapedText = escapeRegex(row.heading_text);
     const re = new RegExp(`(^|\\n)(#{${level}})\\s+${escapedText}(\\s+#+\\s*)?(\\s+\\{#.*\\})?\\s*$`, "m");
     const m = content.match(re);
+
     if (m && m.index != null) {
       const lineStart = content.lastIndexOf("\n", m.index) + 1;
       const lineEnd = content.indexOf("\n", m.index);
       const end = (lineEnd === -1 ? content.length : lineEnd);
+
       return { kind: "ok", range: { start: lineStart, end } };
     }
 
@@ -209,6 +202,7 @@ export class ContentLocationService {
 
   public locateListItem(content: string, row: ListItemRow): LocatedRange {
     const stableRange = this.locateByStableReferences(content, row, ContentLocationService.looksLikeListItem);
+
     if (stableRange) {
       return { kind: "ok", range: stableRange };
     }
@@ -219,6 +213,7 @@ export class ContentLocationService {
   private locateByStableReferences(content: string, row: StableLocationRow, isExpectedLine: (slice: string) => boolean): Range | null {
     if (row.block_id) {
       const range = this.rangeFromBlockId(row.path, row.block_id);
+
       if (this.rangeMatches(content, range, isExpectedLine)) {
         return range;
       }
@@ -226,6 +221,7 @@ export class ContentLocationService {
 
     if (ContentLocationService.isValidRange(content, row.start_offset, row.end_offset)) {
       const range = { start: row.start_offset!, end: row.end_offset! };
+
       if (this.rangeMatches(content, range, isExpectedLine)) {
         return range;
       }
@@ -233,6 +229,7 @@ export class ContentLocationService {
 
     if (row.anchor_hash) {
       const range = this.searchByAnchorHash(content, row.anchor_hash);
+
       if (this.rangeMatches(content, range, isExpectedLine)) {
         return range;
       }
@@ -250,12 +247,18 @@ export class ContentLocationService {
     if (start < 0 || end < 0) return false;
     if (start >= end) return false;
     if (end > content.length) return false;
+
     return true;
   }
 
+  public static parseTaskLine(line: string): { indent: string; bullet: '-' | '*' | '+'; markerSpacing: string; checkbox: string; spacing: string; text: string } | null {
+    const match = line.match(TASK_LINE);
+
+    return match ? { indent: match[1], bullet: match[2] as '-' | '*' | '+', markerSpacing: match[3], checkbox: match[4], spacing: match[5], text: match[6] } : null;
+  }
+
   public static looksLikeTask(this: void, slice: string): boolean {
-    // Match tasks with any checkbox state: [ ], [x], [X], [/], [-], [?], [>], [<], [!], etc.
-    return /^\s*[-*+]\s+\[[^\]]\]\s+/.test(slice);
+    return TASK_LINE.test(slice);
   }
 
   public static looksLikeHeading(this: void, slice: string): boolean {
@@ -270,11 +273,13 @@ export class ContentLocationService {
 
   public searchByAnchorHash(content: string, targetHash: string): Range | null {
     const lines = content.split('\n');
+
     for (let i = 0; i < lines.length; i++) {
       if (ContentLocationService.computeAnchorHash(i, lines) === targetHash) {
         return ContentLocationService.getLineOffsets(content, i);
       }
     }
+
     return null;
   }
 
@@ -283,9 +288,11 @@ export class ContentLocationService {
     const re = /^(\s*)([-*+])\s+\[[ xX]\]\s+(.*)$/gm;
     let best: { start: number; end: number; score: number } | null = null;
     let m: RegExpExecArray | null;
+
     while ((m = re.exec(content)) !== null) {
       const raw = m[3] ?? "";
       const score = ContentLocationService.jaccardWordSetSimilarity(ContentLocationService.normalizeText(raw), normalized);
+
       if (score > (best?.score ?? 0)) {
         const lastNewline = content.lastIndexOf("\n", m.index);
         const start = lastNewline === -1 ? 0 : lastNewline + 1;
@@ -294,9 +301,11 @@ export class ContentLocationService {
         best = { start, end, score };
       }
     }
+
     if (best && best.score >= 0.6) {
       return { start: best.start, end: best.end };
     }
+
     return null;
   }
 
@@ -310,23 +319,27 @@ export class ContentLocationService {
     const B = new Set(b.split(" ").filter(Boolean));
     const inter = new Set([...A].filter(x => B.has(x))).size;
     const union = new Set([...A, ...B]).size || 1;
+
     return inter / union;
   }
 
   public static getLineStartOffset(content: string, lineIndex: number): number {
     if (lineIndex <= 0) return 0;
     let pos = 0, line = 0;
+
     while (line < lineIndex && pos !== -1) {
       pos = content.indexOf('\n', pos);
       if (pos === -1) return content.length;
       pos += 1; line++;
     }
+
     return pos === -1 ? content.length : pos;
   }
 
   public static getLineEndOffset(content: string, lineIndex: number): number {
     const start = ContentLocationService.getLineStartOffset(content, lineIndex);
     const end = content.indexOf('\n', start);
+
     return end === -1 ? content.length : end;
   }
 
@@ -336,10 +349,12 @@ export class ContentLocationService {
     if (range.end < content.length && content[range.end] === '\n') {
       return { start: range.start, end: range.end + 1 };
     }
+
     // If deleting at end of file, check if there's a leading newline we should remove instead
     if (range.start > 0 && content[range.start - 1] === '\n') {
       return { start: range.start - 1, end: range.end };
     }
+
     return range;
   }
 
@@ -372,6 +387,7 @@ export class ContentLocationService {
     const lines = content.split('\n');
 
     let lastTaskLineIndex = -1;
+
     for (let i = lines.length - 1; i >= 0; i--) {
       if (/^\s*[-*+]\s*\[[ xX]\]/.test(lines[i])) {
         lastTaskLineIndex = i;
@@ -399,6 +415,7 @@ export class ContentLocationService {
 
         if (lastItem?.line_number) {
           const lineIndex = lastItem.line_number - 1;
+
           if (lineIndex >= 0 && lineIndex < lines.length) {
             return ContentLocationService.insertAfterLine(content, lineIndex);
           }
@@ -409,8 +426,10 @@ export class ContentLocationService {
     }
 
     let lastListItemLineIndex = -1;
+
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
+
       // Match bullet or numbered list, but NOT task items (any checkbox state)
       if (/^\s*(?:[-*+]|\d+[.)])\s+/.test(line) && !/^\s*[-*+]\s*\[[^\]]\]/.test(line)) {
         lastListItemLineIndex = i;
@@ -427,6 +446,7 @@ export class ContentLocationService {
 
   public static findEndInsertionPoint(content: string): InsertionPoint {
     const endsWithNewline = content.endsWith('\n');
+
     return {
       offset: content.length,
       needsNewlineBefore: !endsWithNewline,

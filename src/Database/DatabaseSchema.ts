@@ -1,10 +1,13 @@
 import { escapeSqlString, quoteIdentifier } from '../utils/SqlIdentifierUtils';
+import { LIST_PROPERTY_KEYS, getPropertyColumns } from '../utils/PropertyViewUtils';
+import type { PropertyColumn } from '../utils/PropertyViewUtils';
 
 const TABLE_DEFINITIONS = `
 CREATE TABLE IF NOT EXISTS notes (
   path TEXT PRIMARY KEY,
   title TEXT,
   content TEXT NOT NULL,
+  content_status TEXT NOT NULL DEFAULT 'not_indexed',
   created INTEGER DEFAULT (strftime('%s', 'now') * 1000),
   modified INTEGER DEFAULT (strftime('%s', 'now') * 1000),
   size INTEGER DEFAULT 0
@@ -730,106 +733,90 @@ CREATE VIEW IF NOT EXISTS notes_with_properties AS
 SELECT path, title, content, created, modified, size
 FROM notes;
 `;
+
   return TABLE_DEFINITIONS + '\n' + VIEWS_AND_TRIGGERS + '\n' + initialPropertiesView;
-}
-
-interface MigratableDatabase {
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-  run(sql: string): unknown;
-}
-
-const LINKS_COLUMN_MIGRATIONS: ReadonlyArray<readonly [string, string]> = [
-  ['original', 'ALTER TABLE links ADD COLUMN original TEXT'],
-  ['start_offset', 'ALTER TABLE links ADD COLUMN start_offset INTEGER'],
-  ['end_offset', 'ALTER TABLE links ADD COLUMN end_offset INTEGER'],
-  ['frontmatter_key', 'ALTER TABLE links ADD COLUMN frontmatter_key TEXT'],
-];
-
-export function migrateLinksColumns(db: MigratableDatabase): boolean {
-  const existing = new Set(
-    db.exec("PRAGMA table_info('links')")[0]?.values.map(row => row[1] as string) ?? []
-  );
-  if (existing.size === 0) return false;
-
-  const missing = LINKS_COLUMN_MIGRATIONS.filter(([column]) => !existing.has(column));
-  if (missing.length === 0) return false;
-
-  for (const [, alterSql] of missing) {
-    db.run(alterSql);
-  }
-  db.run('UPDATE notes SET modified = 0');
-  return true;
-}
-
-interface PropertyColumn {
-  columnName: string;
-  keys: string[];
-}
-
-function getPropertyColumns(propertyKeys: string[]): PropertyColumn[] {
-  const columns = new Map<string, PropertyColumn>();
-
-  for (const key of propertyKeys) {
-    const sanitized = key.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase() || 'property';
-    const existing = columns.get(sanitized);
-
-    if (existing) {
-      existing.keys.push(key);
-    }
-    else {
-      columns.set(sanitized, {
-        columnName: sanitized,
-        keys: [key]
-      });
-    }
-  }
-
-  return Array.from(columns.values());
 }
 
 export const PROPERTIES_MAT_TABLE = '_vq_props_mat';
 
-function buildPropertyColumnUpdateStatements(propertyColumnsConfig: PropertyColumn[]): string {
+function isJsonArray(value: string): string {
+  return `COALESCE(CASE WHEN json_valid(${value}) THEN json_type(${value}) END = 'array', 0)`;
+}
+
+function listShapeCondition(key: string, keyList: string, pathRef: string, oldValue: string | null): string {
+  const listElsewhere = `EXISTS (SELECT 1 FROM properties WHERE key IN (${keyList}) AND array_index IS NOT NULL AND path <> ${pathRef})`;
+  const unseen = LIST_PROPERTY_KEYS.has(key) ? ` OR NOT EXISTS (SELECT 1 FROM properties WHERE key IN (${keyList}) AND path <> ${pathRef})` : '';
+  const vaultShape = `(${listElsewhere}${unseen})`;
+
+  return oldValue ? `(${isJsonArray(oldValue)} OR (${oldValue} IS NULL AND ${vaultShape}))` : vaultShape;
+}
+
+function buildPropertyWriteStatements(propertyColumnsConfig: PropertyColumn[], pathRef: string, oldRef: string | null, changedCondition: (column: string) => string): string {
   return propertyColumnsConfig.map(({columnName, keys}) => {
     const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  DELETE FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NULL;
-  UPDATE properties
-  SET value = NEW.${columnIdentifier}, value_type = 'string'
-  WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL AND NEW.${columnIdentifier} IS NOT NULL;
+    const column = quoteIdentifier(columnName);
+    const key = `'${escapeSqlString(keys[0])}'`;
+    const changed = changedCondition(column);
+    const value = `NEW.${column}`;
+
+    if (keys.length !== 1) {
+      return `  SELECT RAISE(ABORT, 'Ambiguous property column: use properties with the exact key') WHERE ${changed};`;
+    }
+
+    const isList = listShapeCondition(keys[0], keyList, pathRef, oldRef ? `${oldRef}.${column}` : null);
+    const written = `${changed} AND ${value} IS NOT NULL`;
+
+    return `  DELETE FROM properties
+  WHERE path = ${pathRef} AND key IN (${keyList}) AND ${changed};
   INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT OLD.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM properties WHERE path = OLD.path AND key IN (${keyList}) AND array_index IS NULL
-    );`;
+  SELECT ${pathRef}, ${key}, CASE item.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE COALESCE(item.value, '') END,
+    CASE item.type WHEN 'text' THEN 'string' WHEN 'integer' THEN 'number' WHEN 'real' THEN 'number' WHEN 'true' THEN 'boolean' WHEN 'false' THEN 'boolean'
+      WHEN 'null' THEN 'null' ELSE 'object' END, item.key
+  FROM json_each(CASE WHEN ${isJsonArray(value)} THEN ${value} ELSE '[]' END) item
+  WHERE ${written};
+  INSERT INTO properties (path, key, value, value_type, array_index)
+  SELECT ${pathRef}, ${key}, ${value}, 'string', NULL
+  WHERE ${written} AND NOT ${isJsonArray(value)} AND NOT ${isList};
+  INSERT INTO properties (path, key, value, value_type, array_index)
+  SELECT ${pathRef}, ${key}, element, 'string', position
+  FROM (
+    WITH RECURSIVE split(element, rest, position) AS (
+      SELECT NULL, ${value} || ',', -1
+      UNION ALL
+      SELECT TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1)), SUBSTR(rest, INSTR(rest, ',') + 1), position + 1
+      FROM split WHERE rest <> ''
+    )
+    SELECT element, position FROM split WHERE position >= 0 AND element <> ''
+  )
+  WHERE ${written} AND NOT ${isJsonArray(value)} AND ${isList};`;
   }).join('\n');
+}
+
+function buildPropertyColumnUpdateStatements(propertyColumnsConfig: PropertyColumn[]): string {
+  return buildPropertyWriteStatements(propertyColumnsConfig, 'OLD.path', 'OLD', column => `NEW.${column} IS NOT OLD.${column}`);
 }
 
 function buildPropertyColumnInsertStatements(propertyColumnsConfig: PropertyColumn[]): string {
-  return propertyColumnsConfig.map(({columnName}) => {
-    const columnIdentifier = quoteIdentifier(columnName);
-    return `  INSERT INTO properties (path, key, value, value_type, array_index)
-  SELECT NEW.path, '${escapeSqlString(columnName)}', NEW.${columnIdentifier}, 'string', NULL
-  WHERE NEW.${columnIdentifier} IS NOT NULL;`;
-  }).join('\n');
+  return buildPropertyWriteStatements(propertyColumnsConfig, 'NEW.path', null, column => `NEW.${column} IS NOT NULL`);
 }
 
-function buildPivotSelect(propertyColumnsConfig: PropertyColumn[], pathFilter: string): string {
+function buildPivotSelect(propertyColumnsConfig: PropertyColumn[], pathCondition: string): string {
   const pivotColumns = propertyColumnsConfig.map(({columnName, keys}) => {
     const keyList = keys.map(key => `'${escapeSqlString(key)}'`).join(', ');
-    const distinctValues = `DISTINCT CASE WHEN p.key IN (${keyList}) THEN p.value END`;
-    return `  CASE
-    WHEN COUNT(${distinctValues}) > 1 THEN GROUP_CONCAT(${distinctValues})
-    ELSE MAX(CASE WHEN p.key IN (${keyList}) THEN p.value END)
-  END AS ${quoteIdentifier(columnName)}`;
+    const matches = `p.key IN (${keyList})`;
+    const item = `CASE WHEN p.value_type IN ('number', 'boolean', 'object') AND json_valid(p.value) THEN json(p.value) ELSE p.value END`;
+    const list = `json_group_array(${item} ORDER BY p.array_index) FILTER (WHERE ${matches} AND p.array_index IS NOT NULL)`;
+    const text = `GROUP_CONCAT(DISTINCT CASE WHEN ${matches} THEN p.value END)`;
+
+    return `  CASE WHEN MAX(CASE WHEN ${matches} THEN p.array_index END) IS NULL THEN ${text} ELSE ${list} END AS ${quoteIdentifier(columnName)}`;
   }).join(',\n');
+
+  const where = pathCondition ? `\nWHERE ${pathCondition}` : '';
 
   return `SELECT
   p.path,
 ${pivotColumns}
-FROM properties p
-WHERE ${pathFilter}p.array_index IS NULL
+FROM properties p${where}
 GROUP BY p.path`;
 }
 
@@ -840,19 +827,21 @@ function matColumnList(propertyColumnsConfig: PropertyColumn[]): string {
 function matRowRefreshStatements(propertyColumnsConfig: PropertyColumn[], pathRef: string): string {
   return `  DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = ${pathRef};
   INSERT INTO ${PROPERTIES_MAT_TABLE} (${matColumnList(propertyColumnsConfig)})
-  ${buildPivotSelect(propertyColumnsConfig, `p.path = ${pathRef} AND `)};`;
+  ${buildPivotSelect(propertyColumnsConfig, `p.path = ${pathRef}`)};`;
 }
 
 export function generatePropertiesMatRefreshSql(propertyKeys: string[], existingMatColumns: string[]): { deleteSql: string; insertSql: string } | null {
   const existing = new Set(existingMatColumns);
   const config = getPropertyColumns(propertyKeys).filter(({columnName}) => existing.has(columnName));
+
   if (config.length === 0) {
     return null;
   }
+
   return {
     deleteSql: `DELETE FROM ${PROPERTIES_MAT_TABLE} WHERE path = ?`,
     insertSql: `INSERT INTO ${PROPERTIES_MAT_TABLE} (${matColumnList(config)})
-${buildPivotSelect(config, 'p.path = ? AND ')}`,
+${buildPivotSelect(config, 'p.path = ?')}`,
   };
 }
 
@@ -1008,6 +997,7 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
     const sanitizedColumns = columns.map((col, index) => {
       // Deliberately diverges from other sanitizers (no lowercasing): generated schema names must stay stable.
       const sanitized = col.replace(/[^a-zA-Z0-9_]/g, '_');
+
       return {
         original: col,
         sanitized: sanitized,
@@ -1019,6 +1009,7 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
 
     const columnSelections = sanitizedColumns.map(({ original, alias }) => {
       const quotedColumnName = quoteIdentifier(original);
+
       return `  ${alias}.cell_value AS ${quotedColumnName}`;
     }).join(',\n');
 
@@ -1032,6 +1023,7 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
       const tableNameConditions = tableNames
         .map(name => `'${escapeSqlString(name)}'`)
         .join(', ');
+
       whereClause += ` AND ${primaryCol.alias}.table_name IN (${tableNameConditions})`;
     }
 
@@ -1041,18 +1033,24 @@ export function generateDynamicTableViews(tableStructures: TableStructure[]): st
     const insertTriggerName = quoteIdentifier(`${viewName}_insert_trigger`);
     const updateTriggerName = quoteIdentifier(`${viewName}_update_trigger`);
     const deleteTriggerName = quoteIdentifier(`${viewName}_delete_trigger`);
+
     const defaultTableName = tableNames && tableNames.length > 0
       ? `'${escapeSqlString(tableNames[0])}'`
       : 'NULL';
+
     const tableNameValue = `COALESCE(NEW.table_name, ${defaultTableName})`;
+
     const rowJsonArgs = sanitizedColumns.map(({ original }) => {
       const escapedColName = escapeSqlString(original);
       const quotedColName = quoteIdentifier(original);
+
       return `      '${escapedColName}', NEW.${quotedColName}`;
     }).join(',\n');
+
     const updateStatements = sanitizedColumns.map(({ original }) => {
       const escapedColName = escapeSqlString(original);
       const quotedColName = quoteIdentifier(original);
+
       return `    UPDATE table_cells SET cell_value = NEW.${quotedColName}
     WHERE path = OLD.path AND table_index = OLD.table_index AND row_index = OLD.row_index AND column_name = '${escapedColName}';`;
     }).join('\n');

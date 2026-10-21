@@ -16,6 +16,7 @@ export const PROVIDER_DEFINITION_LANGUAGES = new Set<string>();
 
 export function registerProviderDefinitionLanguage(language: string): void {
   const normalized = language.trim();
+
   if (!normalized) {
     return;
   }
@@ -29,6 +30,10 @@ export const CONFIG_CAPABLE_LANGUAGES = new Set([
   'vaultquery-chart',
   'vaultquery-markdown',
   'vaultquery-calendar',
+]);
+
+export const NATURAL_LANGUAGE_CONFIG_LANGUAGES = new Set([
+  'vaultquery-nl',
 ]);
 
 export const SQL_EDITOR_LANGUAGES = new Set([

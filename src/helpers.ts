@@ -65,15 +65,18 @@ export type VaultQueryAppLike = object & {
 };
 
 export function getDeclaredProviderBlockLanguages(): Set<string> {
-  const store = globalThis as { __vaultQueryDeclaredProviderBlockLanguages?: Set<string> };
+  const store = window as { __vaultQueryDeclaredProviderBlockLanguages?: Set<string> };
+
   return (store.__vaultQueryDeclaredProviderBlockLanguages ??= new Set<string>());
 }
 
 export function declareVaultQueryProviderBlockLanguages(app: VaultQueryAppLike, languages: readonly string[]): void {
   const declared = getDeclaredProviderBlockLanguages();
+
   for (const language of languages) {
     declared.add(language);
   }
+
   app.plugins?.plugins?.vaultquery?.declareProviderDefinitionBlockLanguages?.(languages);
 }
 
@@ -129,6 +132,7 @@ export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: Wai
   let api = getVaultQueryAPI(app);
 
   const workspace = app.workspace;
+
   if (api === null && workspace) {
     api = await new Promise<IVaultQueryAPI | null>((resolve) => {
       let timeoutId: number | null = null;
@@ -148,6 +152,7 @@ export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: Wai
 
       // The API may have appeared between the initial check and subscribing.
       const current = getVaultQueryAPI(app);
+
       if (current !== null) {
         finish(current);
       }
@@ -185,6 +190,7 @@ export async function registerVaultQueryTableProviders(app: VaultQueryAppLike, o
 
   const manager = new VaultQueryTableProviderRegistrationManager(app, options);
   await manager.start();
+
   return manager;
 }
 
@@ -226,6 +232,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
   public async getStatus(providerId?: string): Promise<TableProviderStatus[]> {
     const api = getVaultQueryAPI(this.app);
+
     return api ? api.getTableProviderStatus(providerId) : [];
   }
 
@@ -276,6 +283,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
       this.currentState = 'vaultquery-unavailable';
       this.logger.warn(`[VaultQuery] ${this.options.pluginId}: VaultQuery API unavailable; table providers were not registered`);
       this.scheduleRetry('VaultQuery API unavailable');
+
       return this.currentState;
     }
 
@@ -284,15 +292,18 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
     if (!api.getCapabilities().thirdPartyProviderTablesEnabled) {
       this.currentState = 'feature-disabled';
       this.logger.warn(`[VaultQuery] ${this.options.pluginId}: third-party provider tables are disabled in VaultQuery settings`);
+
       return this.currentState;
     }
 
     try {
       const providers = resolveProviders(this.options.providers);
       const nextRegistrations: TableProviderRegistration[] = [];
+
       for (const provider of providers) {
         if (this.disposed) {
           await this.unregisterFromApi(api);
+
           return this.markDisposed();
         }
 
@@ -302,6 +313,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
       if (this.disposed) {
         await this.unregisterFromApi(api);
+
         return this.markDisposed();
       }
 
@@ -310,6 +322,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
       this.currentLastError = undefined;
       this.currentState = 'registered';
       this.logger.info(`[VaultQuery] ${this.options.pluginId}: registered ${this.currentRegistrations.length} table provider(s)`);
+
       return this.currentState;
     }
     catch (error) {
@@ -321,12 +334,14 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
       this.currentState = 'failed';
       this.logger.error(`[VaultQuery] ${this.options.pluginId}: table provider registration failed`, error);
       this.scheduleRetry('registration failed');
+
       return this.currentState;
     }
   }
 
   private markDisposed(): VaultQueryProviderRegistrationState {
     this.currentState = 'disposed';
+
     return this.currentState;
   }
 
@@ -343,6 +358,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
     this.retryAttempts++;
     this.logger.info(`[VaultQuery] ${this.options.pluginId}: retrying table provider registration in ${this.retryDelayMs}ms (${reason})`);
+
     this.retryTimer = window.setTimeout(() => {
       this.retryTimer = null;
       void this.retryNow();
@@ -354,6 +370,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
     this.unsubscribeDatabaseLost();
     this.currentApi = api;
+
     this.databaseLostRef = api.on('database-lost', () => {
       this.logger.warn(`[VaultQuery] ${this.options.pluginId}: database lost; table providers will be re-registered after recovery`);
       this.currentRegistrations = [];
@@ -366,6 +383,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
     if (this.databaseLostRef && this.currentApi) {
       this.currentApi.off(this.databaseLostRef);
     }
+
     this.databaseLostRef = null;
   }
 
