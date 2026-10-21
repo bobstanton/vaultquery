@@ -4,8 +4,9 @@ import { MarkdownTableRenderer } from './MarkdownTableRenderer';
 import { SlickGridRenderer } from './SlickGridRenderer';
 import { JavaScriptRenderer } from './JavaScriptRenderer';
 import { BaseRenderer } from './BaseRenderer';
-import { QueryRefreshRegistry, resolveAutoRefreshSetting } from './QueryRefreshRegistry';
+import { registerQueryRefresh } from './QueryRefreshRegistry';
 import { addFloatingButtons } from './OutputChrome';
+import { exportNameFor } from './ExportMenu';
 import type { ChartContext } from './ChartRenderer';
 import type { RenderContext } from './BaseRenderer';
 
@@ -13,27 +14,31 @@ export type { RenderContext };
 
 export class QueryRenderer {
   static async render(context: RenderContext): Promise<void> {
-    const { parsed, onRefresh, container } = context;
+    const { parsed, container } = context;
     const outputKind = parsed.output?.kind ?? 'table';
 
     container.removeClass('vaultquery-calendar-output');
 
     if (outputKind === 'chart') {
       this.prepareNonGridRender(context);
+
       const chartContext: ChartContext = {
         results: context.results,
         container,
         config: ChartRenderer.parseConfig(parsed.output?.options)
       };
+
       ChartRenderer.renderChart(chartContext);
 
-      addFloatingButtons(container, { results: context.results, onRefresh });
+      this.addOutputButtons(context);
+
       return;
     }
 
     if (outputKind === 'markdown') {
       this.prepareNonGridRender(context);
       await MarkdownTableRenderer.render(context, MarkdownTableRenderer.parseConfig(parsed.output?.options));
+
       return;
     }
 
@@ -41,17 +46,20 @@ export class QueryRenderer {
       this.prepareNonGridRender(context);
       CalendarRenderer.render(context, CalendarRenderer.parseConfig(parsed.output?.options));
       container.addClass('vaultquery-calendar-output');
-      addFloatingButtons(container, { results: context.results, onRefresh });
+      this.addOutputButtons(context);
+
       return;
     }
 
     if (outputKind === 'template' && parsed.template) {
       SlickGridRenderer.cleanupContainer(container);
+
       if (!context.settings.enableJavaScriptRendering) {
         BaseRenderer.renderError(container, {
           title: 'JavaScript rendering disabled',
           message: 'Enable JavaScript rendering in VaultQuery settings before using template sections.'
         });
+
         return;
       }
 
@@ -69,26 +77,26 @@ export class QueryRenderer {
         context.openFile
       );
 
-      addFloatingButtons(container, { results: context.results, onRefresh });
+      this.addOutputButtons(context);
+
       return;
     }
 
     SlickGridRenderer.render(context);
 
-    addFloatingButtons(container, { results: context.results, onRefresh });
+    this.addOutputButtons(context);
+  }
+
+  private static addOutputButtons(context: RenderContext): void {
+    addFloatingButtons(context.container, { results: context.readResults ?? context.results,
+      columns: context.readColumns ?? context.dataFileColumns, dataFileColumns: context.dataFileColumns,
+      app: context.app, exportFolder: context.settings.exportFolder, exportName: exportNameFor(context),
+      onRefresh: context.onRefresh });
   }
 
   private static prepareNonGridRender(context: RenderContext): void {
     SlickGridRenderer.cleanupContainer(context.container);
-    this.registerNonGridRefresh(context);
-  }
-
-  private static registerNonGridRefresh(context: RenderContext): void {
-    if (!context.onRefresh) return;
-    QueryRefreshRegistry.register(context.container, {
-      onRefresh: context.onRefresh,
-      autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed, { includeGlobalDefault: false }),
-    });
+    registerQueryRefresh(context, false);
   }
 
 }

@@ -1,16 +1,17 @@
 import { MarkdownPostProcessorContext, MarkdownView, Plugin, debounce, loadPrism, Notice } from 'obsidian';
 import { normalizeConsoleLogLevel } from 'obsidian-debug-logger';
+import { subscribeAutocompleteSchemaChanges } from './utils/AutocompleteSchemaUtils';
 import { VaultQueryAPI } from './VaultQueryAPI';
 import type { EventRef } from './VaultQueryAPI';
 import { VaultQuerySettings, mergeSettings, normalizeSettings } from './Settings/Settings';
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
 import { ChartRenderer } from './Renderers/ChartRenderer';
-import { cleanupRenderedOutput } from './Renderers/RendererCleanup';
 import { DatabaseRecoveryManager } from './Managers/DatabaseRecoveryManager';
 import { IndexingStateManager } from './Managers/IndexingStateManager';
 import { QueryCodeBlockProcessor } from './CodeBlockProcessors/QueryCodeBlockProcessor';
 import { WriteCodeBlockProcessor } from './CodeBlockProcessors/WriteCodeBlockProcessor';
+import { LlmCodeBlockProcessor } from './CodeBlockProcessors/LlmCodeBlockProcessor';
 import { ChartCodeBlockProcessor } from './CodeBlockProcessors/ChartCodeBlockProcessor';
 import { BaseHelpCodeBlockProcessor } from './CodeBlockProcessors/BaseHelpCodeBlockProcessor';
 import { HelpCodeBlockProcessor } from './CodeBlockProcessors/HelpCodeBlockProcessor';
@@ -30,10 +31,8 @@ import { createInlineButtonExtension, processReadingViewInlineButtons } from './
 import { createInlineQueryExtension, processReadingViewInlineQueries } from './Editor/InlineQueryExtension';
 import { createVaultQueryCompletionExtension } from './Editor/VaultQueryCompletionExtension';
 import { registerVaultQueryCliHandlers } from './Services/CliQueryService';
-import { renderIndexingProgress } from './utils/IndexingUtils';
+import { IndexingReadiness } from './Services/IndexingReadiness';
 import { logger as rootLogger } from './utils/logger';
-import type { IndexingStatus } from './types';
-import type { BlockProcessor } from './utils/IndexingUtils';
 import * as chartHelp from './generated-help/vaultquery-chart-help.generated';
 import * as calendarHelp from './generated-help/vaultquery-calendar-help.generated';
 
@@ -42,14 +41,7 @@ import './slickgrid-obsidian-theme.css';
 
 import { VAULTQUERY_API_READY_EVENT, getDeclaredProviderBlockLanguages } from './helpers';
 export { declareVaultQueryProviderBlockLanguages, getVaultQueryAPI, waitForVaultQueryAPI, registerVaultQueryTableProviders, VAULTQUERY_API_READY_EVENT } from './helpers';
-export type {
-  ManagedVaultQueryTableProviderRegistration,
-  RegisterVaultQueryTableProvidersOptions,
-  VaultQueryAppLike,
-  VaultQueryProviderRegistrationLogger,
-  VaultQueryProviderRegistrationState,
-  WaitForAPIOptions,
-} from './helpers';
+export type { ManagedVaultQueryTableProviderRegistration, RegisterVaultQueryTableProvidersOptions, VaultQueryAppLike, VaultQueryProviderRegistrationLogger, VaultQueryProviderRegistrationState, WaitForAPIOptions } from './helpers';
 
 declare const activeDocument: Document;
 
@@ -78,8 +70,6 @@ interface UnloadableProcessor {
 interface ProcessorRegistration {
   language: string;
   processor: MarkdownBlockProcessor;
-  pendingName?: string;
-  updateDuringIndexing?: boolean;
   unloadOnPluginUnload?: boolean;
 }
 
@@ -95,14 +85,15 @@ export default class VaultQueryPlugin extends Plugin {
   private settingsReindexDebouncer = debounce(() => {
     void this.runPendingSettingsReindex();
   }, VaultQueryPlugin.SETTINGS_REINDEX_DEBOUNCE_MS, true);
-  private progressUpdateInterval: number | null = null;
+
+  public readonly indexingReadiness: IndexingReadiness = new IndexingReadiness(this);
   private registeredProviderBlockLanguages = new Set<string>();
   private pendingProviderDefinitionBlocks: Array<{ language: string; source: string; el: HTMLElement; ctx: MarkdownPostProcessorContext }> = [];
   private rerenderPreviewsAfterLanguageRegistration = debounce(() => this.rerenderMarkdownPreviews(), 100, true);
   private schemaEventRefs: EventRef[] = [];
+  private settingsStatusRef?: EventRef;
+  private settingTab?: VaultQuerySettingTab;
   private processorRegistrations: ProcessorRegistration[] = [];
-  private pendingBlockProcessors: Array<{ name: string; processor: BlockProcessor }> = [];
-  private indexingProgressProcessors: BlockProcessor[] = [];
   private unloadableProcessors: UnloadableProcessor[] = [];
 
   public async loadSettings() {
@@ -119,8 +110,40 @@ export default class VaultQueryPlugin extends Plugin {
     this.settings.debugConsoleLogLevel = normalizeConsoleLogLevel(this.settings.debugConsoleLogLevel);
     normalizeSettings(this.settings);
     rootLogger.configure(this.settings.debugConsoleLogLevel);
+
+    const csvUpdate = this.api?.updateCsvSettings()
+      .catch(error => rootLogger.error('CSV settings could not be applied', error));
+
     await this.saveData(this.settings);
-    this.api?.setThirdPartyProviderTablesEnabled(this.settings.enableThirdPartyProviderTables);
+    await csvUpdate;
+
+    try {
+      await this.api?.updateProviderSettings();
+    }
+    catch (error) {
+      rootLogger.error('Provider settings could not be applied', error);
+    }
+
+    try {
+      await this.api?.updateOtherFileContentSettings();
+    }
+    catch (error) {
+      rootLogger.error('File content settings could not be applied', error);
+    }
+
+    try {
+      await this.api?.updateImageSettings();
+    }
+    catch (error) {
+      rootLogger.error('Image metadata settings could not be applied', error);
+    }
+
+    try {
+      await this.api?.updateExternalRootSettings();
+    }
+    catch (error) {
+      rootLogger.error('External folder settings could not be applied', error);
+    }
 
     if (options.requiresFullReindex) {
       this.scheduleSettingsReindex();
@@ -139,6 +162,7 @@ export default class VaultQueryPlugin extends Plugin {
 
     if (!this.api || this.api.getIndexingStatus().isIndexing || this.indexingStateManager?.hasPendingFileModifications()) {
       this.scheduleSettingsReindex();
+
       return;
     }
 
@@ -146,9 +170,7 @@ export default class VaultQueryPlugin extends Plugin {
     new Notice('VaultQuery: Rebuilding index for settings changes...', 4000);
 
     try {
-      this.startUpdatingPendingCodeBlocks();
       await this.api.forceReindexVault();
-      await this.processPendingCodeBlocks();
       new Notice('VaultQuery: Settings rebuild complete', 3000);
     }
     catch (error) {
@@ -161,6 +183,7 @@ export default class VaultQueryPlugin extends Plugin {
   private registerCodeBlockProcessors(): void {
     const queryProcessor = new QueryCodeBlockProcessor(this.app, this);
     const writeProcessor = new WriteCodeBlockProcessor(this.app, this);
+    const llmProcessor = new LlmCodeBlockProcessor(this.app, this);
     const chartProcessor = new ChartCodeBlockProcessor(this.app, this);
     const chartHelpProcessor = new BaseHelpCodeBlockProcessor(this.app, this, 'vaultquery-chart-help', chartHelp);
     const helpProcessor = new HelpCodeBlockProcessor(this.app, this);
@@ -177,15 +200,16 @@ export default class VaultQueryPlugin extends Plugin {
     const triggerHelpProcessor = new TriggerHelpCodeBlockProcessor(this.app, this);
 
     this.processorRegistrations = [
-      { language: 'vaultquery', processor: queryProcessor, pendingName: 'query', updateDuringIndexing: true },
+      { language: 'vaultquery', processor: queryProcessor },
       { language: 'vaultquery-help', processor: helpProcessor, unloadOnPluginUnload: true },
-      { language: 'vaultquery-chart', processor: chartProcessor, pendingName: 'chart', updateDuringIndexing: true },
+      { language: 'vaultquery-chart', processor: chartProcessor },
       { language: 'vaultquery-chart-help', processor: chartHelpProcessor, unloadOnPluginUnload: true },
-      { language: 'vaultquery-write', processor: writeProcessor, pendingName: 'write', updateDuringIndexing: true },
+      { language: 'vaultquery-write', processor: writeProcessor },
+      { language: 'vaultquery-nl', processor: llmProcessor },
       { language: 'vaultquery-schema', processor: schemaProcessor, unloadOnPluginUnload: true },
-      { language: 'vaultquery-markdown', processor: markdownProcessor, pendingName: 'markdown', updateDuringIndexing: true },
+      { language: 'vaultquery-markdown', processor: markdownProcessor },
       { language: 'vaultquery-markdown-help', processor: helpProcessor },
-      { language: 'vaultquery-calendar', processor: calendarProcessor, pendingName: 'calendar', updateDuringIndexing: true },
+      { language: 'vaultquery-calendar', processor: calendarProcessor },
       { language: 'vaultquery-calendar-help', processor: calendarHelpProcessor, unloadOnPluginUnload: true },
       { language: 'vaultquery-view', processor: viewProcessor, unloadOnPluginUnload: true },
       { language: 'vaultquery-function', processor: functionProcessor, unloadOnPluginUnload: true },
@@ -196,21 +220,8 @@ export default class VaultQueryPlugin extends Plugin {
       { language: 'vaultquery-trigger-help', processor: triggerHelpProcessor, unloadOnPluginUnload: true },
     ];
 
-    this.pendingBlockProcessors = this.processorRegistrations
-      .filter((registration): registration is ProcessorRegistration & { pendingName: string; processor: BlockProcessor } =>
-        registration.pendingName !== undefined
-      )
-      .map(registration => ({ name: registration.pendingName, processor: registration.processor }));
-
-    this.indexingProgressProcessors = this.processorRegistrations
-      .filter((registration): registration is ProcessorRegistration & { processor: BlockProcessor } =>
-        registration.updateDuringIndexing === true
-      )
-      .map(registration => registration.processor);
-
     this.unloadableProcessors = this.processorRegistrations
-      .filter((registration): registration is ProcessorRegistration & { processor: UnloadableProcessor } =>
-        registration.unloadOnPluginUnload === true
+      .filter((registration): registration is ProcessorRegistration & { processor: UnloadableProcessor } => registration.unloadOnPluginUnload === true
       )
       .map(registration => registration.processor);
 
@@ -266,9 +277,11 @@ export default class VaultQueryPlugin extends Plugin {
         },
       });
 
-      this.addSettingTab(new VaultQuerySettingTab(this.app, this));
+      this.settingTab = new VaultQuerySettingTab(this.app, this);
+      this.addSettingTab(this.settingTab);
 
       this.indexingStateManager = new IndexingStateManager(this.app, this);
+
       this.databaseRecoveryManager = new DatabaseRecoveryManager({
         app: this.app,
         settings: this.settings,
@@ -293,7 +306,6 @@ export default class VaultQueryPlugin extends Plugin {
       this.app.workspace.onLayoutReady(() => {
         void this.initializePlugin();
       });
-
     }
 
     catch (error) {
@@ -302,7 +314,6 @@ export default class VaultQueryPlugin extends Plugin {
       throw error;
     }
   }
-
 
   /**
    * Wait for Obsidian's metadata cache to be fully populated.
@@ -313,8 +324,10 @@ export default class VaultQueryPlugin extends Plugin {
     return new Promise((resolve) => {
       if (this.app.metadataCache.resolvedLinks) {
         const hasEntries = Object.keys(this.app.metadataCache.resolvedLinks).length > 0;
+
         if (hasEntries) {
           resolve();
+
           return;
         }
       }
@@ -349,13 +362,14 @@ export default class VaultQueryPlugin extends Plugin {
         }
       })();
     }, 0);
+
     this.indexingStateManager.setStartupIndexingTimeout(timeout);
   }
 
   private async initializePlugin(): Promise<void> {
     try {
       this.api = await VaultQueryAPI.create(this.app, this.settings);
-      logger.lifecycle.info(`API created: thirdPartyProviderTablesEnabled=${this.settings.enableThirdPartyProviderTables}`);
+      logger.lifecycle.info(`API created: enableThirdPartyProviderTables=${this.settings.enableThirdPartyProviderTables}`);
       this.attachProviderIntegrationHooks();
 
       this.indexingStateManager.setupFileWatchers();
@@ -366,9 +380,6 @@ export default class VaultQueryPlugin extends Plugin {
       if (this.settings.indexingInterval === 'startup' || this.settings.indexingInterval === 'realtime') {
         await this.waitForMetadataCache();
         this.scheduleStartupIndexing();
-      }
-      else {
-        await this.processPendingCodeBlocks();
       }
     }
 
@@ -381,6 +392,7 @@ export default class VaultQueryPlugin extends Plugin {
   private registerProviderDefinitionBlockLanguage(language: string): void {
     if (this.registeredProviderBlockLanguages.has(language)) {
       logger.provider.debug(`Provider definition block language already registered: ${language}`);
+
       return;
     }
 
@@ -389,12 +401,16 @@ export default class VaultQueryPlugin extends Plugin {
     registerProviderDefinitionLanguage(language);
     this.invalidateCompletionSchemaCache?.();
     void this.registerProviderDefinitionPrismLanguage(language);
+
     this.registerMarkdownCodeBlockProcessor(language, (source, el, ctx) => {
       logger.provider.debug(`Provider definition code block processor fired: language=${language}, sourcePath=${ctx.sourcePath}, sourceLength=${source.length}`);
+
       if (!this.api) {
         this.pendingProviderDefinitionBlocks.push({ language, source, el, ctx });
+
         return;
       }
+
       void this.api.renderTableProviderDefinitionBlock(language, source, el, ctx);
     });
 
@@ -411,72 +427,15 @@ export default class VaultQueryPlugin extends Plugin {
 
   private rerenderMarkdownPreviews(): void {
     let rerendered = 0;
+
     for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
       if (leaf.view instanceof MarkdownView && leaf.view.getMode() === 'preview') {
         leaf.view.previewMode.rerender(true);
         rerendered++;
       }
     }
+
     logger.provider.debug(`Rerendered ${rerendered} markdown preview(s) after provider language registration`);
-  }
-
-
-  private async processBlocksForProcessor(processor: BlockProcessor, processorName: string): Promise<void> {
-    const blocks = Array.from(processor.getPendingBlocks());
-
-    for (const block of blocks) {
-      try {
-        cleanupRenderedOutput(block.el);
-        await processor.process(block.source, block.el, block.ctx);
-      }
-      catch (error) {
-        logger.lifecycle.error(`Error processing pending ${processorName} block`, error);
-      }
-    }
-    processor.clearPendingBlocks();
-  }
-
-  private async processPendingCodeBlocks(): Promise<void> {
-    for (const { processor, name } of this.pendingBlockProcessors) {
-      await this.processBlocksForProcessor(processor, name);
-    }
-  }
-
-  private updateProcessorBlocks(processor: BlockProcessor, indexingStatus: IndexingStatus): void {
-    for (const block of processor.getPendingBlocks()) {
-      if (!block.el.parentNode) continue;
-      const loadingDiv = block.container.querySelector('.vaultquery-loading');
-      if (loadingDiv && loadingDiv.instanceOf(HTMLElement) && indexingStatus.progress) {
-        renderIndexingProgress(loadingDiv, indexingStatus.progress);
-      }
-    }
-  }
-
-  private stopUpdatingPendingCodeBlocks(): void {
-    if (this.progressUpdateInterval !== null) {
-      window.clearInterval(this.progressUpdateInterval);
-      this.progressUpdateInterval = null;
-    }
-  }
-
-  private startUpdatingPendingCodeBlocks(): void {
-    this.stopUpdatingPendingCodeBlocks();
-    this.progressUpdateInterval = this.registerInterval(window.setInterval(() => {
-      if (!this.api) {
-        return;
-      }
-
-      const indexingStatus = this.api.getIndexingStatus();
-
-      for (const processor of this.indexingProgressProcessors) {
-        this.updateProcessorBlocks(processor, indexingStatus);
-      }
-
-      if (!indexingStatus.isIndexing) {
-        this.stopUpdatingPendingCodeBlocks();
-        void this.processPendingCodeBlocks();
-      }
-    }, 500));
   }
 
   private setupVisibilityHandler(): void {
@@ -490,7 +449,7 @@ export default class VaultQueryPlugin extends Plugin {
   public onunload() {
     try {
       this.settingsReindexDebouncer.cancel();
-      this.stopUpdatingPendingCodeBlocks();
+      this.indexingReadiness.dispose();
 
       if (this.api) {
         this.api.setIndexingStatus(false);
@@ -500,27 +459,30 @@ export default class VaultQueryPlugin extends Plugin {
       this.schemaEventRefs.forEach(ref => this.api?.off(ref));
       this.schemaEventRefs = [];
 
-      for (const { processor } of this.pendingBlockProcessors) {
-        processor.clearPendingBlocks();
-      }
-
       for (const processor of this.unloadableProcessors) {
         processor.unload();
       }
+
       SlickGridRenderer.cleanup();
       ChartRenderer.cleanup();
 
       if (this.api) {
-        void this.api.close();
+        void this.api.close().catch(error => logger.lifecycle.error('Error closing database during unload', error));
       }
 
       this.api = null;
-
     }
 
     catch (error) {
       logger.lifecycle.error('Error during plugin unload', error);
     }
+  }
+
+  private setupSettingsStatusUpdates(): void {
+    if (!this.api || !this.settingTab) return;
+    if (this.settingsStatusRef) this.api.off(this.settingsStatusRef);
+    this.settingsStatusRef = this.api.on('external-roots-changed', () => this.settingTab?.refreshExternalStatus());
+    this.settingTab.update();
   }
 
   private setupAutocompleteSchemaInvalidation(): void {
@@ -529,17 +491,8 @@ export default class VaultQueryPlugin extends Plugin {
     }
 
     this.schemaEventRefs.forEach(ref => this.api?.off(ref));
-    this.schemaEventRefs = [
-      this.api.on('vault-indexed', () => {
-        this.invalidateCompletionSchemaCache?.();
-      }),
-      this.api.on('file-indexed', () => {
-        this.invalidateCompletionSchemaCache?.();
-      }),
-      this.api.on('database-restored', () => {
-        this.invalidateCompletionSchemaCache?.();
-      }),
-    ];
+
+    this.schemaEventRefs = subscribeAutocompleteSchemaChanges(this.api, () => this.invalidateCompletionSchemaCache?.());
   }
 
   private attachProviderIntegrationHooks(): void {
@@ -550,10 +503,13 @@ export default class VaultQueryPlugin extends Plugin {
     this.api.setProviderBlockLanguageRegistrar((language) => {
       this.registerProviderDefinitionBlockLanguage(language);
     });
+
     this.setupAutocompleteSchemaInvalidation();
+    this.setupSettingsStatusUpdates();
 
     const pendingBlocks = this.pendingProviderDefinitionBlocks;
     this.pendingProviderDefinitionBlocks = [];
+
     for (const block of pendingBlocks) {
       logger.provider.debug(`Rendering provider definition block queued before API attach: language=${block.language}, sourcePath=${block.ctx.sourcePath}`);
       void this.api.renderTableProviderDefinitionBlock(block.language, block.source, block.el, block.ctx);
@@ -568,6 +524,7 @@ export default class VaultQueryPlugin extends Plugin {
     }
 
     const status = this.api.getIndexingStatus();
+
     if (status.isIndexing) {
       return;
     }
@@ -575,13 +532,11 @@ export default class VaultQueryPlugin extends Plugin {
     const indexedFiles = await this.api.getIndexedFiles();
     const isFirstRun = indexedFiles.length === 0;
 
-    this.startUpdatingPendingCodeBlocks();
     if (isFirstRun) {
       await this.api.forceReindexVault();
     }
     else {
       await this.api.reindexVault();
     }
-    await this.processPendingCodeBlocks();
   }
 }

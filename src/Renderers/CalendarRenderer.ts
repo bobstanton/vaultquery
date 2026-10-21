@@ -1,3 +1,4 @@
+import { INFO_MESSAGES } from '../utils/ErrorMessages';
 import { Calendar } from '@fullcalendar/core';
 import type { CalendarOptions, EventClickArg, EventInput, EventMountArg } from '@fullcalendar/core';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -54,7 +55,7 @@ interface CalendarInstance {
   resizeObserver?: ResizeObserver;
   intersectionObserver?: IntersectionObserver;
   animationFrames: number[];
-  retryTimeout?: ReturnType<typeof setTimeout>;
+  retryTimeout?: number;
   sizeRetryCount: number;
   responsiveConfig: ResponsiveCalendarConfig;
   isMobileLayout: boolean | null;
@@ -115,6 +116,7 @@ export class CalendarRenderer {
 
   static parseConfig(options?: Record<string, unknown>): CalendarConfig {
     const config: CalendarConfig = {};
+
     const set = <K extends keyof CalendarConfig>(key: K, value: CalendarConfig[K] | null) => {
       if (value !== null) config[key] = value;
     };
@@ -128,6 +130,7 @@ export class CalendarRenderer {
       bareNumber: 'number',
       units: ['px', 'em', 'rem', 'vh', 'vw', '%'],
     }));
+
     set('contentHeight', parseCssDimensionOrNull(options?.contentheight, {
       allowNumber: true,
       allowAuto: true,
@@ -174,16 +177,19 @@ export class CalendarRenderer {
     if (!results.length) {
       container.createDiv({
         cls: 'vaultquery-empty',
-        text: 'Query returned no results'
+        text: INFO_MESSAGES.NO_RESULTS
       });
+
       return;
     }
 
     const normalized = this.normalizeResults(results);
     const root = container.createDiv({ cls: 'vaultquery-calendar-root vaultquery-calendar-initializing' });
+
     root.setCssProps({
       '--vaultquery-calendar-day-min-height': `${config.dayMinHeight ?? 120}px`,
     });
+
     if (config.visibleWeeks) {
       root.dataset.vaultqueryCalendarVisibleWeeks = String(config.visibleWeeks);
     }
@@ -237,12 +243,14 @@ export class CalendarRenderer {
 
     for (const row of results) {
       const startValue = this.normalizeTemporalValue(row[dateColumn]);
+
       if (!startValue) {
         continue;
       }
 
       const endValue = endDateColumn ? (this.normalizeTemporalValue(row[endDateColumn]) ?? undefined) : undefined;
       const normalizedRange = this.normalizeDateRange(startValue, endValue);
+
       const allDay = allDayColumn
         ? this.toBoolean(row[allDayColumn])
         : (!normalizedRange.start.hasTime && !normalizedRange.end?.hasTime);
@@ -278,21 +286,28 @@ export class CalendarRenderer {
   private static createCalendarOptions(events: CalendarEvent[], config: CalendarConfig, openFile: (path: string) => void, root: HTMLElement, calendarRef: CalendarReference): { options: CalendarOptions; responsiveConfig: ResponsiveCalendarConfig } {
     const initialDate = this.resolveInitialDate(config.initialDate, events);
     const desktopMonthViewName = config.visibleWeeks ? this.VISIBLE_WEEKS_VIEW : 'dayGridMonth';
+
     const mobileMonthViewName = config.mobileVisibleDays
       ? (config.visibleWeeks ? this.MOBILE_VISIBLE_WEEKS_VIEW : this.MOBILE_MONTH_VIEW)
       : desktopMonthViewName;
+
     const visibleWeeks = config.visibleWeeks ?? 1;
     const firstDay = config.firstDay ?? 0;
     const hasTimedEvents = events.some((event) => !event.allDay);
     const desktopWeekViewName = hasTimedEvents ? 'timeGridWeek' : this.ALL_DAY_WEEK_VIEW;
+
     const mobileWeekViewName = config.mobileVisibleDays
       ? (hasTimedEvents ? this.MOBILE_TIME_GRID_WEEK_VIEW : this.MOBILE_ALL_DAY_WEEK_VIEW)
       : desktopWeekViewName;
+
     const desktopDayViewName = hasTimedEvents ? 'timeGridDay' : this.ALL_DAY_DAY_VIEW;
+
     const mobileDayViewName = config.mobileVisibleDays && hasTimedEvents
       ? this.MOBILE_TIME_GRID_DAY_VIEW
       : desktopDayViewName;
+
     const requestedInitialView = config.initialView ?? 'dayGridMonth';
+
     const responsiveConfig: ResponsiveCalendarConfig = {
       desktopMonthViewName,
       mobileMonthViewName,
@@ -303,6 +318,7 @@ export class CalendarRenderer {
       requestedInitialView,
       skipBlankPeriods: config.skipBlankPeriods ?? false,
     };
+
     const initialView = this.resolvePreferredView(false, responsiveConfig);
 
     const options: CalendarOptions = {
@@ -440,23 +456,27 @@ export class CalendarRenderer {
 
   private static watchCalendarSize(container: HTMLElement, root: HTMLElement, instance: CalendarInstance): void {
     const ResizeObserverCtor = root.ownerDocument.defaultView?.ResizeObserver;
+
     if (ResizeObserverCtor) {
       instance.resizeObserver = new ResizeObserverCtor((entries) => {
         if (entries.some(entry => entry.contentRect.width > 0)) {
           this.scheduleCalendarSizeUpdate(container, root, instance);
         }
       });
+
       instance.resizeObserver.observe(root);
       instance.resizeObserver.observe(container);
     }
 
     const IntersectionObserverCtor = root.ownerDocument.defaultView?.IntersectionObserver;
+
     if (IntersectionObserverCtor) {
       instance.intersectionObserver = new IntersectionObserverCtor((entries) => {
         if (entries.some(entry => entry.isIntersecting)) {
           this.scheduleCalendarSizeUpdate(container, root, instance);
         }
       }, { threshold: 0, rootMargin: '100px' });
+
       instance.intersectionObserver.observe(root);
     }
   }
@@ -478,13 +498,17 @@ export class CalendarRenderer {
         if (instance.sizeRetryCount >= this.MAX_HIDDEN_SIZE_RETRIES) {
           return;
         }
+
         instance.sizeRetryCount++;
+
         instance.retryTimeout = win.setTimeout(() => {
           instance.retryTimeout = undefined;
+
           if (root.isConnected && this.instances.get(container) === instance) {
             this.scheduleCalendarSizeUpdate(container, root, instance);
           }
         }, 500);
+
         return;
       }
 
@@ -502,6 +526,7 @@ export class CalendarRenderer {
     for (const frame of instance.animationFrames) {
       win.cancelAnimationFrame(frame);
     }
+
     instance.animationFrames = [];
 
     if (instance.retryTimeout !== undefined) {
@@ -512,6 +537,7 @@ export class CalendarRenderer {
 
   private static parseInitialView(value: string): CalendarConfig['initialView'] {
     const normalized = value.trim().toLowerCase();
+
     if (normalized === 'timegridweek' || normalized === 'week') {
       return 'timeGridWeek';
     }
@@ -533,6 +559,7 @@ export class CalendarRenderer {
 
     if (!isMobile && instance.isMobileLayout === true) {
       const restoreView = instance.lastDesktopView ?? preferredView;
+
       if (currentView !== restoreView) {
         instance.calendar.changeView(restoreView, instance.calendar.getDate());
       }
@@ -564,6 +591,7 @@ export class CalendarRenderer {
     const viewportWidth = win.innerWidth;
     const containerWidth = root.getBoundingClientRect().width;
     const effectiveWidth = containerWidth > 0 ? Math.min(viewportWidth, containerWidth) : viewportWidth;
+
     return effectiveWidth <= this.MOBILE_BREAKPOINT_PX;
   }
 
@@ -626,6 +654,7 @@ export class CalendarRenderer {
     }
 
     const targetDate = this.findAdjacentEventDate(calendar, events, direction);
+
     if (targetDate) {
       calendar.gotoDate(targetDate);
     }
@@ -634,6 +663,7 @@ export class CalendarRenderer {
   private static findAdjacentEventDate(calendar: Calendar, events: CalendarEvent[], direction: -1 | 1): string | null {
     const currentStart = this.formatDate(calendar.view.currentStart);
     const currentEnd = this.formatDate(calendar.view.currentEnd);
+
     const eventRanges = events
       .map(event => this.toNavigationRange(event))
       .sort((left, right) => left.start.localeCompare(right.start));
@@ -643,6 +673,7 @@ export class CalendarRenderer {
         .filter(range => range.endExclusive > currentEnd)
         .map(range => range.start < currentEnd ? currentEnd : range.start)
         .sort((left, right) => left.localeCompare(right));
+
       return targetDates[0] ?? null;
     }
 
@@ -650,6 +681,7 @@ export class CalendarRenderer {
       .filter(range => range.start < currentStart)
       .map((range) => {
         const rangeLastDate = this.addDays(range.endExclusive, -1);
+
         return rangeLastDate >= currentStart
           ? this.addDays(currentStart, -1)
           : rangeLastDate;
@@ -727,10 +759,12 @@ export class CalendarRenderer {
     const textColor = typeof info.event.extendedProps.textColor === 'string'
       ? info.event.extendedProps.textColor
       : null;
+
     if (textColor) {
       info.el.setCssProps({
         '--vaultquery-calendar-event-text-color': textColor,
       });
+
       info.el.querySelector<HTMLElement>('.fc-event-main')?.addClass('vaultquery-calendar-event-text-custom');
     }
 
@@ -749,6 +783,7 @@ export class CalendarRenderer {
       if (showTimeout) {
         win.clearTimeout(showTimeout);
       }
+
       showTimeout = win.setTimeout(() => {
         this.showTooltip(info.el, tooltip);
       }, 80);
@@ -759,6 +794,7 @@ export class CalendarRenderer {
         win.clearTimeout(showTimeout);
         showTimeout = null;
       }
+
       this.hideTooltip(info.el);
     };
 
@@ -800,6 +836,7 @@ export class CalendarRenderer {
     const doc = anchor.ownerDocument;
     const tooltipEl = tooltip ?? doc.querySelector<HTMLElement>('.vaultquery-calendar-tooltip');
     const win = doc.defaultView;
+
     if (!tooltipEl || !win) {
       return;
     }
@@ -809,9 +846,11 @@ export class CalendarRenderer {
     const gap = 8;
     const margin = 8;
     const maxLeft = win.innerWidth - tooltipRect.width - margin;
+
     const top = rect.top >= tooltipRect.height + gap + margin
       ? rect.top - tooltipRect.height - gap
       : rect.bottom + gap;
+
     const left = Math.min(Math.max(rect.left, margin), Math.max(margin, maxLeft));
 
     tooltipEl.setCssProps({
@@ -831,14 +870,17 @@ export class CalendarRenderer {
 
     if (configInitialDate) {
       const normalizedKeyword = configInitialDate.trim().toLowerCase();
+
       if (normalizedKeyword === 'first') {
         return sortedStartDates[0];
       }
+
       if (normalizedKeyword === 'last') {
         return sortedStartDates[sortedStartDates.length - 1];
       }
 
       const normalizedInitialDate = this.normalizeTemporalValue(configInitialDate)?.date ?? null;
+
       if (normalizedInitialDate) {
         return normalizedInitialDate;
       }
@@ -858,6 +900,8 @@ export class CalendarRenderer {
   }
 
   private static normalizeTemporalValue(value: unknown): NormalizedTemporalValue | null {
+    if (value instanceof Uint8Array) throw new Error('Binary values cannot be used as calendar dates.');
+
     if (value == null) {
       return null;
     }
@@ -867,6 +911,7 @@ export class CalendarRenderer {
     }
 
     const stringValue = formatUnknownValue(value).trim();
+
     if (!stringValue) {
       return null;
     }
@@ -882,8 +927,10 @@ export class CalendarRenderer {
     }
 
     const isoDateTimeMatch = stringValue.match(/^(\d{4}-\d{2}-\d{2})([T\s]\d{2}:\d{2}(?::\d{2})?)?/);
+
     if (isoDateTimeMatch && this.isValidIsoDate(isoDateTimeMatch[1])) {
       const parsedIso = new Date(stringValue);
+
       if (!Number.isNaN(parsedIso.getTime())) {
         return isoDateTimeMatch[2]
           ? this.formatDateTime(parsedIso)
@@ -892,6 +939,7 @@ export class CalendarRenderer {
     }
 
     const parsed = new Date(stringValue);
+
     if (Number.isNaN(parsed.getTime())) {
       return null;
     }
@@ -908,6 +956,7 @@ export class CalendarRenderer {
   private static normalizeTimestamp(value: number): NormalizedTemporalValue | null {
     const milliseconds = value < 1_000_000_000_000 ? value * 1000 : value;
     const parsed = new Date(milliseconds);
+
     if (Number.isNaN(parsed.getTime())) {
       return null;
     }
@@ -919,6 +968,7 @@ export class CalendarRenderer {
     const year = value.getFullYear();
     const month = String(value.getMonth() + 1).padStart(2, '0');
     const day = String(value.getDate()).padStart(2, '0');
+
     return `${year}-${month}-${day}`;
   }
 
@@ -927,6 +977,7 @@ export class CalendarRenderer {
     const hours = String(value.getHours()).padStart(2, '0');
     const minutes = String(value.getMinutes()).padStart(2, '0');
     const seconds = String(value.getSeconds()).padStart(2, '0');
+
     return {
       value: `${date}T${hours}:${minutes}:${seconds}`,
       date,
@@ -937,17 +988,20 @@ export class CalendarRenderer {
   private static addDays(value: string, days: number): string {
     const date = new Date(`${value}T00:00:00`);
     date.setDate(date.getDate() + days);
+
     return this.formatDate(date);
   }
 
   private static isValidIsoDate(value: string): boolean {
     const [year, month, day] = value.split('-').map(Number);
     const date = new Date(year, month - 1, day);
+
     return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
   }
 
   private static toDisplayString(value: unknown, fallback: string): string {
     const normalized = this.toOptionalString(value);
+
     return normalized || fallback;
   }
 
@@ -957,6 +1011,7 @@ export class CalendarRenderer {
     }
 
     const stringValue = formatUnknownValue(value).trim();
+
     return stringValue || undefined;
   }
 
@@ -986,11 +1041,13 @@ export class CalendarRenderer {
 
   private static parseBoundedIntegerOption(value: unknown, min: number, max: number = Number.POSITIVE_INFINITY): number | null {
     const parsed = this.parseIntegerOption(value);
+
     return parsed !== null && parsed >= min && parsed <= max ? parsed : null;
   }
 
   private static parseBoundedOption(value: unknown, option: keyof typeof CALENDAR_OPTION_BOUNDS): number | null {
     const bounds = CALENDAR_OPTION_BOUNDS[option];
+
     return this.parseBoundedIntegerOption(value, bounds.min, bounds.max);
   }
 
@@ -1005,6 +1062,7 @@ export class CalendarRenderer {
 
     if (typeof value === 'string') {
       const parsed = Number(value.trim());
+
       return Number.isFinite(parsed) ? parsed : null;
     }
 
@@ -1017,6 +1075,7 @@ export class CalendarRenderer {
     }
 
     const trimmed = value.trim();
+
     if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
       return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
     }
@@ -1027,12 +1086,15 @@ export class CalendarRenderer {
   private static buildEventTooltip(event: CalendarEvent): string {
     const lines = [event.title];
     const range = this.formatEventRange(event);
+
     if (range) {
       lines.push(range);
     }
+
     if (event.description) {
       lines.push(event.description);
     }
+
     return lines.join('\n');
   }
 
@@ -1050,6 +1112,7 @@ export class CalendarRenderer {
 
   private static formatDisplayTemporal(value: string, hasTime: boolean): string {
     const parsed = new Date(hasTime ? value : `${value}T00:00:00`);
+
     if (hasTime) {
       return parsed.toLocaleString(undefined, {
         weekday: 'long',
@@ -1079,6 +1142,7 @@ export class CalendarRenderer {
 
   private static destroyExistingInstance(container: HTMLElement): void {
     const existing = this.instances.get(container);
+
     if (!existing) {
       return;
     }

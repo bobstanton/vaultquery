@@ -1,6 +1,7 @@
-import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
+import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
 import * as examplesFunctions from '../generated-help/examples-functions.generated';
 import * as examplesViews from '../generated-help/examples-views.generated';
+import { createHelpRenderContext } from './HelpRendering';
 import type { RenderContext } from '../generated-help/index.generated';
 
 type ExamplePage = 'functions' | 'views';
@@ -44,23 +45,12 @@ Usage:
 functions
 \`\`\`
 `;
+
     void MarkdownRenderer.render(this.app, markdown, container, '', this.component);
   }
 
   private createRenderContext(): RenderContext {
-    return {
-      app: this.app,
-      component: this.component,
-      renderDynamic: (parent: HTMLElement, key: string) => {
-        parent.createDiv({
-          cls: 'vaultquery-help-error',
-          text: `Unknown dynamic content: ${key}`
-        });
-      },
-      setIcon: (element: HTMLElement, iconId: string) => {
-        setIcon(element, iconId);
-      },
-    };
+    return createHelpRenderContext(this.app, this.component);
   }
 
   public unload(): void {

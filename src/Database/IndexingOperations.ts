@@ -4,6 +4,7 @@
  */
 
 import { INDEXING_SQL, noteToParams, noteToUpdateParams, propertyToParams, userViewToParams, userFunctionToParams, userTriggerToParams } from './IndexingQueries';
+import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import type { InputPropertyData } from './IndexingQueries';
 import { hashString } from '../utils/StringUtils';
 import { TASKS_ENTITY, HEADINGS_ENTITY, LIST_ITEMS_ENTITY, LINKS_ENTITY, TAGS_ENTITY, TABLE_CELLS_ENTITY, EMBEDS_ENTITY, BLOCKS_ENTITY, UNRESOLVED_LINKS_ENTITY, TABLES_SQL, detectEntityChanges, entityInsertRow, entityUpdatePlan, mapEntityRow } from './EntityDescriptors';
@@ -39,9 +40,11 @@ type SqlRow = SqlResult[number]['values'][number];
 
 function execRows<T>(adapter: IndexingDbAdapter, sql: string, params: unknown[], mapRow: (row: SqlRow) => T): T[] {
   const result = adapter.exec(sql, params);
+
   if (result.length === 0) {
     return [];
   }
+
   return result[0].values.map(mapRow);
 }
 
@@ -80,6 +83,7 @@ export function performIndexingOperationsCore(adapter: IndexingDbAdapter, data: 
     [frontmatterData, () => {
       handlers.replaceProperties(note.path, frontmatterData, skipDeletes);
       const matRefresh = handlers.propertiesMatRefreshSql?.();
+
       if (matRefresh) {
         adapter.run(matRefresh.deleteSql, [note.path]);
         adapter.run(matRefresh.insertSql, [note.path]);
@@ -117,6 +121,7 @@ export function replaceEntityCore<TInput, TRow extends Record<string, SqlParam>>
     if (!skipDeletes) {
       adapter.runPrepared(entity.deleteByPathSql, [path]);
     }
+
     return;
   }
 
@@ -153,6 +158,7 @@ function replaceInsertEntityCore<TInput, TRow extends Record<string, SqlParam>>(
   if (!skipDeletes) {
     adapter.runPrepared(entity.deleteByPathSql, [path]);
   }
+
   if (items?.length) {
     adapter.runMultiRowInsert(
       entity.insertBaseSql,
@@ -192,6 +198,7 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
     if (!skipDeletes) {
       adapter.runPrepared(TABLES_SQL.DELETE_BY_PATH, [path]);
     }
+
     return;
   }
 
@@ -276,6 +283,7 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
       table.end_offset ?? null,
       table.line_number
     ]);
+
     adapter.runMultiRowInsert(TABLES_SQL.INSERT_BASE, TABLES_SQL.INSERT_COLUMNS, rows);
   }
 }
@@ -295,6 +303,7 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
     if (!skipDeletes) {
       adapter.runPrepared(INDEXING_SQL.DELETE_PROPERTIES, [path]);
     }
+
     return null;
   }
 
@@ -336,6 +345,7 @@ export function replacePropertiesCore(adapter: IndexingDbAdapter, path: string, 
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+
       if (!/UNIQUE constraint failed: properties/.test(message)) {
         throw error;
       }
@@ -374,6 +384,7 @@ function replaceUserEntitiesCore<T>(adapter: IndexingDbAdapter, path: string, it
     const existingNames = kind.dropStep
       ? adapter.exec(kind.dropStep.selectForPathSql, [path])[0]?.values?.map(row => row[0] as string) ?? []
       : [];
+
     adapter.runPrepared(kind.deleteForPathSql, [path]);
 
     for (const name of existingNames) {
@@ -396,7 +407,7 @@ function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userView
     deleteForPathSql: INDEXING_SQL.DELETE_USER_VIEWS,
     dropStep: {
       selectForPathSql: INDEXING_SQL.SELECT_USER_VIEWS_FOR_PATH,
-      dropExisting: (viewName) => adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []),
+      dropExisting: (viewName) => adapter.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`, []),
     },
     reinsert: (views) => {
       for (const view of views) {
@@ -406,7 +417,7 @@ function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userView
 
       for (const { view_name: viewName, sql } of views) {
         try {
-          adapter.run(`DROP VIEW IF EXISTS "${viewName}"`, []);
+          adapter.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`, []);
           adapter.run(sql, []);
         } catch (error) {
           logger.error(`Failed to create view "${viewName}"`, error);
@@ -447,7 +458,7 @@ export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string
     deleteForPathSql: INDEXING_SQL.DELETE_USER_TRIGGERS,
     dropStep: {
       selectForPathSql: INDEXING_SQL.SELECT_USER_TRIGGERS_FOR_PATH,
-      dropExisting: (triggerName) => adapter.run(`DROP TRIGGER IF EXISTS "_vq_user_${triggerName}"`, []),
+      dropExisting: (triggerName) => adapter.run(`DROP TRIGGER IF EXISTS ${quoteIdentifier(`_vq_user_${triggerName}`)}`, []),
     },
     reinsert: (triggers) => {
       for (const trigger of triggers) {

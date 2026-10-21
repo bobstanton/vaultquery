@@ -1,10 +1,16 @@
+import type { SqlParameter } from './QueryValues';
 import type { IndexNoteData } from '../types';
 import type { EnabledFeatures } from './DatabaseSchema';
+import type { SqlStatement } from './SqlHelpers';
 
 export type WorkerRequest =
   | { type: 'init'; id: number; wasmBinary?: ArrayBuffer }
-  | { type: 'query'; id: number; sql: string; params: (string | number | null)[] }
-  | { type: 'run'; id: number; sql: string; params: (string | number | null)[] }
+  | { type: 'query'; id: number; sql: string; params: SqlParameter[]; readOnly?: boolean }
+  | { type: 'queryOpen'; id: number; sql: string; params: SqlParameter[] }
+  | { type: 'queryNext'; id: number; cursor: number }
+  | { type: 'queryClose'; id: number; cursor: number }
+  | { type: 'run'; id: number; sql: string; params: SqlParameter[] }
+  | { type: 'runBatch'; id: number; statements: SqlStatement[] }
   | { type: 'indexNote'; id: number; data: IndexNoteData }
   | { type: 'indexNotesBatch'; id: number; notesData: IndexNoteData[]; isInitialIndexing: boolean }
   | { type: 'createIndexes'; id: number; features?: EnabledFeatures }
@@ -29,5 +35,5 @@ export type WorkerRequestBody = WithoutId<WorkerRequest>;
 
 export type WorkerResponse =
   | { type: 'success'; id: number; result?: unknown }
-  | { type: 'error'; id: number; error: string }
+  | { type: 'error'; id: number; error: string; name?: string }
   | { type: 'ready' };

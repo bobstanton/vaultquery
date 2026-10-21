@@ -1,19 +1,19 @@
-import { TFile } from 'obsidian';
 import type { IndexingStats } from '../types';
-import { logger as rootLogger } from '../utils/logger';
 
-const logger = rootLogger.scope('Performance');
-
-interface SlowFileEntry {
+export interface FilePreparationTiming {
   path: string;
-  size: number;
-  processingTime: number;
-  details: string;
+  bytes: number;
+  totalMs: number;
+  readWaitMs: number;
+  providerWaitMs: number;
+  frontmatterMs: number;
+  featuresMs: number;
 }
 
+type SlowFileEntry = IndexingStats['slowFiles'][number];
+
 export class PerformanceMonitor {
-  private static readonly SLOW_THRESHOLD_MS = 25;
-  private static readonly VERY_SLOW_THRESHOLD_MS = 100;
+  public static readonly SLOW_THRESHOLD_MS = 25;
   private static readonly MAX_SLOW_FILES = 10;
 
   private lastStats: IndexingStats | null = null;
@@ -25,23 +25,16 @@ export class PerformanceMonitor {
     this.currentSlowFiles = [];
   }
 
-  public trackFile(file: TFile, totalTime: number, needsContentProcessing: boolean): void {
-    if (totalTime <= PerformanceMonitor.SLOW_THRESHOLD_MS) {
-      return;
-    }
-
-    const details = needsContentProcessing ? 'content+metadata' : 'metadata-only';
+  public trackFile(timing: FilePreparationTiming): void {
+    if (timing.totalMs <= PerformanceMonitor.SLOW_THRESHOLD_MS) return;
 
     this.currentSlowFiles.push({
-      path: file.path,
-      size: file.stat.size,
-      processingTime: totalTime,
-      details
+      path: timing.path, size: timing.bytes, processingTime: timing.totalMs,
+      details: `Read wait ${Math.round(timing.readWaitMs)}ms; provider wait ${Math.round(timing.providerWaitMs)}ms; frontmatter ${Math.round(timing.frontmatterMs)}ms; features ${Math.round(timing.featuresMs)}ms`,
     });
 
-    if (totalTime > PerformanceMonitor.VERY_SLOW_THRESHOLD_MS) {
-      this.logVerySlowFile(file, totalTime, details);
-    }
+    this.currentSlowFiles.sort((a, b) => b.processingTime - a.processingTime);
+    this.currentSlowFiles.length = Math.min(this.currentSlowFiles.length, PerformanceMonitor.MAX_SLOW_FILES);
   }
 
   public finishOperation(fileCount: number): IndexingStats {
@@ -53,7 +46,7 @@ export class PerformanceMonitor {
       totalTime,
       avgTimePerFile: fileCount > 0 ? totalTime / fileCount : 0,
       filesPerSecond: fileCount > 0 ? (fileCount / totalTime) * 1000 : 0,
-      slowFiles: this.getTopSlowFiles()
+      slowFiles: [...this.currentSlowFiles]
     };
 
     return this.lastStats;
@@ -61,18 +54,5 @@ export class PerformanceMonitor {
 
   public getLastStats(): IndexingStats | null {
     return this.lastStats;
-  }
-
-  private getTopSlowFiles(): IndexingStats['slowFiles'] {
-    return [...this.currentSlowFiles]
-      .sort((a, b) => b.processingTime - a.processingTime)
-      .slice(0, PerformanceMonitor.MAX_SLOW_FILES);
-  }
-
-  private logVerySlowFile(file: TFile, totalTime: number, details: string): void {
-    const sizeKB = (file.stat.size / 1024).toFixed(1);
-    const timeMs = totalTime.toFixed(0);
-
-    logger.warn(`Slow file: ${file.path} (${sizeKB}KB, ${timeMs}ms, ${details})`);
   }
 }

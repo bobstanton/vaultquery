@@ -1,14 +1,35 @@
 import { cleanupRenderedOutput } from '../Renderers/RendererCleanup';
-import type { App } from 'obsidian';
+import { MarkdownRenderChild } from 'obsidian';
+import type { App, MarkdownPostProcessorContext } from 'obsidian';
 
-export function createVaultQueryCodeBlockContainer(el: HTMLElement): HTMLElement | null {
+const unloadedContainers = new WeakSet<HTMLElement>();
+
+class VaultQueryBlock extends MarkdownRenderChild {
+  public onunload(): void {
+    unloadedContainers.add(this.containerEl);
+    cleanupRenderedOutput(this.containerEl);
+  }
+}
+
+export function isBlockUnloaded(container: HTMLElement): boolean {
+  return unloadedContainers.has(container);
+}
+
+export function createVaultQueryCodeBlockContainer(el: HTMLElement, ctx: MarkdownPostProcessorContext): HTMLElement | null {
   if (el.closest('.display-only')) {
     return null;
   }
 
   cleanupRenderedOutput(el);
   el.empty();
-  return el.createDiv({ cls: 'vaultquery-container' });
+  const container = el.createDiv({ cls: 'vaultquery-container' });
+  trackVaultQueryBlock(container, ctx);
+
+  return container;
+}
+
+export function trackVaultQueryBlock(container: HTMLElement, ctx: MarkdownPostProcessorContext): void {
+  ctx.addChild(new VaultQueryBlock(container));
 }
 
 export function createOpenFileHandler(app: App): (path: string) => void {
@@ -21,6 +42,7 @@ export class RenderVersionGuard {
   public begin(container: HTMLElement): number {
     const version = (this.versions.get(container) ?? 0) + 1;
     this.versions.set(container, version);
+
     return version;
   }
 

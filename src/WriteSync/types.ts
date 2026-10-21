@@ -1,12 +1,14 @@
 export function asStr(v: unknown): string;
 export function asStr(v: unknown, fallback: string): string;
 export function asStr(v: unknown, fallback: null): string | null;
+
 export function asStr(v: unknown, fallback: string | null = ''): string | null {
   return typeof v === 'string' ? v : fallback;
 }
 
 export function asNum(v: unknown, fallback: number): number;
 export function asNum(v: unknown, fallback: null): number | null;
+
 export function asNum(v: unknown, fallback: number | null): number | null {
   return typeof v === 'number' ? v : fallback;
 }

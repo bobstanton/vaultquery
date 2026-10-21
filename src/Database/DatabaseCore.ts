@@ -50,7 +50,7 @@ export function mapUserTriggerRow(row: unknown[]): UserTriggerRow {
   };
 }
 
-export class DbLock {
+export class DatabaseLock {
   private tail: Promise<void> = Promise.resolve();
 
   public async acquire(): Promise<() => void> {
@@ -59,6 +59,7 @@ export class DbLock {
     const previousLock = this.tail;
     this.tail = lockPromise;
     await previousLock;
+
     return releaseLock!;
   }
 }
@@ -78,18 +79,15 @@ export function exportWithRuntimeStateRestore(db: Database, state: ExportRuntime
   state.matRefreshSqlCache.invalidate();
   state.runPragmaStatements();
   state.registerBuiltinFunctions();
+
   for (const [name, source] of Array.from(state.registeredFunctionSources.entries())) {
     state.registerCustomFunction(name, source);
   }
+
   return data;
 }
 
-export async function runBatchIndexing(
-  db: Database,
-  isInitialIndexing: boolean,
-  runInTx: () => void | Promise<void>,
-  onAnalyzeError: (error: unknown) => void
-): Promise<void> {
+export async function runBatchIndexing(db: Database, isInitialIndexing: boolean, runInTx: () => void | Promise<void>): Promise<void> {
   if (isInitialIndexing) {
     db.run('PRAGMA foreign_keys = OFF');
   }
@@ -99,15 +97,6 @@ export async function runBatchIndexing(
   } finally {
     if (isInitialIndexing) {
       db.run('PRAGMA foreign_keys = ON');
-    }
-  }
-
-  if (isInitialIndexing) {
-    try {
-      db.run('ANALYZE');
-    }
-    catch (error) {
-      onAnalyzeError(error);
     }
   }
 }

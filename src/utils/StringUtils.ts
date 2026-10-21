@@ -9,6 +9,7 @@ export function createTableKey(path: string, tableIndex: number): string {
 
 export function parseTableKey(key: string): { path: string; tableIndex: number } {
   const [path, tableIndexStr] = key.split(KEY_SEPARATOR);
+
   return { path, tableIndex: parseInt(tableIndexStr, 10) };
 }
 
@@ -18,9 +19,11 @@ export function createRowColumnKey(rowIndex: number, columnName: string): string
 
 export function skipWhitespace(text: string, start: number): number {
   let index = start;
+
   while (index < text.length && /\s/.test(text[index])) {
     index++;
   }
+
   return index;
 }
 

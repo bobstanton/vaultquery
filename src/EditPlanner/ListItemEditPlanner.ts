@@ -25,11 +25,14 @@ export class ListItemEditPlanner {
 
     if (newListItems.length > 0) {
       const byListIndex = new Map<number, ListItemRow[]>();
+
       for (const item of newListItems) {
         const listIndex = item.list_index ?? 0;
+
         if (!byListIndex.has(listIndex)) {
           byListIndex.set(listIndex, []);
         }
+
         byListIndex.get(listIndex)!.push(item);
       }
 
@@ -37,6 +40,7 @@ export class ListItemEditPlanner {
         const insertionPoint = await this.contentLocationService.findListItemInsertionPoint(
           ctx.content, ctx.path, listIndex, queryListItemsByListIndex
         );
+
         const newItemText = items.map(item => this.emitListItemLine(item)).join('\n');
         pushInsertionEdit(edits, ctx, insertionPoint, newItemText, `insert new list items into list ${listIndex}`);
       }
@@ -48,6 +52,7 @@ export class ListItemEditPlanner {
   private parseListItemStyle(existing: string): { indent: string; marker: string } {
     const bulletMatch = existing.match(/^(\s*)([-*+])\s/);
     const numberMatch = existing.match(/^(\s*)(\d+[.)])\s/);
+
     if (bulletMatch) {
       return { indent: bulletMatch[1], marker: bulletMatch[2] };
     }
@@ -55,6 +60,7 @@ export class ListItemEditPlanner {
     else if (numberMatch) {
       return { indent: numberMatch[1], marker: numberMatch[2] };
     }
+
     return { indent: "", marker: "-" };
   }
 

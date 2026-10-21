@@ -27,12 +27,15 @@ export class DatabaseRecoveryManager {
 
   public async recordCurrentHealth(): Promise<void> {
     const api = this.options.getApi();
+
     if (!api) {
       this.lastHealthCheck = null;
+
       return;
     }
 
     const health = await api.checkDatabaseHealthAsync();
+
     this.lastHealthCheck = {
       timestamp: Date.now(),
       healthy: health.healthy,
@@ -41,11 +44,13 @@ export class DatabaseRecoveryManager {
 
   public async handleResume(): Promise<void> {
     const api = this.options.getApi();
+
     if (!api) {
       return;
     }
 
     const indexingStatus = api.getIndexingStatus();
+
     if (indexingStatus.isIndexing) {
       return;
     }
@@ -91,6 +96,7 @@ export class DatabaseRecoveryManager {
     try {
       const currentApi = this.options.getApi();
       const registeredProviders = currentApi?.getRegisteredTableProviders() ?? [];
+
       if (registeredProviders.length > 0) {
         logger.provider.info(`Preserving ${registeredProviders.length} third-party table provider(s) during database recovery: ${registeredProviders.map(provider => provider.id).join(',')}`);
       }
@@ -109,8 +115,9 @@ export class DatabaseRecoveryManager {
       const api = await VaultQueryAPI.create(this.options.app, this.options.settings, {
         eventBus: currentApi?.getEventBus(),
       });
+
       this.options.setApi(api);
-      logger.lifecycle.info(`API recreated after database loss: thirdPartyProviderTablesEnabled=${this.options.settings.enableThirdPartyProviderTables}`);
+      logger.lifecycle.info(`API recreated after database loss: enableThirdPartyProviderTables=${this.options.settings.enableThirdPartyProviderTables}`);
       this.options.onApiRecreated();
 
       for (const provider of registeredProviders) {
@@ -121,11 +128,13 @@ export class DatabaseRecoveryManager {
           logger.provider.error(`Failed to restore table provider "${provider.id}" after database recovery`, error);
         }
       }
+
       if (registeredProviders.length > 0) {
         logger.provider.info(`Restored ${registeredProviders.length} third-party table provider(s) after database recovery`);
       }
 
       await this.options.reindexVault();
+
       if (registeredProviders.length > 0) {
         this.options.rerenderMarkdownPreviews();
       }

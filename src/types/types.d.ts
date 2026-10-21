@@ -6,6 +6,7 @@ export interface NoteRecord {
   path: string;
   title: string;
   content: string;
+  content_status: 'ready' | 'not_indexed';
   created: number;
   modified: number;
   size: number;

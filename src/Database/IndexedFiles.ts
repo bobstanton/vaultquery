@@ -14,6 +14,7 @@ interface IndexedFileRecord {
 export async function getIndexedFilesFromDatabase(database: IndexedFilesDatabase): Promise<IndexedFileRecord[]> {
   try {
     const results = await database.all('SELECT path, modified FROM notes');
+
     return results.map(row => ({
       path: row.path as string,
       modified: row.modified as number
@@ -21,6 +22,7 @@ export async function getIndexedFilesFromDatabase(database: IndexedFilesDatabase
   }
   catch (error) {
     logger.error('Error getting indexed files', error);
+
     return [];
   }
 }

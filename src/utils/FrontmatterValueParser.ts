@@ -40,6 +40,7 @@ export function parseFrontmatterValue(value: string | null, type: string | null)
   switch (type?.toLowerCase()) {
     case 'number': {
       const num = Number(value);
+
       return isNaN(num) ? value : num;
     }
 
@@ -60,10 +61,12 @@ export function parseFrontmatterValue(value: string | null, type: string | null)
       }
       catch (e) {
         logger.warn('Failed to parse array property value', value, e);
+
         if (value.includes(',')) {
           return value.split(',').map(s => s.trim());
         }
       }
+
       return value;
 
     default:

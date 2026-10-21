@@ -46,24 +46,23 @@ export interface LineEntityPlannerOptions<T extends { line_number?: number | nul
   findNewInsertionPoint: () => InsertionPoint;
 }
 
-export function validateLineNumberBatch<T extends { line_number?: number | null }>(
-  items: readonly T[],
-  entityName: string,
-  warnings: string[]
-): number {
+export function validateLineNumberBatch<T extends { line_number?: number | null }>(items: readonly T[], entityName: string, warnings: string[]): number {
   const lineNumbers = items.map(x => x.line_number ?? 0).sort((a, b) => a - b);
   const minLineNumber = lineNumbers[0];
   const maxLineNumber = lineNumbers[lineNumbers.length - 1];
   const isConsecutive = (maxLineNumber - minLineNumber) <= (items.length - 1);
+
   if (!isConsecutive) {
     warnings.push(`Non-consecutive line numbers detected (${minLineNumber} to ${maxLineNumber} for ${items.length} ${entityName}). Use consecutive line numbers like +1, +2, +3 for batch inserts.`);
   }
+
   return minLineNumber;
 }
 
 export function pushInsertionEdit(edits: ReplaceRangeEdit[], ctx: EntityPlannerContext, insertionPoint: InsertionPoint, text: string, reason: string): void {
   const prefix = insertionPoint.needsNewlineBefore ? '\n' : '';
   const suffix = insertionPoint.needsNewlineAfter ? '\n' : '';
+
   edits.push({
     type: "replaceRange",
     path: ctx.path,
@@ -96,6 +95,7 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
     }
 
     const loc = options.locate(row);
+
     if (loc.kind === "miss") {
       warnings.push(options.missingMessage(row, '', loc.reason));
       continue;
@@ -103,6 +103,7 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
 
     const existing = ctx.content.slice(loc.range.start, loc.range.end);
     const next = options.emit(row, existing);
+
     if (next !== existing) {
       edits.push({ type: "replaceRange", path: ctx.path, range: loc.range, text: next, reason: options.updateReason });
     }
@@ -123,12 +124,14 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
 
   for (const row of rowsToDelete) {
     const loc = options.locate(row);
+
     if (loc.kind === "miss") {
       warnings.push(options.missingMessage(row, ' to delete', loc.reason));
       continue;
     }
 
     const deleteRange = ContentLocationService.expandRangeToIncludeNewline(ctx.content, loc.range);
+
     edits.push({
       type: "replaceRange",
       path: ctx.path,
@@ -145,9 +148,12 @@ export function getBlockIdSuffix(blockId?: string | null, existing?: string): st
   if (blockId) {
     return ` ^${blockId}`;
   }
+
   const blockIdMatch = existing?.match(/\s+\^([\w-]+)\s*$/);
+
   if (blockIdMatch) {
     return ` ^${blockIdMatch[1]}`;
   }
+
   return '';
 }

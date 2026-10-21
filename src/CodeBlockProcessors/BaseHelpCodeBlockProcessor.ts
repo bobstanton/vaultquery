@@ -1,4 +1,5 @@
-import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer, setIcon } from 'obsidian';
+import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
+import { createHelpRenderContext, renderHelpSchema, renderUnknownDynamicContent } from './HelpRendering';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import type { RenderContext } from '../generated-help/index.generated';
@@ -22,49 +23,34 @@ export class BaseHelpCodeBlockProcessor {
   }
 
   protected createRenderContext(): RenderContext {
-    return {
-      app: this.app,
-      component: this.component,
-      renderDynamic: (parent: HTMLElement, key: string) => {
-        this.renderDynamicContent(parent, key);
-      },
-      setIcon: (element: HTMLElement, iconId: string) => {
-        setIcon(element, iconId);
-      },
-    };
+    return createHelpRenderContext(this.app, this.component, (parent, key) => this.renderDynamicContent(parent, key));
   }
 
   protected renderDynamicContent(container: HTMLElement, key: string): void {
     if (key === 'schema' && this.schemaLoadingMessage) {
       this.renderSchema(container, this.schemaLoadingMessage);
+
       return;
     }
 
-    container.createDiv({
-      cls: 'vaultquery-help-error',
-      text: `Unknown dynamic content: ${key}`
-    });
+    renderUnknownDynamicContent(container, key);
+  }
+
+  protected renderGeneratedMarkdown(container: HTMLElement, generate: () => Promise<string>): void {
+    void generate()
+      .then(markdown => MarkdownRenderer.render(this.app, markdown, container, '', this.component))
+      .catch((error: unknown) => {
+        container.empty();
+
+        container.createDiv({
+          cls: 'vaultquery-help-error',
+          text: `Failed to load help content: ${getErrorMessage(error)}`
+        });
+      });
   }
 
   protected renderSchema(container: HTMLElement, loadingMessage: string): void {
-    const api = this.plugin.api;
-    if (!api) {
-      container.createDiv({
-        text: `${loadingMessage} VaultQuery is still initializing — re-open this note to load the schema.`,
-        cls: 'vaultquery-help-loading'
-      });
-      return;
-    }
-
-    void api.getSchemaInfo()
-      .then(schemaInfo => MarkdownRenderer.render(this.app, schemaInfo, container, '', this.component))
-      .catch((error: unknown) => {
-        container.empty();
-        container.createDiv({
-          cls: 'vaultquery-help-error',
-          text: `Failed to load schema: ${getErrorMessage(error)}`
-        });
-      });
+    void renderHelpSchema(this.app, this.plugin, this.component, container, loadingMessage);
   }
 
   public unload(): void {

@@ -23,6 +23,7 @@ export class ConfirmationModal extends Modal {
       cls: 'mod-cta',
       text: 'Confirm'
     });
+
     confirmButton.addEventListener('click', () => {
       this.resolve(true);
       this.close();
@@ -31,6 +32,7 @@ export class ConfirmationModal extends Modal {
     const cancelButton = buttonContainer.createEl('button', {
       text: 'Cancel'
     });
+
     cancelButton.addEventListener('click', () => {
       this.resolve(false);
       this.close();

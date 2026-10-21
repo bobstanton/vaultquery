@@ -1,8 +1,9 @@
+import { parseFrontmatterValue } from '../utils/FrontmatterValueParser';
 import { App, TFile, Notice, normalizePath } from 'obsidian';
 import { assertNever } from './TriggerFunctions';
 import type { TriggerFunctions, PendingAction, SetPropertyParams, RemovePropertyParams, RenameNoteParams, SetContentParams, ReplaceContentParams, UpdateTaskParams, CompleteTaskParams, AddTaskParams, DeleteTaskParams, UpdateHeadingParams, AddHeadingParams, DeleteHeadingParams, UpdateListItemParams, AddListItemParams, DeleteListItemParams, AddTableRowParams, SetTableCellParams, DeleteTableRowParams, CreateNoteParams } from './TriggerFunctions';
 import { logger as rootLogger } from '../utils/logger';
-import { createNoteWithFolders } from '../utils/VaultUtils';
+import { createFileWithFolders, resolveVaultFile } from '../utils/VaultUtils';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { ContentLocationService } from '../Services/ContentLocationService';
 import type { Range } from '../Services/ContentLocationService';
@@ -15,6 +16,7 @@ interface TriggerServiceDependencies {
   app: App;
   triggerFunctions: TriggerFunctions;
   reindexFile: (path: string) => Promise<void>;
+  assertAccess: () => void;
 }
 
 const MAX_CASCADE_DEPTH = 10;
@@ -24,8 +26,6 @@ const MAX_ISSUES_IN_NOTICE = 3;
 /**
  * Service for processing pending trigger actions and applying them to files.
  */
-const TASK_LINE_CAPTURE = /^(\s*[-*+]\s+\[)([^\]])(\]\s*)(.*)$/;
-
 const HEADING_CAPTURE = /^(#{1,6})\s+(.*)$/;
 
 const TODO_CHECKBOX = ContentLocationService.statusToCheckbox('TODO') ?? ' ';
@@ -46,16 +46,10 @@ interface ParsedTaskLine {
 }
 
 function parseTaskLine(line: string): ParsedTaskLine | null {
-  if (!ContentLocationService.looksLikeTask(line)) {
-    return null;
-  }
+  const parsed = ContentLocationService.parseTaskLine(line);
 
-  const match = line.match(TASK_LINE_CAPTURE);
-  if (!match) {
-    return null;
-  }
-
-  return { prefix: match[1], checkbox: match[2], rest: match[3] + match[4], text: match[4] };
+  return parsed ? { prefix: `${parsed.indent}${parsed.bullet}${parsed.markerSpacing}[`, checkbox: parsed.checkbox,
+    rest: `]${parsed.spacing}${parsed.text}`, text: parsed.text } : null;
 }
 
 export class TriggerService {
@@ -67,7 +61,7 @@ export class TriggerService {
   private tablePlanner: TableEditPlanner;
   private runIssues: string[] = [];
 
-  public constructor(deps: TriggerServiceDependencies) {
+  public constructor(private readonly deps: TriggerServiceDependencies) {
     this.app = deps.app;
     this.triggerFunctions = deps.triggerFunctions;
     this.reindexFile = deps.reindexFile;
@@ -92,6 +86,7 @@ export class TriggerService {
     } else {
       logger.warn(`Trigger ${action}: ${message}`, details);
     }
+
     this.runIssues.push(`${action}: ${message}`);
   }
 
@@ -108,11 +103,15 @@ export class TriggerService {
   }
 
   private getFile(path: string, action: string): TFile | null {
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-    if (!(file instanceof TFile)) {
+    this.deps.assertAccess();
+    const file = resolveVaultFile(this.app.vault, path);
+
+    if (!file) {
       this.reportIssue(action, `file not found: ${path}`);
+
       return null;
     }
+
     return file;
   }
 
@@ -121,7 +120,11 @@ export class TriggerService {
    * editor never clobbers concurrent edits with content from a stale read.
    */
   private async transformFile(file: TFile, transform: (content: string) => string | null): Promise<void> {
-    await this.app.vault.process(file, (content) => transform(content) ?? content);
+    await this.app.vault.process(file, (content) => {
+      this.deps.assertAccess();
+
+      return transform(content) ?? content;
+    });
   }
 
   /**
@@ -132,7 +135,7 @@ export class TriggerService {
    * new actions, those are processed in subsequent passes until no more
    * actions are pending.
    */
-  public async processPendingActions(): Promise<void> {
+  public async processPendingActions(throwOnError = false): Promise<void> {
     this.triggerFunctions.clearCurrentDeferKey();
 
     if (!this.triggerFunctions.hasPendingActions()) {
@@ -140,6 +143,7 @@ export class TriggerService {
     }
 
     this.runIssues = [];
+    const issues = this.runIssues;
 
     // Set flag to prevent vq_* functions from queuing (but sync handlers can still queue for cascade)
     this.triggerFunctions.setProcessingTriggers(true);
@@ -157,6 +161,7 @@ export class TriggerService {
         for (const action of actions) {
           try {
             const result = await this.executeAction(action);
+
             if (result.affectedPath) {
               affectedPaths.add(result.affectedPath);
             }
@@ -170,6 +175,7 @@ export class TriggerService {
         // (e.g., a trigger watching table_cells fires again when a row lands there)
         // Temporarily allow vq_* functions to queue during reindex for cascade support
         this.triggerFunctions.setProcessingTriggers(false);
+
         for (const path of affectedPaths) {
           try {
             await this.reindexFile(path);
@@ -178,9 +184,11 @@ export class TriggerService {
             this.runIssues.push(`re-index ${path}: ${errorMessage(error)}`);
           }
         }
+
         this.triggerFunctions.setProcessingTriggers(true);
 
         const pendingCount = this.triggerFunctions.getPendingActionsCount();
+
         if (pendingCount > MAX_ACTIONS_PER_PASS) {
           logger.warn(`Too many actions queued (${pendingCount}), limiting to ${MAX_ACTIONS_PER_PASS}`);
           this.triggerFunctions.limitPendingActions(MAX_ACTIONS_PER_PASS);
@@ -195,89 +203,111 @@ export class TriggerService {
       this.triggerFunctions.setProcessingTriggers(false);
       this.showRunIssues();
     }
+
+    if (throwOnError && issues.length > 0) throw new Error(`Trigger actions failed: ${issues.join('; ')}`);
   }
 
   private async executeAction(action: PendingAction): Promise<{ affectedPath?: string }> {
     switch (action.type) {
       case 'set_property':
         await this.setProperty(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'remove_property':
         await this.removeProperty(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'notify':
         new Notice(action.params.message);
+
         return {};
 
       case 'rename_note': {
         const newPath = await this.renameNote(action.params);
+
         return newPath ? { affectedPath: newPath } : {};
       }
 
       case 'set_content':
         await this.setContent(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'replace_content':
         await this.replaceContent(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'update_task':
         await this.updateTask(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'complete_task':
         await this.setTaskStatus(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'add_task':
         await this.addTask(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'delete_task':
         await this.deleteTask(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'update_heading':
         await this.updateHeading(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'add_heading':
         await this.addHeading(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'delete_heading':
         await this.deleteHeading(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'update_list_item':
         await this.updateListItem(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'add_list_item':
         await this.addListItem(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'delete_list_item':
         await this.deleteListItem(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'add_table_row':
         await this.addTableRow(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'set_table_cell':
         await this.setTableCell(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'delete_table_row':
         await this.deleteTableRow(action.params);
+
         return { affectedPath: action.params.path };
 
       case 'create_note':
         await this.createNote(action.params);
+
         return { affectedPath: action.params.path };
 
       default:
@@ -290,7 +320,9 @@ export class TriggerService {
     if (!file) return;
 
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-      fm[key] = value;
+      this.deps.assertAccess();
+      const type = Array.isArray(fm[key]) ? 'list' : typeof fm[key];
+      fm[key] = parseFrontmatterValue(value, type);
     });
   }
 
@@ -299,6 +331,7 @@ export class TriggerService {
     if (!file) return;
 
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+      this.deps.assertAccess();
       delete fm[key];
     });
   }
@@ -312,11 +345,13 @@ export class TriggerService {
 
     try {
       await this.app.fileManager.renameFile(file, newPath);
+
       return newPath;
     }
     catch (error) {
       logger.error('Trigger: failed to rename note', { path, newPath }, error);
       this.runIssues.push(`rename_note: failed to rename ${path} - ${errorMessage(error)}`);
+
       return null;
     }
   }
@@ -330,6 +365,7 @@ export class TriggerService {
       // The content parameter is just the body; we need to keep existing frontmatter
       const frontmatterMatch = currentContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
       const frontmatter = frontmatterMatch ? frontmatterMatch[0] : '';
+
       return frontmatter + content;
     });
   }
@@ -338,20 +374,24 @@ export class TriggerService {
     const file = this.getFile(path, 'replace_content');
     if (!file) return;
 
-    await this.transformFile(file, (fileContent) => {
-      const newContent = fileContent.split(search).join(replacement);
-      return newContent !== fileContent ? newContent : null;
+    await this.transformFile(file, (noteContent) => {
+      const newContent = noteContent.split(search).join(replacement);
+
+      return newContent !== noteContent ? newContent : null;
     });
   }
 
   private locateLine(content: string, lineNumber: number, action: string): { range: Range; line: string } | null {
     const lineIndex = lineNumber - 1;
+
     if (lineIndex < 0 || lineIndex >= content.split('\n').length) {
       this.reportIssue(action, `invalid line number ${lineNumber}`);
+
       return null;
     }
 
     const range = ContentLocationService.getLineOffsets(content, lineIndex);
+
     return { range, line: content.slice(range.start, range.end) };
   }
 
@@ -380,10 +420,12 @@ export class TriggerService {
 
       if (!isEntity(located.line)) {
         this.reportIssue(action, `line ${lineNumber} is not a ${entityName}`, located.line);
+
         return null;
       }
 
       const range = ContentLocationService.expandRangeToIncludeNewline(content, located.range);
+
       return content.slice(0, range.start) + content.slice(range.end);
     });
   }
@@ -396,44 +438,42 @@ export class TriggerService {
       const point = ContentLocationService.findInsertionPointAtLine(content, Math.max(0, afterLine) + 1);
       const prefix = point.needsNewlineBefore ? '\n' : '';
       const suffix = point.needsNewlineAfter ? '\n' : '';
+
       return content.slice(0, point.offset) + prefix + text + suffix + content.slice(point.offset);
     });
   }
 
   private async updateTask({ path, lineNumber, status, taskText }: UpdateTaskParams): Promise<void> {
-    await this.rewriteLine(path, lineNumber, 'update_task', (line) => {
-      const parsed = parseTaskLine(line);
-      if (!parsed) {
-        this.reportIssue('update_task', `line ${lineNumber} is not a task`, line);
-        return null;
-      }
-
-      const checkbox = status === null ? parsed.checkbox : ContentLocationService.statusToCheckbox(status);
-      if (checkbox === null) {
-        this.reportIssue('update_task', `unknown task status "${status}"`);
-        return null;
-      }
-
+    await this.rewriteTask(path, lineNumber, 'update_task', status, (parsed, checkbox) => {
       const text = taskText === null ? parsed.text : taskText;
+
       return `${parsed.prefix}${checkbox}] ${text}`;
     });
   }
 
   private async setTaskStatus({ path, lineNumber, status }: CompleteTaskParams): Promise<void> {
-    await this.rewriteLine(path, lineNumber, 'complete_task', (line) => {
+    await this.rewriteTask(path, lineNumber, 'complete_task', status, (parsed, checkbox) => `${parsed.prefix}${checkbox}${parsed.rest}`);
+  }
+
+  private async rewriteTask(path: string, lineNumber: number, action: string, status: string | null, render: (parsed: ParsedTaskLine, checkbox: string) => string): Promise<void> {
+    await this.rewriteLine(path, lineNumber, action, (line) => {
       const parsed = parseTaskLine(line);
+
       if (!parsed) {
-        this.reportIssue('complete_task', `line ${lineNumber} is not a task`, line);
+        this.reportIssue(action, `line ${lineNumber} is not a task`, line);
+
         return null;
       }
 
-      const checkbox = ContentLocationService.statusToCheckbox(status);
+      const checkbox = status === null ? parsed.checkbox : ContentLocationService.statusToCheckbox(status);
+
       if (checkbox === null) {
-        this.reportIssue('complete_task', `unknown task status "${status}"`);
+        this.reportIssue(action, `unknown task status "${status}"`);
+
         return null;
       }
 
-      return `${parsed.prefix}${checkbox}${parsed.rest}`;
+      return render(parsed, checkbox);
     });
   }
 
@@ -448,8 +488,10 @@ export class TriggerService {
   private async updateHeading({ path, lineNumber, level, headingText }: UpdateHeadingParams): Promise<void> {
     await this.rewriteLine(path, lineNumber, 'update_heading', (line) => {
       const match = ContentLocationService.looksLikeHeading(line) ? line.match(HEADING_CAPTURE) : null;
+
       if (!match) {
         this.reportIssue('update_heading', `line ${lineNumber} is not a heading`, line);
+
         return null;
       }
 
@@ -482,6 +524,7 @@ export class TriggerService {
     await this.rewriteLine(path, lineNumber, 'update_list_item', (line) => {
       if (!ContentLocationService.looksLikeListItem(line)) {
         this.reportIssue('update_list_item', `line ${lineNumber} is not a list item`, line);
+
         return null;
       }
 
@@ -503,14 +546,18 @@ export class TriggerService {
 
     await this.transformFile(file, (content) => {
       const range = MarkdownTableUtils.findTableByIndex(content, tableIndex);
+
       if (!range) {
         this.reportIssue(action, `table ${tableIndex} not found in ${path}`);
+
         return null;
       }
 
       const parsed = MarkdownTableUtils.parseMarkdownTable(content.slice(range.start, range.end));
+
       if (!parsed) {
         this.reportIssue(action, `could not parse table ${tableIndex} in ${path}`);
+
         return null;
       }
 
@@ -519,6 +566,7 @@ export class TriggerService {
 
       const records = nextRows.map(cells => Object.fromEntries(parsed.header.map((column, index) => [column, cells[index] ?? ''])));
       const rebuilt = this.tablePlanner.buildMarkdownTable(parsed.header, records);
+
       return content.slice(0, range.start) + rebuilt + '\n' + content.slice(range.end);
     });
   }
@@ -530,18 +578,22 @@ export class TriggerService {
   private async setTableCell({ path, tableIndex, rowIndex, columnName, value }: SetTableCellParams): Promise<void> {
     await this.transformMarkdownTable(path, tableIndex, 'set_table_cell', (header, rows) => {
       const columnIndex = header.indexOf(columnName);
+
       if (columnIndex === -1) {
         this.reportIssue('set_table_cell', `column "${columnName}" not found`);
+
         return null;
       }
 
       if (rowIndex < 0 || rowIndex >= rows.length) {
         this.reportIssue('set_table_cell', `invalid row index ${rowIndex}`);
+
         return null;
       }
 
       const next = rows.map(row => [...row]);
       next[rowIndex][columnIndex] = value;
+
       return next;
     });
   }
@@ -550,6 +602,7 @@ export class TriggerService {
     await this.transformMarkdownTable(path, tableIndex, 'delete_table_row', (_header, rows) => {
       if (rowIndex < 0 || rowIndex >= rows.length) {
         this.reportIssue('delete_table_row', `invalid row index ${rowIndex}`);
+
         return null;
       }
 
@@ -558,14 +611,17 @@ export class TriggerService {
   }
 
   private async createNote({ path, content }: CreateNoteParams): Promise<void> {
+    this.deps.assertAccess();
     const existing = this.app.vault.getAbstractFileByPath(normalizePath(path));
+
     if (existing) {
       logger.warn('Trigger: file already exists for createNote', path);
+
       return;
     }
 
     try {
-      await createNoteWithFolders(this.app.vault, path, content);
+      await createFileWithFolders(this.app.vault, path, content);
     } catch (error) {
       logger.error('Trigger: failed to create note', path, error);
       this.runIssues.push(`create_note: failed to create ${path} - ${errorMessage(error)}`);

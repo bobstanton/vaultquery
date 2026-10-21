@@ -42,38 +42,31 @@ export class TaskEditPlanner {
   }
 
   private parseTaskStyle(existing: string): TaskStyle {
-    const m = existing.match(/^(\s*)([-*+])\s+\[[ xX]\]/);
-    return { indent: m?.[1] ?? "", bullet: (m?.[2] as "-" | "*" | "+") ?? "-" };
+    const parsed = ContentLocationService.parseTaskLine(existing);
+
+    return { indent: parsed?.indent ?? "", bullet: parsed?.bullet ?? "-" };
+  }
+
+  public static getTaskCheckbox(status: TaskRow['status'], completed: boolean): string {
+    const requested = status ? ContentLocationService.statusToCheckbox(status) : completed ? 'x' : ' ';
+    if (requested === null) throw new Error(`Unknown task status "${status}".`);
+
+    return requested === ' ' && completed ? 'x' : requested;
   }
 
   public emitTaskLine(base: TaskRow, completed: boolean, existing?: string): string {
     const style = existing ? this.parseTaskStyle(existing) : { indent: "", bullet: "-" as const };
     const blockIdSuffix = getBlockIdSuffix(base.block_id, existing);
 
-    const status = base.status?.toUpperCase() ?? '';
-
-    let box: string;
-    if (status === 'CANCELLED') {
-      box = "[-]";
-    }
-
-    else if (status === 'IN_PROGRESS') {
-      box = "[/]";
-    }
-
-    else if (status === 'DONE' || completed) {
-      box = "[x]";
-    }
-
-    else {
-      box = "[ ]";
-    }
+    const checkbox = TaskEditPlanner.getTaskCheckbox(base.status, completed);
+    const box = `[${checkbox}]`;
 
     let text = base.task_text ?? "";
 
     for (const pattern of TASK_TEXT_STRIP_PATTERNS) {
       text = text.replace(pattern, '');
     }
+
     text = text.replace(/\s+\^[\w-]+\s*$/, '');
     text = text.trim();
 
@@ -83,8 +76,8 @@ export class TaskEditPlanner {
     if (base.scheduled_date) parts.push(`⏳ ${base.scheduled_date}`);
     if (base.start_date) parts.push(`🛫 ${base.start_date}`);
     if (base.due_date) parts.push(`📅 ${base.due_date}`);
-    if (base.done_date && (status === 'DONE' || completed)) parts.push(`✅ ${base.done_date}`);
-    if (base.cancelled_date && status === 'CANCELLED') parts.push(`❌ ${base.cancelled_date}`);
+    if (base.done_date && checkbox === 'x') parts.push(`✅ ${base.done_date}`);
+    if (base.cancelled_date && checkbox === '-') parts.push(`❌ ${base.cancelled_date}`);
     if (base.recurrence) parts.push(`🔁 ${base.recurrence}`);
     if (base.on_completion) parts.push(`🏁 ${base.on_completion}`);
 
@@ -99,15 +92,18 @@ export class TaskEditPlanner {
 
     if (base.tags) {
       const tagStr = base.tags.trim();
+
       if (tagStr) {
         const formattedTags = tagStr.split(/\s+/)
           .map(tag => tag.startsWith('#') ? tag : `#${tag}`)
           .join(' ');
+
         parts.push(formattedTags);
       }
     }
 
     const fullText = parts.filter(p => p).join(' ');
+
     return `${style.indent}${style.bullet} ${box} ${fullText}${blockIdSuffix}`;
   }
 }

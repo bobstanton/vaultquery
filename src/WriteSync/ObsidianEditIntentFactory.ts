@@ -1,21 +1,28 @@
+import type { App } from 'obsidian';
+import { generateFileLink, formatWikiLink } from '../utils/MarkdownLinkUtils';
 import { stringifyYaml } from 'obsidian';
 import { createRowColumnKey, createTableKey, escapeRegex, parseTableKey, processEscapeSequences } from '../utils/StringUtils';
+import { TAG_NAME_CHARACTER } from '../utils/TagSyntax';
 import { logger as rootLogger } from '../utils/logger';
 import { asNum, asStr, readLocationFields } from './types';
 import { appendCellsFromTableRows } from './TableUtils';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
 import { ContentLocationService } from '../Services/ContentLocationService';
 import { INSERT_NEW_LINE } from '../EditPlanner';
+import { getPropertyColumns, parsePropertyViewValue, propertyListShapes, propertyViewKey } from '../utils/PropertyViewUtils';
 
 import type { PreviewResult } from '../Services/PreviewService';
+import type { PropertyColumn, PropertyListShapeRow } from '../utils/PropertyViewUtils';
 import type { ObsidianEditIntent, ObsidianEntityLocation } from './ObsidianEditIntent';
 import type { HeadingRow, ListItemRow, Range, TableCellRow, TaskRow } from '../Services/ContentLocationService';
 
 const logger = rootLogger.scope('WriteSync');
 
+export const NOTE_DELETION_DISABLED = 'DELETE FROM notes is disabled. Enable "Allow file deletion" in VaultQuery settings to delete files.';
+
 type QueryDescendants = (rows: Record<string, unknown>[]) => Promise<Record<string, unknown>[]>;
 type QueryDatabase = <T>(sql: string, params?: (string | number | null)[]) => Promise<T[]>;
-type ReadFileContent = (path: string) => Promise<string | null>;
+type ReadNoteContent = (path: string) => Promise<string | null>;
 type TableCellMapByTable = Map<string, Map<string, TableCellRow>>;
 type TableCellKeySetByTable = Map<string, Set<string>>;
 type NewRowsByTable = Map<string, TableCellRow[]>;
@@ -55,6 +62,7 @@ function createPropertyIntents(previewResult: PreviewResult): ObsidianEditIntent
   if (previewResult.op === 'delete') {
     return previewResult.before.map(row => {
       const property = toPropertyRow(row);
+
       return {
         type: 'deleteProperty',
         path: property.path,
@@ -71,11 +79,13 @@ function createPropertyIntents(previewResult: PreviewResult): ObsidianEditIntent
     for (let i = 0; i < afterProps.length; i++) {
       const before = beforeProps[i];
       const after = afterProps[i];
+
       if (!after) {
         continue;
       }
 
       intents.push(createSetPropertyIntent(after));
+
       if (before && before.key !== after.key) {
         intents.push({
           type: 'deleteProperty',
@@ -91,10 +101,10 @@ function createPropertyIntents(previewResult: PreviewResult): ObsidianEditIntent
   return previewResult.after.map(row => createSetPropertyIntent(toPropertyRow(row)));
 }
 
-function createNoteIntents(previewResult: PreviewResult, allowDeleteNotes: boolean): ObsidianEditIntent[] {
+async function createNoteIntents(previewResult: PreviewResult, allowDeleteNotes: boolean, queryDatabase?: QueryDatabase): Promise<ObsidianEditIntent[]> {
   if (previewResult.op === 'delete') {
     if (!allowDeleteNotes) {
-      throw new Error('DELETE FROM notes is disabled. Enable "Allow file deletion" in VaultQuery settings to delete files.');
+      throw new Error(NOTE_DELETION_DISABLED);
     }
 
     return previewResult.before.map(row => ({
@@ -119,21 +129,26 @@ function createNoteIntents(previewResult: PreviewResult, allowDeleteNotes: boole
 
   if (previewResult.op === 'insert') {
     const isFromPropertiesView = previewResult.table === 'notes_with_properties';
+    const propertyColumns = isFromPropertiesView ? await readPropertyColumns(queryDatabase) : [];
+    const isList = isFromPropertiesView ? await readPropertyListShapes(queryDatabase, propertyViewKeys(previewResult, propertyColumns)) : undefined;
 
     return previewResult.after.map(row => {
       const path = asStr(row.path);
       let content = processEscapeSequences(asStr(row.content));
 
       const title = asStr(row.title, null);
+
       if (!content && title) {
         content = `# ${title}\n\n`;
       }
 
       if (isFromPropertiesView) {
-        const properties: Record<string, string> = {};
+        const properties: Record<string, string | unknown[]> = {};
+
         for (const [key, value] of Object.entries(row)) {
           if (!NOTES_CORE_COLUMNS.includes(key) && value !== null && value !== undefined) {
-            properties[key] = formatUnknownValue(value);
+            const originalKey = propertyViewKey(propertyColumns, key);
+            properties[originalKey] = parsePropertyViewValue(formatUnknownValue(value), isList?.(path, originalKey) ?? false);
           }
         }
 
@@ -159,14 +174,15 @@ function canDirectlyApplyPreviewResult(previewResult: PreviewResult): boolean {
   return DIRECT_TABLES.has(previewResult.table);
 }
 
-export async function createDirectlyApplicableIntents(previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants?: QueryDescendants,
-  queryDatabase?: QueryDatabase, readFileContent?: ReadFileContent): Promise<IntentCreationResult | null> {
+export async function createDirectlyApplicableIntents(app: App, previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants?: QueryDescendants,
+  queryDatabase?: QueryDatabase, readNoteContent?: ReadNoteContent): Promise<IntentCreationResult | null> {
   if (!canDirectlyApplyPreviewResult(previewResult)) {
     return null;
   }
 
   const warnings: string[] = [];
-  const intents = await createIntentsForResult(previewResult, allowDeleteNotes, queryListItemDescendants, queryDatabase, readFileContent, warnings);
+  const intents = await createIntentsForResult(app, previewResult, allowDeleteNotes, queryListItemDescendants, queryDatabase, readNoteContent, warnings);
+
   if (!intents) {
     return null;
   }
@@ -174,20 +190,22 @@ export async function createDirectlyApplicableIntents(previewResult: PreviewResu
   return { intents, warnings };
 }
 
-async function createIntentsForResult(previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants: QueryDescendants | undefined,
-  queryDatabase: QueryDatabase | undefined, readFileContent: ReadFileContent | undefined, warnings: string[]): Promise<ObsidianEditIntent[] | null> {
+async function createIntentsForResult(app: App, previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants: QueryDescendants | undefined,
+  queryDatabase: QueryDatabase | undefined, readNoteContent: ReadNoteContent | undefined, warnings: string[]): Promise<ObsidianEditIntent[] | null> {
   if (previewResult.op === 'multi') {
     if (!queryDatabase) {
       throw new Error('Multi-statement writes require database lookup.');
     }
-    return await createMultiStatementIntents(previewResult, allowDeleteNotes, queryListItemDescendants, queryDatabase, readFileContent, warnings);
+
+    return await createMultiStatementIntents(app, previewResult, allowDeleteNotes, queryListItemDescendants, queryDatabase, readNoteContent, warnings);
   }
 
   if (previewResult.table === 'notes' || previewResult.table === 'notes_with_properties') {
     if (previewResult.table === 'notes_with_properties' && previewResult.op === 'update') {
-      return createNotesWithPropertiesUpdateIntents(previewResult);
+      return createNotesWithPropertiesUpdateIntents(previewResult, queryDatabase);
     }
-    return createNoteIntents(previewResult, allowDeleteNotes);
+
+    return createNoteIntents(previewResult, allowDeleteNotes, queryDatabase);
   }
 
   if (previewResult.table === 'tasks' || previewResult.table === 'tasks_view') {
@@ -205,6 +223,7 @@ async function createIntentsForResult(previewResult: PreviewResult, allowDeleteN
       }
 
       const rowsToDelete = await queryListItemDescendants(previewResult.before);
+
       return createListItemIntents({ ...previewResult, before: rowsToDelete }, warnings);
     }
 
@@ -215,28 +234,31 @@ async function createIntentsForResult(previewResult: PreviewResult, allowDeleteN
     if (!queryDatabase) {
       throw new Error(`${previewResult.table} writes require table cell lookup.`);
     }
+
     return await createTableRewriteIntents(previewResult, queryDatabase, warnings);
   }
 
   if (previewResult.table === 'tags') {
-    if (!queryDatabase || !readFileContent) {
+    if (!queryDatabase || !readNoteContent) {
       throw new Error('tags writes require note content and tag lookup.');
     }
-    return await createTagIntents(previewResult, queryDatabase, readFileContent, warnings);
+
+    return await createTagIntents(previewResult, queryDatabase, readNoteContent, warnings);
   }
 
   if (previewResult.table === 'links') {
-    if (!readFileContent) {
+    if (!readNoteContent) {
       throw new Error('links writes require note content lookup.');
     }
-    return await createLinkIntents(previewResult, readFileContent, warnings);
+
+    return await createLinkIntents(app, previewResult, readNoteContent, warnings);
   }
 
   return createPropertyIntents(previewResult);
 }
 
-async function createMultiStatementIntents(previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants: QueryDescendants | undefined,
-  queryDatabase: QueryDatabase, readFileContent: ReadFileContent | undefined, warnings: string[]): Promise<ObsidianEditIntent[] | null> {
+async function createMultiStatementIntents(app: App, previewResult: PreviewResult, allowDeleteNotes: boolean, queryListItemDescendants: QueryDescendants | undefined,
+  queryDatabase: QueryDatabase, readNoteContent: ReadNoteContent | undefined, warnings: string[]): Promise<ObsidianEditIntent[] | null> {
   const intents: ObsidianEditIntent[] = [];
   const changedCellsByTable: TableCellMapByTable = new Map();
   const deletedCellsByTable: TableCellKeySetByTable = new Map();
@@ -259,18 +281,22 @@ async function createMultiStatementIntents(previewResult: PreviewResult, allowDe
         },
         'ObsidianEditIntentFactory'
       );
+
       continue;
     }
 
-    const resultIntents = await createIntentsForResult(result, allowDeleteNotes, queryListItemDescendants, queryDatabase, readFileContent, warnings);
+    const resultIntents = await createIntentsForResult(app, result, allowDeleteNotes, queryListItemDescendants, queryDatabase, readNoteContent, warnings);
+
     if (!resultIntents) {
       return null;
     }
+
     intents.push(...resultIntents);
   }
 
   const tableCells = await buildMultiStatementTableCells(affectedTables, changedCellsByTable, deletedCellsByTable, newRowsByTable, queryDatabase, warnings);
   intents.push(...createTableRewriteIntentsFromCells(tableCells));
+
   return intents;
 }
 
@@ -285,6 +311,7 @@ function collectTableCellStatement(previewResult: PreviewResult, changedCellsByT
       deletedCellsByTable.set(tableKey, deletedCells);
       affectedTables.add(tableKey);
     }
+
     return;
   }
 
@@ -304,9 +331,11 @@ function mergeExistingCells(existingCellRows: TableCellRow[], changedCells: Map<
 
   for (const existingCell of existingCellRows) {
     const cellKey = createRowColumnKey(existingCell.row_index, existingCell.column_name);
+
     if (deletedCells.has(cellKey)) {
       continue;
     }
+
     mergedCells.push(changedCells.get(cellKey) ?? existingCell);
   }
 
@@ -326,6 +355,7 @@ async function buildMultiStatementTableCells(affectedTables: Set<string>, change
     allTableCells.push(...mergeExistingCells(existingCellRows, changedCells, deletedCells));
 
     const newRows = newRowsByTable.get(tableKey);
+
     if (newRows) {
       allTableCells.push(...newRows);
     }
@@ -334,8 +364,41 @@ async function buildMultiStatementTableCells(affectedTables: Set<string>, change
   return allTableCells;
 }
 
-function createNotesWithPropertiesUpdateIntents(previewResult: PreviewResult): ObsidianEditIntent[] {
+async function readPropertyColumns(queryDatabase?: QueryDatabase) {
+  if (!queryDatabase) throw new Error('Property view writes require frontmatter key lookup.');
+  const rows = await queryDatabase<{ key: string }>('SELECT DISTINCT key FROM properties ORDER BY key');
+
+  return getPropertyColumns(rows.map(row => row.key));
+}
+
+function propertyViewKeys(previewResult: PreviewResult, propertyColumns: PropertyColumn[]): string[] {
+  const keys = new Set<string>();
+
+  for (const row of previewResult.after) {
+    for (const column of Object.keys(row)) {
+      if (NOTES_CORE_COLUMNS.includes(column)) continue;
+
+      for (const key of propertyColumns.find(candidate => candidate.columnName === column)?.keys ?? []) {
+        keys.add(key);
+      }
+    }
+  }
+
+  return [...keys];
+}
+
+async function readPropertyListShapes(queryDatabase: QueryDatabase | undefined, keys: string[]): Promise<(path: string, key: string) => boolean> {
+  if (!queryDatabase) throw new Error('Property view writes require frontmatter key lookup.');
+  if (keys.length === 0) return propertyListShapes([]);
+  const sql = `SELECT path, key, MAX(array_index IS NOT NULL) AS is_list FROM properties WHERE key IN (${keys.map(() => '?').join(', ')}) GROUP BY path, key`;
+
+  return propertyListShapes(await queryDatabase<PropertyListShapeRow>(sql, keys));
+}
+
+async function createNotesWithPropertiesUpdateIntents(previewResult: PreviewResult, queryDatabase?: QueryDatabase): Promise<ObsidianEditIntent[]> {
   const intents: ObsidianEditIntent[] = [];
+  const propertyColumns = await readPropertyColumns(queryDatabase);
+  const isList = await readPropertyListShapes(queryDatabase, propertyViewKeys(previewResult, propertyColumns));
 
   for (let i = 0; i < previewResult.after.length; i++) {
     const afterRow = previewResult.after[i];
@@ -356,20 +419,25 @@ function createNotesWithPropertiesUpdateIntents(previewResult: PreviewResult): O
       }
 
       const beforeValue = beforeRow?.[key];
+
       if (afterValue === beforeValue) {
         continue;
       }
 
+      const originalKey = propertyViewKey(propertyColumns, key);
+
       if (afterValue === null || afterValue === undefined) {
-        intents.push({ type: 'deleteProperty', path, key });
+        intents.push({ type: 'deleteProperty', path, key: originalKey });
       }
       else {
+        const value = parsePropertyViewValue(formatUnknownValue(afterValue), isList(path, originalKey));
+
         intents.push({
           type: 'setProperty',
           path,
-          key,
-          value: formatUnknownValue(afterValue),
-          valueType: null
+          key: originalKey,
+          value: Array.isArray(value) ? JSON.stringify(value) : value,
+          valueType: Array.isArray(value) ? 'array' : null
         });
       }
     }
@@ -378,17 +446,13 @@ function createNotesWithPropertiesUpdateIntents(previewResult: PreviewResult): O
   return intents;
 }
 
-async function createTagIntents(previewResult: PreviewResult, queryDatabase: QueryDatabase, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createTagIntents(previewResult: PreviewResult, queryDatabase: QueryDatabase, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   if (previewResult.op === 'insert') {
-    return await createTagInsertIntents(previewResult, queryDatabase, readFileContent, warnings);
+    return await createTagInsertIntents(previewResult, queryDatabase, readNoteContent, warnings);
   }
 
-  if (previewResult.op === 'update') {
-    return await createTagUpdateIntents(previewResult, readFileContent, warnings);
-  }
-
-  if (previewResult.op === 'delete') {
-    return await createTagDeleteIntents(previewResult, readFileContent, warnings);
+  if (previewResult.op === 'update' || previewResult.op === 'delete') {
+    return await createTagPatchIntents(previewResult, readNoteContent, warnings);
   }
 
   return [];
@@ -399,7 +463,7 @@ async function createTagIntents(previewResult: PreviewResult, queryDatabase: Que
 // can be located in them). Files that cannot be read at all are always
 // skipped, with a user-visible warning. Intents are only produced when the
 // mutation actually changed something.
-async function createContentPatchIntents<T>(entriesByPath: Map<string, T[]>, readFileContent: ReadFileContent,
+async function createContentPatchIntents<T>(entriesByPath: Map<string, T[]>, readNoteContent: ReadNoteContent,
   mutateContent: (content: string, entries: T[], warn: (message: string) => void) => string,
   warnings: string[], allowEmptyBaseline?: boolean): Promise<ObsidianEditIntent[]> {
   const intents: ObsidianEditIntent[] = [];
@@ -409,27 +473,32 @@ async function createContentPatchIntents<T>(entriesByPath: Map<string, T[]>, rea
       warnings.push(`${path}: ${message}`);
     };
 
-    const baselineContent = await readFileContent(path);
+    const baselineContent = await readNoteContent(path);
+
     if (baselineContent === null) {
       warn(`skipped ${entries.length} change(s): file could not be read`);
       continue;
     }
+
     if (!allowEmptyBaseline && !baselineContent) {
       warn(`skipped ${entries.length} change(s): file is empty`);
       continue;
     }
 
     const content = mutateContent(baselineContent, entries, warn);
+
     if (content === baselineContent) {
       continue;
     }
+
     intents.push({ type: 'replaceNoteContent', path, content, baselineContent });
   }
 
   return intents;
 }
 
-const TAG_BOUNDARY = '(?=\\s|$|[^\\w-])';
+// A slash continues a nested tag, so a parent tag must not match its prefix.
+const TAG_BOUNDARY = `(?!${TAG_NAME_CHARACTER})`;
 
 function replaceTagOnLine(content: string, pattern: RegExp, lineNumber: number | null, replacement: string): string | null {
   if (lineNumber == null || lineNumber < 1) {
@@ -437,85 +506,65 @@ function replaceTagOnLine(content: string, pattern: RegExp, lineNumber: number |
   }
 
   const lines = content.split('\n');
+
   if (lineNumber > lines.length) {
     return null;
   }
 
   const line = lines[lineNumber - 1];
+
   if (!pattern.test(line)) {
     return null;
   }
 
   lines[lineNumber - 1] = line.replace(pattern, replacement);
+
   return lines.join('\n');
 }
 
-async function createTagUpdateIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
-  const tagChangesByPath = new Map<string, Array<{ oldTag: string; newTag: string; lineNumber: number | null }>>();
+async function createTagPatchIntents(previewResult: PreviewResult, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+  const deleting = previewResult.op === 'delete';
+  const changesByPath = new Map<string, Array<{ tag: string; replacement: string; lineNumber: number | null }>>();
 
-  for (let i = 0; i < previewResult.before.length; i++) {
-    const before = previewResult.before[i];
-    const after = previewResult.after[i];
-    if (before && after && before.tag_name !== after.tag_name) {
-      const path = asStr(after.path);
-      const changes = tagChangesByPath.get(path) || [];
-      changes.push({
-        oldTag: asStr(before.tag_name),
-        newTag: asStr(after.tag_name),
-        lineNumber: asNum(before.line_number, null)
-      });
-      tagChangesByPath.set(path, changes);
-    }
+  for (const [index, before] of previewResult.before.entries()) {
+    const after = previewResult.after[index];
+    if (!deleting && (!after || before.tag_name === after.tag_name)) continue;
+    const path = asStr(deleting ? before.path : after.path);
+    const changes = changesByPath.get(path) ?? [];
+    changes.push({ tag: asStr(before.tag_name), replacement: deleting ? '' : asStr(after.tag_name),
+      lineNumber: asNum(before.line_number, null) });
+    changesByPath.set(path, changes);
   }
 
-  return await createContentPatchIntents(tagChangesByPath, readFileContent, (content, changes, warn) => {
+  return createContentPatchIntents(changesByPath, readNoteContent, (content, changes, warn) => {
     for (const change of changes) {
-      const pattern = new RegExp(escapeRegex(change.oldTag) + TAG_BOUNDARY);
-      const next = replaceTagOnLine(content, pattern, change.lineNumber, change.newTag);
+      const pattern = new RegExp(escapeRegex(change.tag) + (deleting ? '(\\s?)' : '') + TAG_BOUNDARY);
+      const next = replaceTagOnLine(content, pattern, change.lineNumber, change.replacement);
+
       if (next === null) {
-        warn(`could not find tag ${change.oldTag} on line ${change.lineNumber ?? '?'}; change skipped`);
+        warn(`could not find tag ${change.tag} on line ${change.lineNumber ?? '?'}; ${deleting ? 'delete' : 'change'} skipped`);
         continue;
       }
+
       content = next;
     }
+
     return content;
   }, warnings);
 }
 
-async function createTagDeleteIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
-  const tagDeletesByPath = new Map<string, Array<{ tag: string; lineNumber: number | null }>>();
-
-  for (const row of previewResult.before) {
-    const path = asStr(row.path);
-    const tags = tagDeletesByPath.get(path) || [];
-    tags.push({ tag: asStr(row.tag_name), lineNumber: asNum(row.line_number, null) });
-    tagDeletesByPath.set(path, tags);
-  }
-
-  return await createContentPatchIntents(tagDeletesByPath, readFileContent, (content, tagsToDelete, warn) => {
-    for (const entry of tagsToDelete) {
-      const pattern = new RegExp(escapeRegex(entry.tag) + '(\\s?)' + TAG_BOUNDARY);
-      const next = replaceTagOnLine(content, pattern, entry.lineNumber, '');
-      if (next === null) {
-        warn(`could not find tag ${entry.tag} on line ${entry.lineNumber ?? '?'}; delete skipped`);
-        continue;
-      }
-      content = next;
-    }
-    return content;
-  }, warnings);
-}
-
-async function createTagInsertIntents(previewResult: PreviewResult, queryDatabase: QueryDatabase, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createTagInsertIntents(previewResult: PreviewResult, queryDatabase: QueryDatabase, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   const inlineTagsByPath = new Map<string, Array<{ tagName: string; lineNumber: number; insertPosition: string }>>();
   const frontmatterTagsByPath = new Map<string, string[]>();
 
   for (const row of previewResult.after) {
     const path = asStr(row.path);
     let tagName = asStr(row.tag_name);
+
     if (!tagName.startsWith('#')) {
       tagName = '#' + tagName;
     }
+
     const lineNumber = asNum(row.line_number, null);
     const insertPosition = asStr(row.insert_position, 'new_line');
 
@@ -531,8 +580,7 @@ async function createTagInsertIntents(previewResult: PreviewResult, queryDatabas
     }
   }
 
-  const intents = await createContentPatchIntents(inlineTagsByPath, readFileContent, (content, newTags) =>
-    insertLineItems(content, newTags.map(tag => ({
+  const intents = await createContentPatchIntents(inlineTagsByPath, readNoteContent, (content, newTags) => insertLineItems(content, newTags.map(tag => ({
       value: tag.tagName,
       lineNumber: tag.lineNumber,
       insertPosition: tag.insertPosition
@@ -542,6 +590,7 @@ async function createTagInsertIntents(previewResult: PreviewResult, queryDatabas
     const existingTagsResult = await queryDatabase<{ tag_name: string }>('SELECT DISTINCT tag_name FROM tags WHERE path = ?', [path]);
     const existingTags = existingTagsResult.map(r => r.tag_name.startsWith('#') ? r.tag_name.slice(1) : r.tag_name);
     const allTags = [...new Set([...existingTags, ...newTags])];
+
     intents.push({
       type: 'setProperty',
       path,
@@ -554,25 +603,26 @@ async function createTagInsertIntents(previewResult: PreviewResult, queryDatabas
   return intents;
 }
 
-async function createLinkIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createLinkIntents(app: App, previewResult: PreviewResult, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   // Frontmatter link rows describe YAML property values, not body markup; the
   // markdown rewrite below would edit the wrong part of the file for them.
   const touchesFrontmatterLink = [...previewResult.before, ...previewResult.after]
     .some(row => row && row.frontmatter_key != null);
+
   if (touchesFrontmatterLink) {
     throw new Error('Frontmatter links are read-only through the links table. Update the property via the properties table instead.');
   }
 
   if (previewResult.op === 'insert') {
-    return await createLinkInsertIntents(previewResult, readFileContent, warnings);
+    return await createLinkInsertIntents(app, previewResult, readNoteContent, warnings);
   }
 
   if (previewResult.op === 'update') {
-    return await createLinkUpdateIntents(previewResult, readFileContent, warnings);
+    return await createLinkUpdateIntents(previewResult, readNoteContent, warnings);
   }
 
   if (previewResult.op === 'delete') {
-    return await createLinkDeleteIntents(previewResult, readFileContent, warnings);
+    return await createLinkDeleteIntents(previewResult, readNoteContent, warnings);
   }
 
   return [];
@@ -602,6 +652,7 @@ function linkCandidates(link: LinkRowFields): string[] {
   if (link.original) {
     return [link.original];
   }
+
   return [...new Set([formatWikiLink(link.target, link.text), formatWikiLink(link.target, '')])];
 }
 
@@ -611,6 +662,7 @@ function locateLink(content: string, link: LinkRowFields): Range | null {
   if (link.startOffset != null && link.endOffset != null &&
       link.startOffset >= 0 && link.startOffset < link.endOffset && link.endOffset <= content.length) {
     const slice = content.slice(link.startOffset, link.endOffset);
+
     if (candidates.includes(slice)) {
       return { start: link.startOffset, end: link.endOffset };
     }
@@ -620,8 +672,10 @@ function locateLink(content: string, link: LinkRowFields): Range | null {
     const lineStart = ContentLocationService.getLineStartOffset(content, link.lineNumber - 1);
     const lineEnd = ContentLocationService.getLineEndOffset(content, link.lineNumber - 1);
     const line = content.slice(lineStart, lineEnd);
+
     for (const candidate of candidates) {
       const index = line.indexOf(candidate);
+
       if (index >= 0) {
         return { start: lineStart + index, end: lineStart + index + candidate.length };
       }
@@ -630,6 +684,7 @@ function locateLink(content: string, link: LinkRowFields): Range | null {
 
   for (const candidate of candidates) {
     const first = content.indexOf(candidate);
+
     if (first >= 0 && content.indexOf(candidate, first + candidate.length) < 0) {
       return { start: first, end: first + candidate.length };
     }
@@ -644,6 +699,7 @@ function renderUpdatedLink(originalText: string | null, newTarget: string, newTe
   if (originalText && MARKDOWN_LINK_PATTERN.test(originalText)) {
     return `[${newText}](${newTarget})`;
   }
+
   return formatWikiLink(newTarget, newText);
 }
 
@@ -651,15 +707,17 @@ function describeLink(link: LinkRowFields): string {
   return link.original ?? formatWikiLink(link.target, link.text);
 }
 
-function applyLinkReplacements(content: string, replacements: Array<{ link: LinkRowFields; replacement: string }>,
-  warn: (message: string) => void): string {
+function applyLinkReplacements(content: string, replacements: Array<{ link: LinkRowFields; replacement: string }>, warn: (message: string) => void): string {
   const located: Array<{ range: Range; replacement: string; link: LinkRowFields }> = [];
+
   for (const { link, replacement } of replacements) {
     const range = locateLink(content, link);
+
     if (!range) {
       warn(`could not locate link ${describeLink(link)}${link.lineNumber != null ? ` on line ${link.lineNumber}` : ''}; change skipped`);
       continue;
     }
+
     located.push({ range, replacement, link });
   }
 
@@ -667,11 +725,13 @@ function applyLinkReplacements(content: string, replacements: Array<{ link: Link
 
   let result = content;
   let previousStart = Number.POSITIVE_INFINITY;
+
   for (const { range, replacement, link } of located) {
     if (range.end > previousStart) {
       warn(`link ${describeLink(link)} overlaps another edit; change skipped`);
       continue;
     }
+
     result = result.slice(0, range.start) + replacement + result.slice(range.end);
     previousStart = range.start;
   }
@@ -679,12 +739,13 @@ function applyLinkReplacements(content: string, replacements: Array<{ link: Link
   return result;
 }
 
-async function createLinkUpdateIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createLinkUpdateIntents(previewResult: PreviewResult, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   const linkChangesByPath = new Map<string, Array<{ link: LinkRowFields; replacement: string }>>();
 
   for (let i = 0; i < previewResult.before.length; i++) {
     const before = previewResult.before[i];
     const after = previewResult.after[i];
+
     if (!before || !after) {
       continue;
     }
@@ -693,19 +754,21 @@ async function createLinkUpdateIntents(previewResult: PreviewResult, readFileCon
       const path = asStr(after.path);
       const link = readLinkRowFields(before);
       const changes = linkChangesByPath.get(path) || [];
+
       changes.push({
         link,
         replacement: renderUpdatedLink(link.original, asStr(after.link_target), asStr(after.link_text))
       });
+
       linkChangesByPath.set(path, changes);
     }
   }
 
-  return await createContentPatchIntents(linkChangesByPath, readFileContent,
+  return await createContentPatchIntents(linkChangesByPath, readNoteContent,
     (content, changes, warn) => applyLinkReplacements(content, changes, warn), warnings);
 }
 
-async function createLinkDeleteIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createLinkDeleteIntents(previewResult: PreviewResult, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   const linkDeletesByPath = new Map<string, Array<{ link: LinkRowFields; replacement: string }>>();
 
   for (const row of previewResult.before) {
@@ -715,30 +778,28 @@ async function createLinkDeleteIntents(previewResult: PreviewResult, readFileCon
     linkDeletesByPath.set(path, links);
   }
 
-  return await createContentPatchIntents(linkDeletesByPath, readFileContent,
+  return await createContentPatchIntents(linkDeletesByPath, readNoteContent,
     (content, links, warn) => applyLinkReplacements(content, links, warn), warnings);
 }
 
-async function createLinkInsertIntents(previewResult: PreviewResult, readFileContent: ReadFileContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
+async function createLinkInsertIntents(app: App, previewResult: PreviewResult, readNoteContent: ReadNoteContent, warnings: string[]): Promise<ObsidianEditIntent[]> {
   const linksByPath = new Map<string, Array<{ value: string; lineNumber: number | null; insertPosition: string }>>();
 
   for (const row of previewResult.after) {
     const path = asStr(row.path);
     const links = linksByPath.get(path) || [];
+
     links.push({
-      value: formatWikiLink(asStr(row.link_target), asStr(row.link_text)),
+      value: generateFileLink(app, asStr(row.link_target), path, '', asStr(row.link_text)),
       lineNumber: asNum(row.line_number, null),
       insertPosition: asStr(row.insert_position, 'new_line')
     });
+
     linksByPath.set(path, links);
   }
 
-  return await createContentPatchIntents(linksByPath, readFileContent,
+  return await createContentPatchIntents(linksByPath, readNoteContent,
     (content, links) => insertLineItems(content, links), warnings, true);
-}
-
-function formatWikiLink(target: string, text: string): string {
-  return text && text !== target ? `[[${target}|${text}]]` : `[[${target}]]`;
 }
 
 function insertLineItems(content: string, items: Array<{ value: string; lineNumber: number | null; insertPosition: string }>): string {
@@ -747,6 +808,7 @@ function insertLineItems(content: string, items: Array<{ value: string; lineNumb
   const itemsToAppend = items.filter(item => item.lineNumber === null);
 
   itemsWithPosition.sort((a, b) => (b.lineNumber as number) - (a.lineNumber as number));
+
   for (const item of itemsWithPosition) {
     const lineIdx = (item.lineNumber as number) - 1;
 
@@ -768,12 +830,14 @@ function insertLineItems(content: string, items: Array<{ value: string; lineNumb
       while (lines.length < lineIdx) {
         lines.push('');
       }
+
       lines.push(item.value);
     }
   }
 
   if (itemsToAppend.length > 0) {
     const values = itemsToAppend.map(item => item.value).join(' ');
+
     if (lines.length > 0 && lines[lines.length - 1] !== '') {
       lines.push(values);
     }
@@ -783,6 +847,7 @@ function insertLineItems(content: string, items: Array<{ value: string; lineNumb
   }
 
   const nextContent = lines.join('\n');
+
   return nextContent.endsWith('\n') ? nextContent : nextContent + '\n';
 }
 
@@ -824,6 +889,7 @@ async function buildCellsForTableRowsInsert(previewResult: PreviewResult, queryD
       if (insertAtIndex !== null && cell.row_index >= insertAtIndex) {
         cell.row_index = cell.row_index + 1;
       }
+
       allCells.push(cell);
     }
 
@@ -838,17 +904,20 @@ async function buildCellsForTableCellsOperation(previewResult: PreviewResult, qu
   const affectedTables = new Set<string>();
 
   const rowsForAffectedTables = previewResult.op === 'delete' ? previewResult.before : previewResult.after;
+
   for (const cell of convertRows(rowsForAffectedTables, row => toTableCellRow(row, warnings))) {
     affectedTables.add(createTableKey(cell.path, cell.table_index));
   }
 
   const allCells: TableCellRow[] = [];
+
   for (const tableKey of affectedTables) {
     const { path, tableIndex } = parseTableKey(tableKey);
     const existingCellRows = await queryExistingTableCells(path, tableIndex, queryDatabase, warnings);
 
     if (previewResult.op === 'update') {
       const changedCellMap = new Map<string, TableCellRow>();
+
       for (const cell of changedCells) {
         if (cell.path === path && cell.table_index === tableIndex) {
           changedCellMap.set(createRowColumnKey(cell.row_index, cell.column_name), cell);
@@ -867,6 +936,7 @@ async function buildCellsForTableCellsOperation(previewResult: PreviewResult, qu
 
     if (previewResult.op === 'delete') {
       const deletedCellKeys = new Set<string>();
+
       for (const cell of convertRows(previewResult.before, row => toTableCellRow(row, warnings))) {
         if (cell.path === path && cell.table_index === tableIndex) {
           deletedCellKeys.add(createRowColumnKey(cell.row_index, cell.column_name));
@@ -882,16 +952,19 @@ async function buildCellsForTableCellsOperation(previewResult: PreviewResult, qu
 
 async function queryExistingTableCells(path: string, tableIndex: number, queryDatabase: QueryDatabase, warnings: string[]): Promise<TableCellRow[]> {
   const rows = await queryDatabase<Record<string, unknown>>('SELECT * FROM table_cells WHERE path = ? AND table_index = ? ORDER BY row_index, column_name', [path, tableIndex]);
+
   return convertRows(rows, row => toTableCellRow(row, warnings));
 }
 
 async function queryMaxTableRow(queryDatabase: QueryDatabase, path: string, tableIndex: number): Promise<number> {
   const rows = await queryDatabase<{ max_row: number }>('SELECT COALESCE(MAX(row_index), -1) as max_row FROM table_cells WHERE path = ? AND table_index = ?', [path, tableIndex]);
+
   return rows[0].max_row + 1;
 }
 
 function createTableRewriteIntentsFromCells(cells: TableCellRow[]): ObsidianEditIntent[] {
   const byTable = new Map<string, TableCellRow[]>();
+
   for (const cell of cells) {
     const key = createTableKey(cell.path, cell.table_index);
     const tableCells = byTable.get(key) || [];
@@ -916,13 +989,14 @@ function createTaskIntents(previewResult: PreviewResult, warnings: string[]): Ob
   }
 
   const isNewTasks = previewResult.before.length === 0 ||
-    previewResult.after.every(afterRow =>
-      !previewResult.before.some(beforeRow => beforeRow.id === afterRow.id)
+    previewResult.after.every(afterRow => !previewResult.before.some(beforeRow => beforeRow.id === afterRow.id)
     );
 
   const intents: ObsidianEditIntent[] = [];
+
   for (const row of previewResult.after) {
     const task = toTaskRow(row, warnings);
+
     if (!task) {
       continue;
     }
@@ -945,6 +1019,7 @@ function createTaskIntents(previewResult: PreviewResult, warnings: string[]): Ob
         lineNumber: task.line_number,
         task
       });
+
       continue;
     }
 
@@ -968,8 +1043,10 @@ function createHeadingIntents(previewResult: PreviewResult, warnings: string[]):
   }
 
   const intents: ObsidianEditIntent[] = [];
+
   for (const row of previewResult.after) {
     const heading = toHeadingRow(row, warnings);
+
     if (!heading) {
       continue;
     }
@@ -985,6 +1062,7 @@ function createHeadingIntents(previewResult: PreviewResult, warnings: string[]):
         lineNumber: heading.line_number,
         heading
       });
+
       continue;
     }
 
@@ -1009,8 +1087,10 @@ function createListItemIntents(previewResult: PreviewResult, warnings: string[])
 
   if (previewResult.op === 'insert') {
     const intents: ObsidianEditIntent[] = [];
+
     for (let index = 0; index < previewResult.after.length; index++) {
       const listItem = toListItemRow(previewResult.after[index], warnings);
+
       if (!listItem) {
         continue;
       }
@@ -1018,9 +1098,11 @@ function createListItemIntents(previewResult: PreviewResult, warnings: string[])
       if (listItem.list_index == null) {
         listItem.list_index = 0;
       }
+
       if (listItem.item_index == null) {
         listItem.item_index = index;
       }
+
       if (listItem.line_number == null) {
         listItem.line_number = INSERT_NEW_LINE;
       }
@@ -1032,17 +1114,21 @@ function createListItemIntents(previewResult: PreviewResult, warnings: string[])
         listItem
       });
     }
+
     return intents;
   }
 
   const intents: ObsidianEditIntent[] = [];
+
   for (const row of previewResult.after) {
     const listItem = toListItemRow(row, warnings);
+
     if (!listItem) {
       continue;
     }
 
     const beforeRow = previewResult.before.find(before => before.id === row.id);
+
     if (beforeRow) {
       copyMissingLocationFields(listItem, beforeRow);
     }
@@ -1059,6 +1145,7 @@ function createListItemIntents(previewResult: PreviewResult, warnings: string[])
 
 function toPropertyRow(row: Row): PropertyRow {
   const valueType = asStr(row.value_type, null) ?? asStr(row.type, null);
+
   return {
     path: asStr(row.path),
     key: asStr(row.key),
@@ -1079,27 +1166,34 @@ function createSetPropertyIntent(property: PropertyRow): ObsidianEditIntent {
 
 function convertRows<T>(rows: Row[], convert: (row: Row) => T | null): T[] {
   const converted: T[] = [];
+
   for (const row of rows) {
     const result = convert(row);
+
     if (result !== null) {
       converted.push(result);
     }
   }
+
   return converted;
 }
 
 function readRequiredPath(row: Row, converterName: string, warnings: string[]): string | null {
   const path = asStr(row.path);
+
   if (!path) {
     logger.warn(`ObsidianEditIntentFactory.${converterName}: missing required field "path"`, row);
     warnings.push(`skipped a row with no "path" value (${converterName})`);
+
     return null;
   }
+
   return path;
 }
 
 function toTaskRow(row: Row, warnings: string[]): TaskRow | null {
   const path = readRequiredPath(row, 'toTaskRow', warnings);
+
   if (path === null) {
     return null;
   }
@@ -1127,12 +1221,7 @@ function toTaskRow(row: Row, warnings: string[]): TaskRow | null {
   };
 }
 
-function copyMissingLocationFields(row: {
-  start_offset?: number | null;
-  end_offset?: number | null;
-  anchor_hash?: string | null;
-  block_id?: string | null;
-}, beforeRow: Row): void {
+function copyMissingLocationFields(row: { start_offset?: number | null; end_offset?: number | null; anchor_hash?: string | null; block_id?: string | null; }, beforeRow: Row): void {
   const beforeLocation = readLocationFields(beforeRow);
   row.start_offset ??= beforeLocation.start_offset;
   row.end_offset ??= beforeLocation.end_offset;
@@ -1140,13 +1229,7 @@ function copyMissingLocationFields(row: {
   row.block_id ??= beforeLocation.block_id;
 }
 
-function entityLocation(row: {
-  path: string;
-  block_id?: string | null;
-  start_offset?: number | null;
-  end_offset?: number | null;
-  line_number?: number | null;
-}): ObsidianEntityLocation {
+function entityLocation(row: { path: string; block_id?: string | null; start_offset?: number | null; end_offset?: number | null; line_number?: number | null; }): ObsidianEntityLocation {
   return {
     path: row.path,
     blockId: row.block_id,
@@ -1158,6 +1241,7 @@ function entityLocation(row: {
 
 function toHeadingRow(row: Row, warnings: string[]): HeadingRow | null {
   const path = readRequiredPath(row, 'toHeadingRow', warnings);
+
   if (path === null) {
     return null;
   }
@@ -1172,6 +1256,7 @@ function toHeadingRow(row: Row, warnings: string[]): HeadingRow | null {
 
 function toListItemRow(row: Row, warnings: string[]): ListItemRow | null {
   const path = readRequiredPath(row, 'toListItemRow', warnings);
+
   if (path === null) {
     return null;
   }
@@ -1191,6 +1276,7 @@ function toListItemRow(row: Row, warnings: string[]): ListItemRow | null {
 
 function toTableCellRow(row: Row, warnings: string[]): TableCellRow | null {
   const path = readRequiredPath(row, 'toTableCellRow', warnings);
+
   if (path === null) {
     return null;
   }

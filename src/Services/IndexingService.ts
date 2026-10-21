@@ -1,10 +1,13 @@
-import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, BlockCache, ReferenceCache, normalizePath } from 'obsidian';
+import { PathExclusions } from '../utils/PathExclusions';
+import { mapWithConcurrency } from '../utils/Concurrent';
+import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, BlockCache, ReferenceCache, type Pos, normalizePath, getFrontMatterInfo, parseYaml } from 'obsidian';
 import { VaultDatabase } from '../Database/DatabaseService';
 import { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import { VaultQuerySettings } from '../Settings/Settings';
 import { MarkdownTableUtils } from '../utils/MarkdownTableUtils';
 import { ContentLocationService } from './ContentLocationService';
 import { PerformanceMonitor } from './PerformanceMonitor';
+import type { FilePreparationTiming } from './PerformanceMonitor';
 import { ERROR_MESSAGES } from '../utils/ErrorMessages';
 import { getIndexedFilesFromDatabase } from '../Database/IndexedFiles';
 import { INDEXING_SQL } from '../Database/IndexingQueries';
@@ -22,15 +25,24 @@ interface IndexingEventEmitter {
   emitFileIndexed: (path: string, isUpdate: boolean) => void;
   emitFileRemoved: (path: string) => void;
   emitVaultIndexed: (filesIndexed: number, filesRemoved: number, isForced: boolean) => void;
-  onBeforeVaultIndexed?: () => Promise<void>;
+  onBeforeVaultIndexed?: (force: boolean) => Promise<void>;
 }
 
 interface ProviderDefinitionBlockHandler {
   hasProviderDefinitionDiscovery(): boolean;
   setRefreshDeferred(deferred: boolean): void;
+  refreshStaleDefinitions(): Promise<void>;
   indexProviderDefinitionBlocks(path: string, content: string): Promise<void>;
   removeProviderDefinitionBlocks(path: string): void;
   clearProviderDefinitionBlocks(): void;
+}
+
+export interface RealtimeIndexBatchResult {
+  filesIndexed: number;
+  filesRemoved: number;
+  failedPaths: string[];
+  failedRemovalPaths: string[];
+  unavailablePaths?: string[];
 }
 
 export class IndexingService {
@@ -39,15 +51,17 @@ export class IndexingService {
 
   private indexingProgress: IndexingProgress = { current: 0, total: 0, currentFile: '' };
   private isIndexing = false;
-  private indexingCallbacks: Array<() => void> = [];
+  /** Reindexes and realtime batches can overlap; the status clears only when the last one ends. */
+  private activeIndexing = 0;
+  private refreshDeferrals = 0;
+  private realtimePropertiesRebuildPending = false;
+  private readonly indexingListeners = new Set<() => void>();
 
-  /** Maximum files per batch */
   private readonly BATCH_SIZE_FILES = 200;
   /** Maximum total file size per batch (10MB) - prevents memory issues with large files */
   private readonly BATCH_SIZE_BYTES = 10 * 1024 * 1024;
-  /** Maximum concurrent file reads/preparations within a batch */
   private readonly PREPARE_CONCURRENCY = 24;
-  private excludeRegexps: RegExp[] = [];
+  private exclusions = new PathExclusions();
 
   private eventEmitter: IndexingEventEmitter | null = null;
   private providerDefinitionBlockHandler: ProviderDefinitionBlockHandler | null = null;
@@ -56,11 +70,9 @@ export class IndexingService {
   // from file content anymore - they're only registered when code blocks render.
   // Also used by waitForIndexing() to wait for first indexing on startup.
   private initialIndexingComplete = false;
-  private firstIndexingCallbacks: Array<() => void> = [];
 
   public constructor(private app: App, private database: VaultDatabase | WorkerDatabase, private settings: VaultQuerySettings) {
     this.performanceMonitor = new PerformanceMonitor();
-    this.updateExcludePatterns();
   }
 
   public setEventEmitter(emitter: IndexingEventEmitter): void {
@@ -75,10 +87,6 @@ export class IndexingService {
     this.database = database;
   }
 
-  private updateExcludePatterns(): void {
-    this.excludeRegexps = this.settings.excludePatterns.map(p => new RegExp(p));
-  }
-  
   private needsContentProcessing(): boolean {
     return Boolean(this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) ||
          !this.initialIndexingComplete ||
@@ -88,7 +96,7 @@ export class IndexingService {
          this.settings.enabledFeatures.indexListItems;
   }
 
-  private shouldProcessFileContent(file: TFile): boolean {
+  private shouldProcessNoteContent(file: TFile): boolean {
     if (this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) return true;
 
     if (!this.initialIndexingComplete) return true;
@@ -96,6 +104,8 @@ export class IndexingService {
     if (this.settings.enabledFeatures.indexContent) return true;
 
     const cache = this.app.metadataCache.getFileCache(file);
+
+    if (this.settings.enabledFeatures.indexFrontmatter && !cache) return true;
 
     if (this.settings.enabledFeatures.indexTables && cache?.sections?.length) return true;
 
@@ -123,13 +133,13 @@ export class IndexingService {
     const reindexId = ++IndexingService.reindexSequence;
     // Settings may have changed since construction (e.g. exclude patterns edited
     // in the settings tab, which schedules this reindex).
-    this.updateExcludePatterns();
     this.performanceMonitor.startOperation();
-    this.setIndexingStatus(true);
-    this.providerDefinitionBlockHandler?.setRefreshDeferred(true);
+    this.beginIndexing();
+    const releaseDeferral = this.holdRefreshDeferral();
 
     let filesIndexed = 0;
     let filesRemoved = 0;
+
     logger.info('Vault reindex started', {
       reindexId,
       force,
@@ -161,18 +171,20 @@ export class IndexingService {
             await this.rebuildDerivedDatabaseStructures(filesRemoved > 0 ? 'deleted-files' : 'bootstrap-note-properties');
           }
 
-          this.setIndexingProgress(0, 0, 'Complete');
-          this.performanceMonitor.finishOperation(0);
-          await this.finalizeIndexing();
-          this.eventEmitter?.emitVaultIndexed(0, filesRemoved, force);
+          await this.finalizeIndexing(force, releaseDeferral);
+          this.setIndexingProgress(filesIndexed, filesIndexed, 'Complete');
+          this.performanceMonitor.finishOperation(filesIndexed);
+          this.eventEmitter?.emitVaultIndexed(filesIndexed, filesRemoved, force);
+
           logger.info('Vault reindex completed', {
             reindexId,
             force,
-            filesIndexed: 0,
+            filesIndexed,
             filesRemoved,
             initialIndexingComplete: this.initialIndexingComplete,
-            noChanges: true,
+            noChanges: filesIndexed === 0 && filesRemoved === 0,
           });
+
           return;
         }
       }
@@ -182,12 +194,11 @@ export class IndexingService {
 
       await this.rebuildDerivedDatabaseStructures(force ? 'force-reindex' : 'indexed-files');
 
-      this.setIndexingProgress(toIndex.length, toIndex.length, 'Complete');
-
-      this.performanceMonitor.finishOperation(toIndex.length);
-
-      await this.finalizeIndexing();
+      await this.finalizeIndexing(force, releaseDeferral);
+      this.setIndexingProgress(filesIndexed, filesIndexed, 'Complete');
+      this.performanceMonitor.finishOperation(filesIndexed);
       this.eventEmitter?.emitVaultIndexed(filesIndexed, filesRemoved, force);
+
       logger.info('Vault reindex completed', {
         reindexId,
         force,
@@ -196,33 +207,45 @@ export class IndexingService {
         initialIndexingComplete: this.initialIndexingComplete,
       });
     } finally {
-      this.providerDefinitionBlockHandler?.setRefreshDeferred(false);
-      this.setIndexingStatus(false);
+      releaseDeferral();
+      this.endIndexing();
     }
   }
 
-  private async finalizeIndexing(): Promise<void> {
+  private async finalizeIndexing(force: boolean, releaseDeferral: () => void): Promise<void> {
     if (this.eventEmitter?.onBeforeVaultIndexed) {
-      await this.eventEmitter.onBeforeVaultIndexed();
+      await this.eventEmitter.onBeforeVaultIndexed(force);
     }
 
     // Provider fetches discovered during the reindex may now run against the
     // final main-thread database without extending individual file timings.
-    this.providerDefinitionBlockHandler?.setRefreshDeferred(false);
+    releaseDeferral();
 
     // After this point realtime indexing skips extracting views/functions/
     // triggers from content - they are registered when code blocks render.
     this.initialIndexingComplete = true;
 
-    const firstCallbacks = this.firstIndexingCallbacks.splice(0);
-    firstCallbacks.forEach(callback => callback());
+    this.notifyIndexingChange();
   }
 
   private async rebuildDerivedDatabaseStructures(reason: string): Promise<void> {
     await this.database.createIndexes(this.settings.enabledFeatures);
+    await this.yieldToUI();
     await this.database.schema.rebuildPropertiesView();
+    await this.yieldToUI();
     await this.database.schema.rebuildTableViews(this.settings.enableDynamicTableViews);
+    await this.yieldToUI();
+
+    try {
+      await this.database.run('ANALYZE');
+    }
+    catch (error) {
+      logger.warn('ANALYZE failed after vault indexing', error);
+    }
+
+    await this.yieldToUI();
     await this.database.saveToDisk();
+
     logger.debug('Derived database structures rebuilt', {
       reason,
       dynamicTableViews: this.settings.enableDynamicTableViews,
@@ -235,6 +258,7 @@ export class IndexingService {
     }
 
     const columns = await this.database.schema.getViewColumns('note_properties');
+
     return columns.includes('key') && columns.includes('value') && columns.includes('value_type');
   }
 
@@ -250,7 +274,72 @@ export class IndexingService {
     }
 
     const rows = await this.database.all(INDEXING_SQL.SELECT_NOTE_PROPERTY_KEYS, [path]);
+
     return new Set(rows.map(row => row.key as string));
+  }
+
+  private async getPropertyKeyCounts(paths: readonly string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    if (!this.settings.enabledFeatures.indexFrontmatter) return counts;
+
+    for (let offset = 0; offset < paths.length; offset += 500) {
+      const chunk = paths.slice(offset, offset + 500);
+      const rows = await this.database.all(`SELECT key, count(DISTINCT path) AS occurrences FROM properties WHERE path IN (${chunk.map(() => '?').join(',')}) GROUP BY key`, chunk);
+
+      for (const row of rows) {
+        counts.set(String(row.key), (counts.get(String(row.key)) ?? 0) + Number(row.occurrences));
+      }
+    }
+
+    return counts;
+  }
+
+  private async countTableRows(paths: readonly string[]): Promise<number> {
+    if (!this.settings.enabledFeatures.indexTables || paths.length === 0) return 0;
+    let total = 0;
+
+    for (let offset = 0; offset < paths.length; offset += 500) {
+      const chunk = paths.slice(offset, offset + 500);
+      const rows = await this.database.all(`SELECT count(*) AS occurrences FROM table_cells WHERE path IN (${chunk.map(() => '?').join(',')})`, chunk);
+      total += Number(rows[0]?.occurrences ?? 0);
+    }
+
+    return total;
+  }
+
+  private async globalPropertyKeysChanged(before: ReadonlyMap<string, number>, after: ReadonlyMap<string, number>): Promise<boolean> {
+    const changed = [...before.keys()].filter(key => !after.has(key))
+      .concat([...after.keys()].filter(key => !before.has(key)));
+
+    for (let offset = 0; offset < changed.length; offset += 500) {
+      const keys = changed.slice(offset, offset + 500);
+      const rows = await this.database.all(`SELECT key, count(DISTINCT path) AS occurrences FROM properties WHERE key IN (${keys.map(() => '?').join(',')}) GROUP BY key`, keys);
+      const global = new Map(rows.map(row => [String(row.key), Number(row.occurrences)]));
+
+      for (const key of keys) {
+        if (!after.has(key) ? !global.has(key) : global.get(key) === after.get(key)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async getIndexedModifiedByPath(paths: readonly string[]): Promise<Map<string, number>> {
+    const uniquePaths = Array.from(new Set(paths));
+    const modifiedByPath = new Map<string, number>();
+    const chunkSize = 500;
+
+    for (let index = 0; index < uniquePaths.length; index += chunkSize) {
+      const chunk = uniquePaths.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await this.database.all(`SELECT path, modified FROM notes WHERE path IN (${placeholders})`, chunk);
+
+      for (const row of rows) {
+        modifiedByPath.set(row.path as string, row.modified as number);
+      }
+    }
+
+    return modifiedByPath;
   }
 
   private propertyKeySetsEqual(before: Set<string>, after: Set<string>): boolean {
@@ -273,6 +362,7 @@ export class IndexingService {
     }
 
     const after = await this.getNotePropertyKeySet(path);
+
     if (!this.propertyKeySetsEqual(before, after)) {
       // The note's keys changed, so the global key set may have changed.
       // Rebuilding unconditionally is fine here: this branch only runs when a
@@ -283,33 +373,167 @@ export class IndexingService {
   }
 
   public async reindexNote(notePath: string): Promise<void> {
-    const file = this.validateMarkdownFile(notePath);
+    await this.indexSingleNote(this.validateMarkdownFile(notePath), true);
+  }
 
-    const content = this.needsContentProcessing() ? await this.app.vault.cachedRead(file) : '';
+  public async indexNote(file: TFile, content?: string): Promise<void> {
+    const existingResults = await this.database.all(INDEXING_SQL.CHECK_NOTE_EXISTS, [file.path]);
+    await this.indexSingleNote(file, existingResults.length > 0, content);
+  }
+
+  private async indexSingleNote(file: TFile, isUpdate: boolean, content?: string): Promise<void> {
     const indexData = await this.prepareNoteForIndexing(file, content);
     const propertyKeysBefore = await this.getNotePropertyKeySet(file.path);
 
     await this.database.indexNote(indexData);
     await this.rebuildPropertiesViewIfNoteKeysChanged(file.path, propertyKeysBefore);
 
-    this.eventEmitter?.emitFileIndexed(file.path, true);
+    this.eventEmitter?.emitFileIndexed(file.path, isUpdate);
   }
 
-  public async indexNote(file: TFile, content?: string): Promise<void> {
-    const existingResults = await this.database.all(INDEXING_SQL.CHECK_NOTE_EXISTS, [file.path]);
-    const isUpdate = existingResults.length > 0;
+  public async processRealtimeBatch(filePathsToRemove: readonly string[], candidateFiles: readonly TFile[], force = false): Promise<RealtimeIndexBatchResult> {
+    const startedAt = performance.now();
+    this.beginIndexing();
+    const releaseDeferral = this.holdRefreshDeferral();
 
-    // ?? not ||: an explicitly supplied empty string must not trigger a re-read.
-    const actualContent = content ??
-      (this.shouldProcessFileContent(file) ? await this.app.vault.cachedRead(file) : '');
+    try {
+      const pathsToRemove = Array.from(new Set(filePathsToRemove));
+      const removalPaths = new Set(pathsToRemove);
+      const indexedModifiedByPath = await this.getIndexedModifiedByPath(candidateFiles.map(file => file.path));
+      const seenFiles = new Set<string>();
+      const filesToIndex: TFile[] = [];
+      const updateState = new Map<string, boolean>();
 
-    const indexData = await this.prepareNoteForIndexing(file, actualContent);
-    const propertyKeysBefore = await this.getNotePropertyKeySet(file.path);
+      for (const file of candidateFiles) {
+        if (seenFiles.has(file.path) || !this.shouldIndexFile(file)) {
+          continue;
+        }
 
-    await this.database.indexNote(indexData);
-    await this.rebuildPropertiesViewIfNoteKeysChanged(file.path, propertyKeysBefore);
+        seenFiles.add(file.path);
 
-    this.eventEmitter?.emitFileIndexed(file.path, isUpdate);
+        const indexedModified = indexedModifiedByPath.get(file.path);
+
+        if (!force && !removalPaths.has(file.path) && indexedModified !== undefined && indexedModified === file.stat.mtime) {
+          continue;
+        }
+
+        filesToIndex.push(file);
+        updateState.set(file.path, indexedModified !== undefined && !removalPaths.has(file.path));
+      }
+
+      if (pathsToRemove.length === 0 && filesToIndex.length === 0 && !this.realtimePropertiesRebuildPending) {
+        return { filesIndexed: 0, filesRemoved: 0, failedPaths: [], failedRemovalPaths: [] };
+      }
+
+      const affectedPaths = [...new Set([...pathsToRemove, ...filesToIndex.map(file => file.path)])];
+      const propertyKeysBefore = await this.getPropertyKeyCounts(affectedPaths);
+      const tableRowsBefore = await this.countTableRows(affectedPaths);
+
+      const removedPaths: string[] = [];
+      const failedRemovalPaths: string[] = [];
+
+      for (let index = 0; index < pathsToRemove.length; index += 500) {
+        const chunk = pathsToRemove.slice(index, index + 500);
+
+        try {
+          await this.removeDeletedFiles(chunk, false);
+          removedPaths.push(...chunk);
+        }
+        catch (error) {
+          logger.error('Realtime note removal failed', { paths: chunk, error });
+          failedRemovalPaths.push(...chunk);
+        }
+      }
+
+      const failedRemovals = new Set(failedRemovalPaths);
+      const { indexedFiles, failedPaths } = await this.processRealtimeFiles(filesToIndex.filter(file => !failedRemovals.has(file.path)));
+      failedPaths.push(...filesToIndex.filter(file => failedRemovals.has(file.path)).map(file => file.path));
+
+      const propertyKeysAfter = await this.getPropertyKeyCounts(affectedPaths);
+      const propertyKeysChanged = await this.globalPropertyKeysChanged(propertyKeysBefore, propertyKeysAfter);
+      this.realtimePropertiesRebuildPending ||= propertyKeysChanged;
+
+      if (this.realtimePropertiesRebuildPending) {
+        await this.database.schema.rebuildPropertiesView();
+        this.realtimePropertiesRebuildPending = false;
+      }
+
+      const tableRowsTouched = tableRowsBefore > 0 || await this.countTableRows(affectedPaths) > 0;
+
+      const tableViewsRebuilt = (removedPaths.length > 0 || indexedFiles.length > 0)
+        && this.settings.enableDynamicTableViews && tableRowsTouched
+        && await this.database.schema.rebuildTableViews(true);
+
+      for (const path of removedPaths) {
+        this.eventEmitter?.emitFileRemoved(path);
+      }
+
+      for (const file of indexedFiles) {
+        this.eventEmitter?.emitFileIndexed(file.path, updateState.get(file.path) ?? false);
+      }
+
+      logger.debug('Realtime index batch complete', {
+        candidates: candidateFiles.length,
+        filesIndexed: indexedFiles.length,
+        filesRemoved: removedPaths.length,
+        propertyKeysChanged,
+        tableViewsRebuilt,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      });
+
+      return {
+        filesIndexed: indexedFiles.length,
+        filesRemoved: removedPaths.length,
+        failedPaths,
+        failedRemovalPaths,
+      };
+    }
+    finally {
+      releaseDeferral();
+
+      try {
+        await this.providerDefinitionBlockHandler?.refreshStaleDefinitions();
+      }
+      catch (error) {
+        logger.error('Provider refresh failed after realtime indexing', error);
+      }
+      finally {
+        this.endIndexing();
+      }
+    }
+  }
+
+  private async processRealtimeFiles(files: TFile[]): Promise<{ indexedFiles: TFile[]; failedPaths: string[] }> {
+    const indexedFiles: TFile[] = [];
+    const failedPaths: string[] = [];
+
+    for (const batch of this.createMemoryAwareBatches(files)) {
+      const prepared = await mapWithConcurrency(batch, this.PREPARE_CONCURRENCY, async file => {
+        try {
+          return { file, data: await this.prepareNoteForIndexing(file) };
+        }
+        catch (error) {
+          logger.error('Could not prepare note for realtime indexing', { path: file.path, error });
+          failedPaths.push(file.path);
+
+          return null;
+        }
+      });
+
+      const ready = prepared.filter(entry => entry !== null);
+      if (ready.length === 0) continue;
+
+      try {
+        await this.database.indexNotesBatch(ready.map(entry => entry.data), false, true, true);
+        indexedFiles.push(...ready.map(entry => entry.file));
+      }
+      catch (error) {
+        logger.error('Could not commit realtime index batch', error);
+        failedPaths.push(...ready.map(entry => entry.file.path));
+      }
+    }
+
+    return { indexedFiles, failedPaths };
   }
 
   public getIndexingStatus(): IndexingStatus {
@@ -319,40 +543,36 @@ export class IndexingService {
     };
   }
 
+  public isIndexReady(): boolean {
+    return !this.isIndexing && (this.initialIndexingComplete || this.settings.indexingInterval === 'manual');
+  }
+
+  public onIndexingChange(callback: () => void): () => void {
+    this.indexingListeners.add(callback);
+
+    return () => { this.indexingListeners.delete(callback); };
+  }
+
+  private notifyIndexingChange(): void {
+    for (const callback of this.indexingListeners) callback();
+  }
+
   public waitForIndexing(timeoutMs?: number): Promise<void> {
-    if (this.initialIndexingComplete && !this.isIndexing) {
-      return Promise.resolve();
-    }
+    if (this.isIndexReady()) return Promise.resolve();
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       let timeoutId: number | undefined;
-
-      const callback = () => {
-        if (timeoutId !== undefined) {
-          window.clearTimeout(timeoutId);
-        }
+      const unsubscribe = this.onIndexingChange(() => {
+        if (!this.isIndexReady()) return;
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        unsubscribe();
         resolve();
-      };
-
-      if (this.isIndexing) {
-        this.indexingCallbacks.push(callback);
-      }
-      else if (!this.initialIndexingComplete) {
-        this.firstIndexingCallbacks.push(callback);
-      }
+      });
 
       if (timeoutMs !== undefined) {
         timeoutId = window.setTimeout(() => {
-          let index = this.indexingCallbacks.indexOf(callback);
-          if (index !== -1) {
-            this.indexingCallbacks.splice(index, 1);
-          }
-          index = this.firstIndexingCallbacks.indexOf(callback);
-          if (index !== -1) {
-            this.firstIndexingCallbacks.splice(index, 1);
-          }
-          logger.warn('Timed out waiting for indexing to complete');
-          resolve();
+          unsubscribe();
+          reject(new Error('Timed out waiting for indexing to complete'));
         }, timeoutMs);
       }
     });
@@ -363,19 +583,39 @@ export class IndexingService {
   }
 
   public setIndexingStatus(isIndexing: boolean): void {
+    this.activeIndexing = isIndexing ? Math.max(1, this.activeIndexing) : 0;
     this.isIndexing = isIndexing;
 
-    if (!isIndexing) {
-      const callbacks = this.indexingCallbacks.splice(0);
-      callbacks.forEach(callback => callback());
-    }
+    this.notifyIndexingChange();
+  }
+
+  private beginIndexing(): void {
+    this.activeIndexing++;
+    this.isIndexing = true;
+    this.notifyIndexingChange();
+  }
+
+  private endIndexing(): void {
+    this.activeIndexing = Math.max(0, this.activeIndexing - 1);
+    if (this.activeIndexing === 0) this.setIndexingStatus(false);
+  }
+
+  private holdRefreshDeferral(): () => void {
+    if (this.refreshDeferrals++ === 0) this.providerDefinitionBlockHandler?.setRefreshDeferred(true);
+    let held = true;
+
+    return () => {
+      if (!held) return;
+      held = false;
+      if (--this.refreshDeferrals === 0) this.providerDefinitionBlockHandler?.setRefreshDeferred(false);
+    };
   }
 
   private setIndexingProgress(current: number, total: number, currentFile: string): void {
     this.indexingProgress = { current, total, currentFile };
   }
 
-  public async removeNote(notePath: string): Promise<void> {
+  public async deindex(notePath: string): Promise<void> {
     this.providerDefinitionBlockHandler?.removeProviderDefinitionBlocks(notePath);
     const propertyKeysBefore = await this.getNotePropertyKeySet(notePath);
 
@@ -387,7 +627,30 @@ export class IndexingService {
 
   public async clearAllNotes(): Promise<void> {
     this.providerDefinitionBlockHandler?.clearProviderDefinitionBlocks();
-    await this.database.run(INDEXING_SQL.DELETE_ALL_NOTES);
+
+    if (!(this.database instanceof VaultDatabase)) {
+      await this.database.run('DELETE FROM notes');
+
+      return;
+    }
+
+    const paths = (await this.database.all('SELECT path FROM notes')).map(row => String(row.path));
+    let lastYield = performance.now();
+
+    for (let offset = 0; offset < paths.length; offset += this.BATCH_SIZE_FILES) {
+      const batch = paths.slice(offset, offset + this.BATCH_SIZE_FILES);
+      const placeholders = batch.map(() => '?').join(',');
+      await this.database.run(`${INDEXING_SQL.DELETE_NOTES_BY_PATH_IN}(${placeholders})`, batch);
+
+      if (performance.now() - lastYield >= 8 || offset + batch.length === paths.length) {
+        await this.yieldToUI();
+        lastYield = performance.now();
+      }
+    }
+  }
+
+  private async yieldToUI(): Promise<void> {
+    if (this.database instanceof VaultDatabase) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
   }
 
   public shouldIndexFile(file: TFile): boolean {
@@ -395,19 +658,16 @@ export class IndexingService {
       return false;
     }
 
-    for (const regex of this.excludeRegexps) {
-      if (regex.test(file.path)) {
-        return false;
-      }
-    }
-    return true;
+    return !this.exclusions.matches(file.path, this.settings.excludePatterns);
   }
 
   private validateMarkdownFile(filePath: string): TFile {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(filePath));
+
     if (!(file instanceof TFile) || file.extension !== 'md') {
       throw new Error(ERROR_MESSAGES.FILE_NOT_MARKDOWN(filePath));
     }
+
     return file;
   }
 
@@ -416,6 +676,7 @@ export class IndexingService {
     const indexedFiles = await getIndexedFilesFromDatabase(this.database);
 
     const indexedFileMap = new Map<string, number>();
+
     for (const indexedFile of indexedFiles) {
       indexedFileMap.set(indexedFile.path, indexedFile.modified);
     }
@@ -428,6 +689,7 @@ export class IndexingService {
 
       if (this.shouldIndexFile(file)) {
         const indexedModified = indexedFileMap.get(file.path);
+
         if (indexedModified === undefined || file.stat.mtime !== indexedModified) {
           filesToIndex.push(file);
         }
@@ -435,6 +697,7 @@ export class IndexingService {
     }
 
     const filesToRemove: string[] = [];
+
     for (const indexedFile of indexedFiles) {
       if (!currentFilePaths.has(indexedFile.path)) {
         filesToRemove.push(indexedFile.path);
@@ -444,11 +707,12 @@ export class IndexingService {
     return { toIndex: filesToIndex, toRemove: filesToRemove };
   }
 
-  private async removeDeletedFiles(filePaths: string[]): Promise<void> {
+  private async removeDeletedFiles(filePaths: string[], emitEvents: boolean = true): Promise<void> {
     if (filePaths.length === 0) return;
 
     // Batch delete in chunks to avoid SQLite parameter limits (max ~999)
     const CHUNK_SIZE = 500;
+
     for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
@@ -457,7 +721,10 @@ export class IndexingService {
 
     for (const pathToRemove of filePaths) {
       this.providerDefinitionBlockHandler?.removeProviderDefinitionBlocks(pathToRemove);
-      this.eventEmitter?.emitFileRemoved(pathToRemove);
+
+      if (emitEvents) {
+        this.eventEmitter?.emitFileRemoved(pathToRemove);
+      }
     }
   }
 
@@ -481,7 +748,7 @@ export class IndexingService {
       }
 
       if (batchIndex + 1 < batches.length) {
-        await new Promise(resolve => window.setTimeout(resolve, 0));
+        await this.yieldToUI();
       }
     }
   }
@@ -539,14 +806,16 @@ export class IndexingService {
       return await this.processBatchIndividually(batch, currentIndexed, totalToIndex);
     }
 
+    const fileTimings: FilePreparationTiming[] = [];
     const prepareStartedAt = performance.now();
-    const batchData = await this.prepareBatchData(batch, currentIndexed, totalToIndex);
+    const batchData = await this.prepareBatchData(batch, currentIndexed, totalToIndex, fileTimings);
     const prepareMs = performance.now() - prepareStartedAt;
 
     const databaseStartedAt = performance.now();
     await this.database.indexNotesBatch(batchData, isInitialIndexing, true);
     const databaseMs = performance.now() - databaseStartedAt;
     const batchBytes = batch.reduce((total, file) => total + file.stat.size, 0);
+
     const featureRows = batchData.reduce((total, data) => total
       + (data.frontmatterData?.length ?? 0)
       + (data.tables?.length ?? 0)
@@ -563,12 +832,31 @@ export class IndexingService {
       + (data.userFunctions?.length ?? 0)
       + (data.userTriggers?.length ?? 0), 0);
 
+    const fileTimeTotalsMs = { readWait: 0, providerWait: 0, frontmatter: 0, features: 0 };
+
+    for (const timing of fileTimings) {
+      fileTimeTotalsMs.readWait += timing.readWaitMs;
+      fileTimeTotalsMs.providerWait += timing.providerWaitMs;
+      fileTimeTotalsMs.frontmatter += timing.frontmatterMs;
+      fileTimeTotalsMs.features += timing.featuresMs;
+    }
+
+    const slowFiles = fileTimings.filter(timing => timing.totalMs > PerformanceMonitor.SLOW_THRESHOLD_MS)
+      .sort((a, b) => b.totalMs - a.totalMs).slice(0, 3);
+
     logger.debug('Index batch phases', {
+      startIndex: currentIndexed,
       files: batch.length,
       bytes: batchBytes,
       featureRows,
       prepareMs: Math.round(prepareMs),
       databaseMs: Math.round(databaseMs),
+      fileTimeTotalsMs: Object.fromEntries(Object.entries(fileTimeTotalsMs).map(([key, value]) => [key, Math.round(value)])),
+      slowFiles: slowFiles.map(timing => ({ ...timing,
+        totalMs: Math.round(timing.totalMs), readWaitMs: Math.round(timing.readWaitMs),
+        providerWaitMs: Math.round(timing.providerWaitMs), frontmatterMs: Math.round(timing.frontmatterMs),
+        featuresMs: Math.round(timing.featuresMs),
+      })),
     });
 
     return currentIndexed + batch.length;
@@ -576,6 +864,7 @@ export class IndexingService {
 
   private batchHasDuplicates(batch: TFile[]): boolean {
     const batchPaths = new Set(batch.map(f => f.path));
+
     return batchPaths.size !== batch.length;
   }
 
@@ -585,8 +874,7 @@ export class IndexingService {
     let indexed = currentIndexed;
 
     for (const file of batch) {
-      const content = this.shouldProcessFileContent(file) ? await this.app.vault.cachedRead(file) : '';
-      const indexData = await this.prepareNoteForIndexing(file, content);
+      const indexData = await this.prepareNoteForIndexing(file);
       await this.database.indexNote(indexData);
 
       indexed++;
@@ -596,15 +884,11 @@ export class IndexingService {
     return indexed;
   }
 
-  private async prepareBatchData(batch: TFile[], currentIndexed: number, totalToIndex: number): Promise<IndexNoteData[]> {
+  private async prepareBatchData(batch: TFile[], currentIndexed: number, totalToIndex: number, timings: FilePreparationTiming[]): Promise<IndexNoteData[]> {
     let completed = 0;
 
-    return await this.mapWithConcurrency(batch, this.PREPARE_CONCURRENCY, async (file) => {
-      const content = this.shouldProcessFileContent(file)
-        ? await this.app.vault.cachedRead(file)
-        : '';
-
-      const indexData = await this.prepareNoteForIndexing(file, content);
+    return await mapWithConcurrency(batch, this.PREPARE_CONCURRENCY, async (file) => {
+      const indexData = await this.prepareNoteForIndexing(file, undefined, timings);
 
       completed++;
       this.setIndexingProgress(currentIndexed + completed, totalToIndex, file.path);
@@ -613,50 +897,59 @@ export class IndexingService {
     });
   }
 
-  private async mapWithConcurrency<T, R>(
-    items: T[],
-    concurrency: number,
-    mapper: (item: T, index: number) => Promise<R>
-  ): Promise<R[]> {
-    const results: R[] = new Array<R>(items.length);
-    const executing = new Set<Promise<void>>();
-    const concurrencyLimit = Math.min(Math.max(1, concurrency), items.length);
+  private async prepareNoteForIndexing(file: TFile, content?: string, timings?: FilePreparationTiming[]): Promise<IndexNoteData> {
+    const startTime = performance.now();
+    let readWaitMs = 0;
 
-    for (const [index, item] of items.entries()) {
-      const task = (async () => {
-        results[index] = await mapper(item, index);
-      })();
+    const contentAvailable = content !== undefined || this.shouldProcessNoteContent(file);
 
-      executing.add(task);
-      task.then(
-        () => executing.delete(task),
-        () => executing.delete(task)
-      );
-
-      if (executing.size >= concurrencyLimit) {
-        await Promise.race(executing);
-      }
+    if (content === undefined) {
+      if (contentAvailable) {
+        const readStartedAt = performance.now();
+        content = await this.app.vault.cachedRead(file);
+        readWaitMs = performance.now() - readStartedAt;
+      } else content = '';
     }
 
-    await Promise.all(executing);
-
-    return results;
-  }
-
-  private async prepareNoteForIndexing(file: TFile, content: string): Promise<IndexNoteData> {
-    const startTime = performance.now();
     const cache = this.app.metadataCache.getFileCache(file);
 
+    let providerWaitMs = 0;
+
     if (this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) {
+      const providerStartedAt = performance.now();
       await this.providerDefinitionBlockHandler.indexProviderDefinitionBlocks(file.path, content);
+      providerWaitMs = performance.now() - providerStartedAt;
     }
 
-    const contentWithoutFrontmatter = this.extractContentWithoutFrontmatter(content, cache);
+    const frontmatterStartedAt = performance.now();
+    const info = getFrontMatterInfo(content);
+    const contentWithoutFrontmatter = this.extractContentWithoutFrontmatter(content);
     const note = this.createNoteRecord(file, contentWithoutFrontmatter);
-    const frontmatterData = this.processFrontmatter(cache);
-    const features = this.processFeatures(file, content, contentWithoutFrontmatter, cache);
+    let frontmatter: unknown = cache?.frontmatter;
 
-    this.performanceMonitor.trackFile(file, performance.now() - startTime, this.needsContentProcessing());
+    if (contentAvailable) {
+      try {
+        frontmatter = info.exists ? parseYaml(info.frontmatter) : undefined;
+      }
+      catch {
+        frontmatter = undefined;
+      } // Match Obsidian's absent properties for invalid YAML.
+    }
+
+    const frontmatterData = this.processFrontmatter(frontmatter);
+    const featuresStartedAt = performance.now();
+    const features = this.processFeatures(file, content, contentWithoutFrontmatter, cache, contentAvailable);
+
+    const finishedAt = performance.now();
+
+    const timing: FilePreparationTiming = {
+      path: file.path, bytes: file.stat.size, totalMs: finishedAt - startTime,
+      readWaitMs, providerWaitMs, frontmatterMs: featuresStartedAt - frontmatterStartedAt,
+      featuresMs: finishedAt - featuresStartedAt,
+    };
+
+    timings?.push(timing);
+    this.performanceMonitor.trackFile(timing);
 
     return {
       note,
@@ -665,16 +958,14 @@ export class IndexingService {
     };
   }
 
-  private extractContentWithoutFrontmatter(content: string, cache: CachedMetadata | null): string {
+  private extractContentWithoutFrontmatter(content: string): string {
     if (!this.needsContentProcessing()) {
       return '';
     }
 
-    if (cache?.frontmatterPosition) {
-      return content.substring(cache.frontmatterPosition.end.offset).trim();
-    }
+    const info = getFrontMatterInfo(content);
 
-    return content;
+    return info.exists ? content.slice(info.contentStart).trim() : content;
   }
 
   private createNoteRecord(file: TFile, contentWithoutFrontmatter: string): NoteRecord {
@@ -696,45 +987,77 @@ export class IndexingService {
       path: file.path,
       title: file.basename,
       content: this.settings.enabledFeatures.indexContent ? contentWithoutFrontmatter : '',
+      content_status: this.settings.enabledFeatures.indexContent ? 'ready' : 'not_indexed',
       created,
       modified,
       size: file.stat.size
     };
   }
 
-  private processFrontmatter(cache: CachedMetadata | null): IndexNoteData['frontmatterData'] {
-    if (!this.settings.enabledFeatures.indexFrontmatter || !cache?.frontmatter) {
+  private processFrontmatter(frontmatter: unknown): IndexNoteData['frontmatterData'] {
+    if (!this.settings.enabledFeatures.indexFrontmatter || !frontmatter || typeof frontmatter !== 'object') {
       return [];
     }
 
-    return this.processFrontmatterProperties(cache.frontmatter);
+    const prototype: unknown = Object.getPrototypeOf(frontmatter);
+    if (prototype !== Object.prototype && prototype !== null) return [];
+
+    return this.processFrontmatterProperties(frontmatter as Record<string, unknown>);
   }
 
-  private processFeatures(file: TFile, content: string, contentWithoutFrontmatter: string, cache: CachedMetadata | null): Omit<IndexNoteData, 'note' | 'frontmatterData'> {
-    const frontmatterOffset = cache?.frontmatterPosition?.end.offset ?? 0;
+  private cachePositionsMatchContent(cache: CachedMetadata, lines: string[], lineStartOffsets: number[]): boolean {
+    const matches = ({ line, col, offset }: Pos['start']): boolean => lines[line] !== undefined && col >= 0 && col <= lines[line].length && lineStartOffsets[line] + col === offset;
+
+    const positionMatches = ({ start, end }: Pos): boolean => start.offset <= end.offset && matches(start) && matches(end);
+
+    for (const entries of [cache.sections, cache.listItems, cache.headings, cache.links, cache.embeds, cache.tags]) {
+      if (entries?.some(entry => !positionMatches(entry.position))) return false;
+    }
+
+    if (cache.blocks && Object.values(cache.blocks).some(block => !positionMatches(block.position))) return false;
+
+    return !cache.frontmatterPosition || positionMatches(cache.frontmatterPosition);
+  }
+
+  private processFeatures(file: TFile, content: string, contentWithoutFrontmatter: string, cache: CachedMetadata | null, contentAvailable = true): Omit<IndexNoteData, 'note' | 'frontmatterData'> {
+    const frontmatterOffset = getFrontMatterInfo(content).contentStart;
     // Count leading whitespace in place; substring().trimStart() here would
     // allocate two copies of the note body just to measure it.
     let trimmedOffset = 0;
+
     if (frontmatterOffset > 0) {
       WHITESPACE_RUN.lastIndex = frontmatterOffset;
       trimmedOffset = WHITESPACE_RUN.exec(content)?.[0].length ?? 0;
     }
+
     const contentOffset = frontmatterOffset + trimmedOffset;
 
     const fullLines = content ? content.split('\n') : [];
     const lineStartOffsets = this.buildLineStartOffsets(fullLines);
 
+    // A trigger can write frontmatter and request a reindex before Obsidian has
+    // updated its metadata. Never use those old positions against the new text.
+    // The metadata-changed event will index these features once the cache catches up.
+    if (cache && contentAvailable && !this.cachePositionsMatchContent(cache, fullLines, lineStartOffsets)) {
+      logger.debug('Metadata positions do not match content; retaining indexed features until metadata refresh', { path: file.path });
+      cache = null;
+    }
+
     let contentLines: string[];
+
     if (contentOffset > 0 && fullLines.length > 0) {
       let charCount = 0;
       let firstContentLine = 0;
+
       for (let i = 0; i < fullLines.length; i++) {
         charCount += fullLines[i].length + 1;
+
         if (charCount >= contentOffset) {
           firstContentLine = i + 1;
           break;
         }
       }
+
       contentLines = fullLines.slice(firstContentLine);
     } else {
       contentLines = fullLines;
@@ -772,7 +1095,7 @@ export class IndexingService {
       userTriggers = triggers.length > 0 ? triggers : undefined;
     }
 
-    return {
+    const features: Omit<IndexNoteData, 'note' | 'frontmatterData'> = {
       tables,
       tableCells,
       tasks,
@@ -787,6 +1110,14 @@ export class IndexingService {
       userFunctions,
       userTriggers
     };
+
+    if (!cache) {
+      for (const key of ['tasks', 'headings', 'links', 'unresolvedLinks', 'embeds', 'tags', 'listItems', 'blocks'] as const) {
+        features[key] = undefined;
+      }
+    }
+
+    return features;
   }
 
   private processTablesFeature(contentWithoutFrontmatter: string, contentLines: string[], contentOffset: number, lineOffset: number, cache: CachedMetadata | null, noteTitle: string): {
@@ -798,6 +1129,7 @@ export class IndexingService {
     }
 
     const hasSections = cache?.sections && cache.sections.length > 0;
+
     if (!hasSections) {
       return { tables: undefined, tableCells: undefined };
     }
@@ -814,6 +1146,7 @@ export class IndexingService {
     }
 
     const taskItems = cache?.listItems?.filter(item => item.task !== undefined);
+
     if (!taskItems || taskItems.length === 0) {
       return undefined;
     }
@@ -857,6 +1190,7 @@ export class IndexingService {
 
     const links: NonNullable<IndexNoteData['links']> = cache?.links?.map((link: LinkCache) => {
       const targetFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourcePath);
+
       return {
         link_text: link.displayText || link.link,
         link_target: link.link,
@@ -872,6 +1206,7 @@ export class IndexingService {
 
     for (const link of cache?.frontmatterLinks ?? []) {
       const targetFile = this.app.metadataCache.getFirstLinkpathDest(link.link, sourcePath);
+
       links.push({
         link_text: link.displayText || link.link,
         link_target: link.link,
@@ -894,6 +1229,7 @@ export class IndexingService {
     }
 
     const unresolvedForPath = this.app.metadataCache.unresolvedLinks[path] ?? {};
+
     return Object.entries(unresolvedForPath).map(([linkTarget, linkCount]) => ({
       link_target: linkTarget,
       link_count: linkCount
@@ -907,6 +1243,7 @@ export class IndexingService {
 
     const embeds = cache?.embeds?.map((embed: ReferenceCache) => {
       const targetFile = this.app.metadataCache.getFirstLinkpathDest(embed.link, sourcePath);
+
       return {
         embed_text: embed.displayText || embed.link,
         embed_target: embed.link,
@@ -936,6 +1273,7 @@ export class IndexingService {
     }
 
     const blocks = cache?.blocks;
+
     if (!blocks) {
       return [];
     }
@@ -955,6 +1293,7 @@ export class IndexingService {
     }
 
     const cacheListItems = cache?.listItems;
+
     if (!cacheListItems || cacheListItems.length === 0) {
       return undefined;
     }
@@ -974,11 +1313,13 @@ export class IndexingService {
     for (const item of nonTaskItems) {
       const lineIndex = item.position.start.line;
       const line = lines[lineIndex] || '';
+
       if (this.isLineInSectionType(cache, lineIndex, new Set(['code', 'table', 'yaml']))) {
         continue;
       }
 
       const parsedListLine = this.parseMarkdownListLine(line);
+
       if (!parsedListLine) {
         continue;
       }
@@ -988,6 +1329,7 @@ export class IndexingService {
       if (isRootItem && lastRootLineNumber >= 0 && lineIndex - lastRootLineNumber > 1) {
         currentListIndex++;
       }
+
       if (isRootItem) {
         lastRootLineNumber = lineIndex;
       }
@@ -998,6 +1340,7 @@ export class IndexingService {
 
       const blockMatch = line.match(/\^([\w-]+)\s*$/);
       let blockId: string | undefined;
+
       if (blockMatch) {
         blockId = blockMatch[1];
         itemContent = itemContent.replace(/\s*\^[\w-]+\s*$/, '');
@@ -1012,8 +1355,10 @@ export class IndexingService {
       const anchorHash = ContentLocationService.computeAnchorHash(lineIndex, lines, occurrence);
 
       let parentIndex: number | null = null;
+
       if (item.parent >= 0) {
         const mappedParentIndex = lineNumberToItemIndex.get(item.parent);
+
         if (mappedParentIndex !== undefined) {
           parentIndex = mappedParentIndex;
         }
@@ -1042,12 +1387,10 @@ export class IndexingService {
     return listItems.length > 0 ? listItems : undefined;
   }
 
-  private parseMarkdownListLine(line: string): {
-    listType: 'bullet' | 'number';
-    content: string;
-  } | null {
-    const withoutBlockquote = line.replace(/^(?:\s*>\s?)*/, '');
+  private parseMarkdownListLine(line: string): { listType: 'bullet' | 'number'; content: string; } | null {
+    const withoutBlockquote = line.replace(/^(?:\s*>\s?)*/, '').replace(/\r$/, '');
     const match = withoutBlockquote.match(/^(\s*)(?:(([-*+])|(\d+[.)]))\s+)(.*)$/);
+
     if (!match) {
       return null;
     }
@@ -1060,27 +1403,33 @@ export class IndexingService {
 
   private buildListItemCacheByLine(cacheListItems: ListItemCache[]): Map<number, ListItemCache> {
     const byLine = new Map<number, ListItemCache>();
+
     for (const item of cacheListItems) {
       byLine.set(item.position.start.line, item);
     }
+
     return byLine;
   }
 
   private computeListIndentLevelFromCache(item: ListItemCache, itemsByLine: Map<number, ListItemCache>, depthByLine: Map<number, number>, seen = new Set<number>()): number {
     const line = item.position.start.line;
     const cachedDepth = depthByLine.get(line);
+
     if (cachedDepth !== undefined) {
       return cachedDepth;
     }
 
     if (item.parent < 0 || seen.has(line)) {
       depthByLine.set(line, 0);
+
       return 0;
     }
 
     const parent = itemsByLine.get(item.parent);
+
     if (!parent) {
       depthByLine.set(line, 0);
+
       return 0;
     }
 
@@ -1088,20 +1437,19 @@ export class IndexingService {
     const depth = this.computeListIndentLevelFromCache(parent, itemsByLine, depthByLine, seen) + 1;
     seen.delete(line);
     depthByLine.set(line, depth);
+
     return depth;
   }
 
   private isLineInSectionType(cache: CachedMetadata | null, lineIndex: number, sectionTypes: Set<string>): boolean {
-    return cache?.sections?.some(section =>
-      sectionTypes.has(section.type) &&
+    return cache?.sections?.some(section => sectionTypes.has(section.type) &&
       section.position.start.line <= lineIndex &&
       section.position.end.line >= lineIndex
     ) ?? false;
   }
 
   private findSectionType(cache: CachedMetadata | null, lineIndex: number): string | null {
-    return cache?.sections?.find(section =>
-      section.position.start.line <= lineIndex &&
+    return cache?.sections?.find(section => section.position.start.line <= lineIndex &&
       section.position.end.line >= lineIndex
     )?.type ?? null;
   }
@@ -1110,17 +1458,14 @@ export class IndexingService {
     const contextKey = ContentLocationService.computeContextKey(lineIndex, lines);
     const occurrence = contextOccurrences.get(contextKey) ?? 0;
     contextOccurrences.set(contextKey, occurrence + 1);
+
     return occurrence;
   }
 
-  private processFrontmatterProperties(obj: Record<string, unknown>, keyPrefix: string = ''): Array<{
-    key: string;
-    value: string;
-    valueType: string;
-    arrayIndex: number | null
-  }> {
+  private processFrontmatterProperties(obj: Record<string, unknown>, keyPrefix: string = ''): Array<{ key: string; value: string; valueType: string; arrayIndex: number | null }> {
     const convertValue = (val: unknown): { valueType: string; valueString: string } => {
       if (val == null) return { valueType: 'null', valueString: '' };
+
       return {
         valueType: typeof val,
         valueString: typeof val === 'string' ? val : JSON.stringify(val)
@@ -1201,6 +1546,7 @@ export class IndexingService {
 
     while (low < high) {
       const mid = Math.floor((low + high + 1) / 2);
+
       if (lineStartOffsets[mid] <= targetOffset) {
         low = mid;
       } else {
@@ -1229,6 +1575,7 @@ export class IndexingService {
     }
 
     const start = lineStartOffsets[lineIndex] ?? 0;
+
     const end = lineIndex + 1 < lineStartOffsets.length
       ? Math.max(start, lineStartOffsets[lineIndex + 1] - 1)
       : content.length;
@@ -1236,18 +1583,19 @@ export class IndexingService {
     return { start, end };
   }
 
-
   private parseTasksFromCache(fullContent: string, fullLines: string[], lineStartOffsets: number[], taskItems: ListItemCache[], cache: CachedMetadata | null): TaskData[] {
     const tasks: TaskData[] = [];
     const contextOccurrences = new Map<string, number>();
 
     const sortedHeadings = [...(cache?.headings ?? [])]
       .sort((a, b) => a.position.start.line - b.position.start.line);
+
     let headingIndex = 0;
     let currentSectionHeading: string | undefined;
 
     for (const item of taskItems) {
       const lineIndex = item.position.start.line;
+
       while (
         headingIndex < sortedHeadings.length &&
         sortedHeadings[headingIndex].position.start.line < lineIndex
@@ -1260,8 +1608,9 @@ export class IndexingService {
       const checkbox = item.task || ' ';
       const { completed, status } = ContentLocationService.getTaskStatus(checkbox);
 
-      const taskTextMatch = line.match(/^\s*[-*+]\s*\[.\]\s*(.*)$/);
-      const taskText = taskTextMatch ? taskTextMatch[1] : line;
+      const lineText = line.replace(/\r$/, '');
+      const taskTextMatch = lineText.match(/^\s*[-*+]\s*\[.\]\s*(.*)$/);
+      const taskText = taskTextMatch ? taskTextMatch[1] : lineText;
 
       const { start, end } = this.getLineRange(fullContent, fullLines, lineStartOffsets, lineIndex);
 
@@ -1275,7 +1624,7 @@ export class IndexingService {
       const metadata = extractTaskMetadata(normalizedTaskText);
 
       const taskData: TaskData = {
-        line_number: lineIndex + 1, 
+        line_number: lineIndex + 1,
         task_text: normalizedTaskText,
         completed,
         status,
@@ -1308,16 +1657,13 @@ export class IndexingService {
    * Extract all user-defined objects (views, functions, triggers) in a single pass.
    * More efficient than three separate content scans.
    */
-  private extractAllUserDefinedObjects(content: string): {
-    views: UserViewData[];
-    functions: UserFunctionData[];
-    triggers: UserTriggerData[];
-  } {
+  private extractAllUserDefinedObjects(content: string): { views: UserViewData[]; functions: UserFunctionData[]; triggers: UserTriggerData[]; } {
     const blocks = extractAllCodeBlocks(content);
 
     const views = blocks.views
       .map(sql => {
         const viewName = parseSQLObjectName(sql, 'VIEW');
+
         return viewName ? { view_name: viewName, sql } : null;
       })
       .filter((v): v is UserViewData => v !== null);
@@ -1325,6 +1671,7 @@ export class IndexingService {
     const functions = blocks.functions
       .map(source => {
         const functionName = parseFunctionName(source);
+
         return functionName ? { function_name: functionName, source } : null;
       })
       .filter((f): f is UserFunctionData => f !== null);
@@ -1332,11 +1679,11 @@ export class IndexingService {
     const triggers = blocks.triggers
       .map(sql => {
         const triggerName = parseSQLObjectName(sql, 'TRIGGER');
+
         return triggerName ? { trigger_name: triggerName, trigger_sql: sql } : null;
       })
       .filter((t): t is UserTriggerData => t !== null);
 
     return { views, functions, triggers };
   }
-
 }

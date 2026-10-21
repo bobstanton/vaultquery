@@ -1,3 +1,4 @@
+import { INFO_MESSAGES } from '../utils/ErrorMessages';
 import { Chart, ChartConfiguration, ChartDataset, registerables, Colors } from 'chart.js';
 import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
 import { BaseRenderer } from './BaseRenderer';
@@ -10,6 +11,7 @@ type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null
 type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
 
 let isRegistered = false;
+
 function ensureChartRegistration(): void {
   if (isRegistered) return;
   Chart.register(...registerables, Colors);
@@ -40,6 +42,7 @@ export class ChartRenderer {
   static cleanupContainer(container: HTMLElement): void {
     for (const chart of Array.from(this.liveCharts)) {
       const canvas = chart.canvas;
+
       if (canvas && (container === canvas || container.contains(canvas))) {
         this.destroyChart(chart);
       }
@@ -54,6 +57,7 @@ export class ChartRenderer {
 
   private static destroyChart(chart: Chart): void {
     this.liveCharts.delete(chart);
+
     try {
       chart.destroy();
     }
@@ -66,6 +70,7 @@ export class ChartRenderer {
     const config: Partial<ChartConfig> = {};
 
     const type = this.parseChartType(options?.type);
+
     if (type) {
       config.type = type;
     }
@@ -91,8 +96,9 @@ export class ChartRenderer {
     if (!results.length) {
       container.createDiv({
         cls: 'vaultquery-empty',
-        text: 'No results to display'
+        text: INFO_MESSAGES.NO_RESULTS
       });
+
       return;
     }
 
@@ -122,10 +128,12 @@ export class ChartRenderer {
     }
 
     const firstRow = results[0];
+
     if (config.type === 'scatter') {
       if (!('x' in firstRow) || !('y' in firstRow)) {
         throw new Error('Scatter charts require x and y columns.');
       }
+
       return;
     }
 
@@ -154,9 +162,16 @@ export class ChartRenderer {
     }
 
     const chartType = value.toLowerCase();
+
     return (CHART_TYPES as readonly string[]).includes(chartType)
       ? chartType as ChartType
       : undefined;
+  }
+
+  private static chartNumber(value: unknown): number {
+    if (value instanceof Uint8Array) throw new Error('Binary values cannot be used as chart numbers.');
+
+    return Number(value);
   }
 
   private static prepareScatterData(results: Record<string, unknown>[], config: ChartConfig): ChartConfiguration['data'] {
@@ -172,6 +187,7 @@ export class ChartRenderer {
 
       for (const row of results) {
         const seriesName = formatUnknownValue(row.series) || 'Unknown';
+
         if (!seriesMap.has(seriesName)) {
           seriesMap.set(seriesName, {
             points: [],
@@ -179,9 +195,10 @@ export class ChartRenderer {
             borderColor: formatUnknownValue(row.borderColor) || undefined
           });
         }
+
         seriesMap.get(seriesName)!.points.push({
-          x: Number(row.x ?? 0),
-          y: Number(row.y ?? 0)
+          x: this.chartNumber(row.x ?? 0),
+          y: this.chartNumber(row.y ?? 0)
         });
       }
 
@@ -191,12 +208,15 @@ export class ChartRenderer {
             label: seriesName,
             data: seriesData.points
           };
+
           if (seriesData.backgroundColor) {
             dataset.backgroundColor = seriesData.backgroundColor;
           }
+
           if (seriesData.borderColor) {
             dataset.borderColor = seriesData.borderColor;
           }
+
           return dataset;
         })
       };
@@ -205,14 +225,15 @@ export class ChartRenderer {
     const dataset: AnyDataset = {
       label: config.datasetLabel,
       data: results.map(row => ({
-        x: Number(row.x ?? 0),
-        y: Number(row.y ?? 0)
+        x: this.chartNumber(row.x ?? 0),
+        y: this.chartNumber(row.y ?? 0)
       }))
     };
 
     if (config.datasetBackgroundColor) {
       dataset.backgroundColor = config.datasetBackgroundColor;
     }
+
     if (config.datasetBorderColor) {
       dataset.borderColor = config.datasetBorderColor;
     }
@@ -236,7 +257,7 @@ export class ChartRenderer {
     for (const row of results) {
       const label = formatUnknownValue(row.label) || 'Unknown';
       const series = formatUnknownValue(row.series) || 'Unknown';
-      const value = Number(row.value ?? 0);
+      const value = this.chartNumber(row.value ?? 0);
 
       labelSet.add(label);
 
@@ -248,6 +269,7 @@ export class ChartRenderer {
           borderColor: formatUnknownValue(row.borderColor) || undefined
         });
       }
+
       seriesMap.get(series)!.values.set(label, value);
     }
 
@@ -267,6 +289,7 @@ export class ChartRenderer {
       if (seriesData.backgroundColor) {
         dataset.backgroundColor = seriesData.backgroundColor;
       }
+
       if (seriesData.borderColor) {
         dataset.borderColor = seriesData.borderColor;
       }
@@ -279,7 +302,7 @@ export class ChartRenderer {
 
   private static prepareSingleSeriesData(results: Record<string, unknown>[], config: ChartConfig): ChartConfiguration['data'] {
     const labels = results.map(row => formatUnknownValue(row.label) || 'Unknown');
-    const data = results.map(row => Number(row.value ?? 0));
+    const data = results.map(row => this.chartNumber(row.value ?? 0));
 
     const hasBackgroundColor = results.length > 0 && 'backgroundColor' in results[0];
     const hasBorderColor = results.length > 0 && 'borderColor' in results[0];
@@ -319,8 +342,7 @@ export class ChartRenderer {
     const isPieOrDoughnut = config.type === 'pie' || config.type === 'doughnut';
     const showLegend = isMultiSeries || hasExplicitLabel || isPieOrDoughnut;
 
-    const hasCustomColors = datasets.some(ds =>
-      'backgroundColor' in ds || 'borderColor' in ds
+    const hasCustomColors = datasets.some(ds => 'backgroundColor' in ds || 'borderColor' in ds
     ) || config.datasetBackgroundColor || config.datasetBorderColor;
 
     const isMixedChart = datasets.some(ds => 'type' in ds && ds.type !== config.type);

@@ -7,6 +7,7 @@ export function createInlineSpan(owner: Document, className: string, dataSql: st
   span.className = `${className} ${className}-loading`;
   span.textContent = '...';
   span.setAttribute('data-sql', dataSql);
+
   return span;
 }
 

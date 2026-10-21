@@ -24,6 +24,7 @@ export const ERROR_MESSAGES = {
 } as const;
 
 export const INFO_MESSAGES = {
+  NO_RESULTS: 'No results',
   FILES_UPDATED: (count: number) => `Updated ${count} file(s)`,
   CHANGES_SKIPPED: (count: number) => `${count} change(s) skipped - see developer console`,
   SYNC_FAILED: (message: string) => `VaultQuery could not sync changes: ${message}`,
@@ -33,54 +34,51 @@ export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
+
   if (typeof error === 'string') {
     return error;
   }
+
   return JSON.stringify(error);
 }
 
-export function friendlySqliteError(error: unknown, context?: { sql?: string; table?: string }): string {
+export function friendlySqliteError(error: unknown, context?: { table?: string }): string {
   const message = getErrorMessage(error);
 
   if (message.includes('FOREIGN KEY constraint failed')) {
-    let pathHint = '';
-    if (context?.sql) {
-      const pathMatch = context.sql.match(/VALUES\s*\([^)]*'([^']+\.md)'/i);
-      if (pathMatch) {
-        pathHint = ` The file '${pathMatch[1]}' does not exist in the vault.`;
-      }
-    }
+    const tableHint = context?.table ? ` in '${context.table}'` : '';
 
-    const tableHint = context?.table
-      ? `When inserting into '${context.table}', the 'path' must reference an existing file in the 'notes' table.`
-      : `The 'path' column must reference an existing file in the 'notes' table.`;
-
-    return `Foreign key constraint failed: ${tableHint}${pathHint} Create the note first, or use a path that is already indexed.`;
+    return `Foreign key constraint failed${tableHint}. Check that the referenced rows exist.`;
   }
 
   const notNullMatch = message.match(/NOT NULL constraint failed: (\w+)\.(\w+)/);
+
   if (notNullMatch) {
     return `Missing required column: '${notNullMatch[2]}' cannot be NULL in table '${notNullMatch[1]}'.`;
   }
 
   const uniqueMatch = message.match(/UNIQUE constraint failed: (.+)/);
+
   if (uniqueMatch) {
     return `Duplicate value: ${uniqueMatch[1]} must be unique. A record with this value already exists.`;
   }
 
   const noColumnMatch = message.match(/no such column: (\w+)/i);
+
   if (noColumnMatch) {
     return `Unknown column: '${noColumnMatch[1]}'. Check the column name in the schema reference.`;
   }
 
   const tableNoColumnMatch = message.match(/table (\w+) has no column named (\w+)/i);
+
   if (tableNoColumnMatch) {
     return `Unknown column: '${tableNoColumnMatch[2]}' in table '${tableNoColumnMatch[1]}'. Check the schema reference.`;
   }
 
   const noTableMatch = message.match(/no such table: (\w+)/i);
+
   if (noTableMatch) {
-    return `Unknown table: '${noTableMatch[1]}'. The name may be wrong or its indexing option disabled.`;
+    return `Unknown table: '${noTableMatch[1]}'.`;
   }
 
   return message;

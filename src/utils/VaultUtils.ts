@@ -1,11 +1,19 @@
-import { Vault, normalizePath } from 'obsidian';
+import { TFile, normalizePath } from 'obsidian';
+import type { Vault } from 'obsidian';
 import { logger as rootLogger } from './logger';
+import { pathParent } from './PathUtils';
 
 const logger = rootLogger.scope('VaultUtils');
 
-export async function createNoteWithFolders(vault: Vault, path: string, content: string): Promise<void> {
+export function resolveVaultFile(vault: Vault, path: string): TFile | null {
+  const file = vault.getAbstractFileByPath(normalizePath(path));
+
+  return file instanceof TFile ? file : null;
+}
+
+export async function createFileWithFolders(vault: Vault, path: string, content: string | Uint8Array): Promise<void> {
   const normalizedPath = normalizePath(path);
-  const parentPath = normalizedPath.substring(0, normalizedPath.lastIndexOf('/'));
+  const parentPath = pathParent(normalizedPath);
 
   if (parentPath && !vault.getAbstractFileByPath(parentPath)) {
     try {
@@ -16,5 +24,6 @@ export async function createNoteWithFolders(vault: Vault, path: string, content:
     }
   }
 
-  await vault.create(normalizedPath, content);
+  if (typeof content === 'string') await vault.create(normalizedPath, content);
+  else await vault.createBinary(normalizedPath, content.slice().buffer);
 }

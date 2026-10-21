@@ -1,7 +1,8 @@
 import type { IndexNoteData, TaskData, ListItemData, TableCellData } from '../types';
+import type { QueryExecResult, SqlValue } from 'sql.js';
 
-export type SqlValue = string | number | null | Uint8Array;
-export type SqlResult = Array<{ columns: string[]; values: SqlValue[][] }>;
+export type { SqlValue } from 'sql.js';
+export type SqlResult = QueryExecResult[];
 export type SqlParam = string | number | null;
 
 export const DEFAULT_TASK_STATUS = 'TODO';
@@ -44,21 +45,25 @@ type MatchFn<TRow> = (file: TRow[], existing: EntityRow<TRow>[]) => EntityMatch<
 
 function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
+
   for (const item of items) {
     const key = keyFn(item);
     const list = map.get(key);
     if (list) list.push(item);
     else map.set(key, [item]);
   }
+
   return map;
 }
 
-function indexBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T> {
+export function indexBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T> {
   const map = new Map<string, T>();
+
   for (const item of items) {
     const key = keyFn(item);
     if (!map.has(key)) map.set(key, item);
   }
+
   return map;
 }
 
@@ -66,39 +71,35 @@ function findUnmatched<T extends { id: number }>(items: T[] | undefined, matched
   return items?.find(item => !matched.has(item.id));
 }
 
+function matchRows<TRow>(file: TRow[], resolve: (row: TRow, matched: Set<number>) => EntityRow<TRow> | undefined): EntityMatch<TRow> {
+  const matched = new Set<number>();
+  const fileMatches = new Map<number, EntityRow<TRow>>();
+
+  for (let i = 0; i < file.length; i++) {
+    const match = resolve(file[i], matched);
+
+    if (match && !matched.has(match.id)) {
+      matched.add(match.id);
+      fileMatches.set(i, match);
+    }
+  }
+
+  return { matched, fileMatches };
+}
+
 function matchInOrderByKey<TRow>(key: (row: TRow) => string): MatchFn<TRow> {
   return (file, existing) => {
     const byKey = groupBy(existing, e => key(e));
-    const matched = new Set<number>();
-    const fileMatches = new Map<number, EntityRow<TRow>>();
 
-    for (let i = 0; i < file.length; i++) {
-      const match = findUnmatched(byKey.get(key(file[i])), matched);
-      if (match) {
-        matched.add(match.id);
-        fileMatches.set(i, match);
-      }
-    }
-
-    return { matched, fileMatches };
+    return matchRows(file, (row, matched) => findUnmatched(byKey.get(key(row)), matched));
   };
 }
 
 function matchByUniqueKey<TRow>(key: (row: TRow) => string): MatchFn<TRow> {
   return (file, existing) => {
     const byKey = indexBy(existing, e => key(e));
-    const matched = new Set<number>();
-    const fileMatches = new Map<number, EntityRow<TRow>>();
 
-    for (let i = 0; i < file.length; i++) {
-      const match = byKey.get(key(file[i]));
-      if (match && !matched.has(match.id)) {
-        matched.add(match.id);
-        fileMatches.set(i, match);
-      }
-    }
-
-    return { matched, fileMatches };
+    return matchRows(file, row => byKey.get(key(row)));
   };
 }
 
@@ -106,31 +107,16 @@ function matchByKeyThenLine<TRow>(contentKey: (row: TRow) => string, lineNumber:
   return (file, existing) => {
     const byContent = groupBy(existing, e => contentKey(e));
     const byLine = groupBy(existing, e => String(lineNumber(e)));
-    const matched = new Set<number>();
-    const fileMatches = new Map<number, EntityRow<TRow>>();
 
-    for (let i = 0; i < file.length; i++) {
-      const match =
-        findUnmatched(byContent.get(contentKey(file[i])), matched) ??
-        findUnmatched(byLine.get(String(lineNumber(file[i]))), matched);
-
-      if (match) {
-        matched.add(match.id);
-        fileMatches.set(i, match);
-      }
-    }
-
-    return { matched, fileMatches };
+    return matchRows(file, (row, matched) => findUnmatched(byContent.get(contentKey(row)), matched) ??
+      findUnmatched(byLine.get(String(lineNumber(row))), matched));
   };
 }
 
-function matchByNaturalTextThenLine<TRow>(
-  naturalKey: (row: TRow) => string | null,
-  textKey: (row: TRow) => string,
-  lineNumber: (row: TRow) => number
-): MatchFn<TRow> {
+function matchByNaturalTextThenLine<TRow>(naturalKey: (row: TRow) => string | null, textKey: (row: TRow) => string, lineNumber: (row: TRow) => number): MatchFn<TRow> {
   return (file, existing) => {
     const byNaturalKey = new Map<string, EntityRow<TRow>[]>();
+
     for (const row of existing) {
       const key = naturalKey(row);
       if (!key) continue;
@@ -138,6 +124,7 @@ function matchByNaturalTextThenLine<TRow>(
       if (list) list.push(row);
       else byNaturalKey.set(key, [row]);
     }
+
     const byText = groupBy(existing, e => textKey(e));
     const byLine = groupBy(existing, e => String(lineNumber(e)));
     const matched = new Set<number>();
@@ -162,6 +149,7 @@ function matchByNaturalTextThenLine<TRow>(
       if (fileMatches.has(i)) continue;
 
       const match = findUnmatched(byLine.get(String(lineNumber(file[i]))), matched);
+
       if (match) {
         matched.add(match.id);
         fileMatches.set(i, match);
@@ -226,11 +214,10 @@ interface InsertEntitySpec<TInput, TColumns extends Record<string, ColumnDef>> {
   insertExtras?: ReadonlyArray<InsertExtra<RowOf<TColumns>>>;
 }
 
-function defineInsertEntity<TInput, TColumns extends Record<string, ColumnDef>>(
-  spec: InsertEntitySpec<TInput, TColumns>
-): InsertEntityDescriptor<TInput, RowOf<TColumns>> {
+function defineInsertEntity<TInput, TColumns extends Record<string, ColumnDef>>(spec: InsertEntitySpec<TInput, TColumns>): InsertEntityDescriptor<TInput, RowOf<TColumns>> {
   const columnNames = Object.keys(spec.columns);
   const extraNames = (spec.insertExtras ?? []).map(extra => extra.column);
+
   return {
     table: spec.table,
     columns: spec.columns,
@@ -249,11 +236,10 @@ interface EntitySpec<TInput, TColumns extends Record<string, ColumnDef>> extends
   updatePlan?: (oldRow: RowOf<TColumns>, newRow: RowOf<TColumns>) => UpdatePlan;
 }
 
-function defineEntity<TInput, TColumns extends Record<string, ColumnDef>>(
-  spec: EntitySpec<TInput, TColumns>
-): EntityDescriptor<TInput, RowOf<TColumns>> {
+function defineEntity<TInput, TColumns extends Record<string, ColumnDef>>(spec: EntitySpec<TInput, TColumns>): EntityDescriptor<TInput, RowOf<TColumns>> {
   const base = defineInsertEntity(spec);
   const updateColumns = spec.updateColumns ?? base.columnNames;
+
   return {
     ...base,
     match: spec.match,
@@ -266,20 +252,25 @@ function defineEntity<TInput, TColumns extends Record<string, ColumnDef>>(
 
 export function mapEntityRow<TInput, TRow extends SqlRecord>(entity: EntityDescriptor<TInput, TRow>, row: SqlValue[]): EntityRow<TRow> {
   const mapped: Record<string, SqlValue> = { id: row[0] };
+
   for (let i = 0; i < entity.columnNames.length; i++) {
     mapped[entity.columnNames[i]] = row[i + 1];
   }
+
   return mapped as EntityRow<TRow>;
 }
 
 export function entityInsertRow<TInput, TRow extends SqlRecord>(entity: InsertEntityDescriptor<TInput, TRow>, path: string, row: TRow): SqlParam[] {
   const values: SqlParam[] = [path];
+
   for (const name of entity.columnNames) {
     values.push(row[name]);
   }
+
   for (const extra of entity.insertExtras ?? []) {
     values.push(extra.value(row));
   }
+
   return values;
 }
 
@@ -291,14 +282,11 @@ export function entityUpdatePlan<TInput, TRow extends SqlRecord>(entity: EntityD
   if (entity.updatePlan) {
     return entity.updatePlan(oldRow, newRow);
   }
+
   return { sql: entity.updateSql, params: entity.updateColumns.map(name => newRow[name]) };
 }
 
-export function detectEntityChanges<TInput, TRow extends SqlRecord>(
-  entity: EntityDescriptor<TInput, TRow>,
-  file: TRow[],
-  existing: EntityRow<TRow>[]
-): Changes<TRow> {
+export function detectEntityChanges<TInput, TRow extends SqlRecord>(entity: EntityDescriptor<TInput, TRow>, file: TRow[], existing: EntityRow<TRow>[]): Changes<TRow> {
   const { matched, fileMatches } = entity.match(file, existing);
   const result: Changes<TRow> = { updated: [], inserted: [], deleted: [] };
 
@@ -388,7 +376,6 @@ const HEADING_COLUMNS = {
   end_offset: INT_NULL,
   anchor_hash: TEXT_NULL,
 } satisfies Record<string, ColumnDef>;
-
 
 export type InputHeadingData = NonNullable<IndexNoteData['headings']>[number];
 
@@ -487,7 +474,6 @@ const TABLE_CELL_COLUMNS = {
   line_number: INT_NULL,
 } satisfies Record<string, ColumnDef>;
 
-
 const TABLE_CELL_UPDATE_CONTENT_SQL = buildUpdateSql('table_cells', ['table_name', 'cell_value', 'line_number']);
 const TABLE_CELL_UPDATE_LINE_SQL = buildUpdateSql('table_cells', ['line_number']);
 
@@ -506,9 +492,11 @@ export const TABLE_CELLS_ENTITY = defineEntity<TableCellData, typeof TABLE_CELL_
   insertExtras: [{ column: 'value_type', value: () => TABLE_CELL_VALUE_TYPE }],
   updatePlan: (oldRow, newRow) => {
     const contentChanged = oldRow.table_name !== newRow.table_name || oldRow.cell_value !== newRow.cell_value;
+
     if (contentChanged) {
       return { sql: TABLE_CELL_UPDATE_CONTENT_SQL, params: [newRow.table_name, newRow.cell_value, newRow.line_number] };
     }
+
     return { sql: TABLE_CELL_UPDATE_LINE_SQL, params: [newRow.line_number] };
   },
 });

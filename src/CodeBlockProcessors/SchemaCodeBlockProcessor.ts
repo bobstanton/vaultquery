@@ -1,7 +1,9 @@
-import { App, Component, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
+import { App, Component, MarkdownPostProcessorContext } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
-import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
+import { trackVaultQueryBlock, isBlockUnloaded } from './ProcessorUtils';
+import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { getErrorMessage } from '../utils/ErrorMessages';
+import { renderHelpSchema } from './HelpRendering';
 
 export class SchemaCodeBlockProcessor {
   private component: Component;
@@ -11,7 +13,7 @@ export class SchemaCodeBlockProcessor {
     this.component.load();
   }
 
-  public process(_source: string, el: HTMLElement, _ctx: MarkdownPostProcessorContext): void {
+  public process(_source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext): void {
     if (el.closest('.display-only')) {
       return;
     }
@@ -19,38 +21,16 @@ export class SchemaCodeBlockProcessor {
     el.empty();
     const container = el.createDiv({ cls: 'vaultquery-schema' });
 
-    const ready = waitForIndexingWithProgress(
-      () => this.plugin.api,
-      container,
-      () => this.renderSchema(container)
-    );
-
-    if (ready) {
-      void this.renderSchema(container);
-    }
+    trackVaultQueryBlock(container, ctx);
+    void this.plugin.indexingReadiness.wait(container).then(() => {
+      if (!isBlockUnloaded(container)) return this.renderSchema(container);
+    }).catch(error => {
+      if (!isBlockUnloaded(container)) BaseRenderer.renderError(container, { title: 'Error', message: getErrorMessage(error) });
+    });
   }
 
   private async renderSchema(container: HTMLElement): Promise<void> {
-    const api = this.plugin.api;
-    if (!api) {
-      container.createDiv({
-        cls: 'vaultquery-help-loading',
-        text: 'VaultQuery is still initializing — re-open this note to load the schema.'
-      });
-      return;
-    }
-
-    try {
-      const schema = await api.getSchemaInfo();
-      await MarkdownRenderer.render(this.app, schema, container, '', this.component);
-    }
-    catch (error: unknown) {
-      container.empty();
-      container.createDiv({
-        cls: 'vaultquery-help-error',
-        text: `Failed to load schema: ${getErrorMessage(error)}`
-      });
-    }
+    await renderHelpSchema(this.app, this.plugin, this.component, container);
   }
 
   public unload(): void {

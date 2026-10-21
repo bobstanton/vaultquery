@@ -5,9 +5,8 @@ import { BaseRenderer } from '../Renderers/BaseRenderer';
 import { QueryRefreshRegistry } from '../Renderers/QueryRefreshRegistry';
 import { cleanupRenderedOutput } from '../Renderers/RendererCleanup';
 import { addFloatingButtons } from '../Renderers/OutputChrome';
-import { waitForIndexingWithProgress } from '../utils/IndexingUtils';
 import { getErrorMessage } from '../utils/ErrorMessages';
-import { RenderVersionGuard } from './ProcessorUtils';
+import { RenderVersionGuard, trackVaultQueryBlock, isBlockUnloaded } from './ProcessorUtils';
 
 export abstract class BaseUserDefinedProcessor {
   protected component: Component;
@@ -25,16 +24,13 @@ export abstract class BaseUserDefinedProcessor {
 
     cleanupRenderedOutput(el);
     const container = el.createDiv({ cls: this.getContainerClass() });
+    trackVaultQueryBlock(container, ctx);
 
-    const ready = waitForIndexingWithProgress(
-      () => this.plugin.api,
-      container,
-      () => this.renderWithRefresh(container, source, ctx)
-    );
-
-    if (ready) {
-      void this.renderWithRefresh(container, source, ctx);
-    }
+    void this.plugin.indexingReadiness.wait(container).then(() => {
+      if (!isBlockUnloaded(container)) return this.renderWithRefresh(container, source, ctx);
+    }).catch(error => {
+      if (!isBlockUnloaded(container)) this.renderError(container, getErrorMessage(error));
+    });
   }
 
   protected abstract getContainerClass(): string;
@@ -47,9 +43,11 @@ export abstract class BaseUserDefinedProcessor {
 
   protected requireApi(): VaultQueryAPI {
     const api = this.plugin.api;
+
     if (!api) {
       throw new Error('VaultQuery is not ready. The plugin may have been unloaded.');
     }
+
     return api;
   }
 
@@ -68,6 +66,7 @@ export abstract class BaseUserDefinedProcessor {
     const refresh = async () => {
       await this.renderWithRefresh(container, source, ctx);
     };
+
     QueryRefreshRegistry.register(container, { onRefresh: refresh });
 
     try {
@@ -77,6 +76,7 @@ export abstract class BaseUserDefinedProcessor {
       if (!this.isCurrentRender(container, renderVersion)) {
         return;
       }
+
       this.renderError(container, getErrorMessage(error));
     }
 

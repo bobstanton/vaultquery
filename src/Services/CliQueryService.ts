@@ -1,10 +1,11 @@
 import type { CliData, CliFlags } from 'obsidian';
 import type { VaultQueryPluginContext } from '../types/PluginContext';
 import { detectDmlOperationInSql, splitSqlStatements } from '../utils/SQLParsingUtils';
-import { formatResultsAsDelimited, formatResultsAsMarkdown, scalarFromResults } from '../utils/ResultFormatUtils';
+import { formatResults } from '../utils/ResultExport';
+import type { ExportFormat } from '../utils/ResultExport';
 import { logger as rootLogger } from '../utils/logger';
 
-type QueryFormat = 'json' | 'csv' | 'tsv' | 'md' | 'scalar';
+type QueryFormat = ExportFormat;
 interface CliStatementClassification {
   hasDml: boolean;
   hasNonDml: boolean;
@@ -35,31 +36,12 @@ const DEBUG_LOG_FLAGS: CliFlags = {
 
 function normalizeFormat(value: string | undefined): QueryFormat {
   const format = (value || 'json').toLowerCase();
+
   if (format === 'json' || format === 'csv' || format === 'tsv' || format === 'md' || format === 'scalar') {
     return format;
   }
 
   throw new Error(`Unsupported format: ${value}. Use json, csv, tsv, md, or scalar.`);
-}
-
-function formatResults(results: Record<string, unknown>[], format: QueryFormat): string {
-  if (format === 'json') {
-    return JSON.stringify(results, null, 2);
-  }
-
-  if (format === 'csv') {
-    return formatResultsAsDelimited(results, ',');
-  }
-
-  if (format === 'tsv') {
-    return formatResultsAsDelimited(results, '\t');
-  }
-
-  if (format === 'md') {
-    return formatResultsAsMarkdown(results, { scanAllRows: true });
-  }
-
-  return scalarFromResults(results);
 }
 
 function classifyCliStatements(sql: string): CliStatementClassification {
@@ -73,6 +55,7 @@ function classifyCliStatements(sql: string): CliStatementClassification {
     else {
       classification.hasNonDml = true;
     }
+
     return classification;
   }, { hasDml: false, hasNonDml: false });
 }
@@ -83,6 +66,7 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
   }
 
   const sql = typeof params.sql === 'string' ? params.sql.trim() : '';
+
   if (!sql) {
     throw new Error('Missing required sql=<query> parameter.');
   }
@@ -90,6 +74,7 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
   const path = typeof params.path === 'string' ? params.path : undefined;
 
   const api = plugin.api;
+
   if (!api) {
     throw new Error('VaultQuery is not ready. The plugin may have been unloaded.');
   }
@@ -97,6 +82,7 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
   await plugin.indexingStateManager.waitForIndexingComplete();
 
   const statementClassification = classifyCliStatements(sql);
+
   if (statementClassification.hasDml) {
     if (statementClassification.hasNonDml) {
       throw new Error('VaultQuery CLI write statements cannot be mixed with read-only statements. Run SELECT/WITH queries separately from INSERT, UPDATE, and DELETE statements.');
@@ -107,7 +93,9 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
     }
 
     const preview = await api.previewQuery(sql, [], path);
+    await plugin.indexingStateManager.waitForIndexingComplete();
     const affectedPaths = await api.applyPreview(preview);
+
     for (const affectedPath of affectedPaths) {
       plugin.indexingStateManager.queueIndexing(affectedPath);
     }
@@ -120,14 +108,18 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
 
   const format = normalizeFormat(typeof params.format === 'string' ? params.format : undefined);
   const results = await api.query(sql, path);
-  return formatResults(results, format);
+  const dataFileColumns = await api.getDataFileColumnNames(results);
+
+  return formatResults(results, format, { dataFileColumns });
 }
 
 function runCliDebugLog(params: CliData): string {
   const output = rootLogger.formatForExport();
+
   if (params.clear === 'true' || params.clear === '1') {
     rootLogger.clear();
   }
+
   return output;
 }
 

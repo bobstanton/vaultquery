@@ -1,14 +1,20 @@
+import { INFO_MESSAGES } from '../utils/ErrorMessages';
+import { formatDisplayValue } from '../utils/ResultFormatUtils';
 import { Component } from 'obsidian';
+import { csvVisibleColumns } from '../Tabular/TabularPresentation';
 import { BaseRenderer } from './BaseRenderer';
 import { addFloatingButtons } from './OutputChrome';
+import { exportNameFor } from './ExportMenu';
+import { markdownCellSource, parseMarkdownColumns, shouldRenderMarkdownColumn, NO_MARKDOWN_COLUMNS } from './MarkdownCells';
+import type { MarkdownColumnSelection } from './MarkdownCells';
 import type { RenderContext } from './BaseRenderer';
 
 interface MarkdownTableConfig {
   columns?: string[];
   alignment?: Array<'left' | 'center' | 'right'>;
+  markdown?: MarkdownColumnSelection;
 }
 
-const MARKDOWN_PATTERN = /\[\[|!\[|```|`|^\s*[-*+]\s|^\s*\d+\.\s|\*\*|__|\*|_|^#+\s|^\s*>/m;
 const renderComponents = new WeakMap<HTMLElement, Component>();
 
 export class MarkdownTableRenderer extends BaseRenderer {
@@ -21,6 +27,7 @@ export class MarkdownTableRenderer extends BaseRenderer {
     const config: MarkdownTableConfig = {};
 
     const columnsValue = typeof options?.columns === 'string' ? options.columns : '';
+
     if (columnsValue) {
       config.columns = columnsValue
         .split(',')
@@ -28,13 +35,18 @@ export class MarkdownTableRenderer extends BaseRenderer {
         .filter(Boolean);
     }
 
+    config.markdown = parseMarkdownColumns(options);
+
     const alignmentValue = typeof options?.alignment === 'string' ? options.alignment : '';
+
     if (alignmentValue) {
       config.alignment = alignmentValue.split(',').map(value => {
         const normalized = value.trim().toLowerCase();
+
         if (normalized === 'center' || normalized === 'right') {
           return normalized;
         }
+
         return 'left';
       });
     }
@@ -51,20 +63,21 @@ export class MarkdownTableRenderer extends BaseRenderer {
     if (!results.length) {
       tempContainer.createDiv({
         cls: 'vaultquery-empty',
-        text: 'Query returned no results'
+        text: INFO_MESSAGES.NO_RESULTS
       });
 
       container.empty();
       container.append(...Array.from(tempContainer.childNodes));
       addFloatingButtons(container, { onRefresh });
+
       return;
     }
 
-    const columns = this.resolveColumns(results, config.columns);
+    const columns = this.resolveColumns(results, config.columns, context.dataFileColumns);
+
     if (!columns.length) {
       throw new Error('Markdown output columns config did not match any query result columns.');
     }
-    const shouldRenderMarkdownContent = context.settings.contentRenderingMode === 'rendered-markdown';
 
     this.cleanupContainer(container);
     const renderComponent = new Component();
@@ -78,9 +91,11 @@ export class MarkdownTableRenderer extends BaseRenderer {
     for (let i = 0; i < columns.length; i++) {
       const th = headerRow.createEl('th');
       const alignment = config.alignment?.[i];
+
       if (alignment === 'center' || alignment === 'right') {
         th.addClass(`vaultquery-align-${alignment}`);
       }
+
       th.textContent = columns[i];
     }
 
@@ -93,17 +108,22 @@ export class MarkdownTableRenderer extends BaseRenderer {
       for (let i = 0; i < columns.length; i++) {
         const td = tr.createEl('td');
         const alignment = config.alignment?.[i];
+
         if (alignment === 'center' || alignment === 'right') {
           td.addClass(`vaultquery-align-${alignment}`);
         }
 
-        const content = row[columns[i]] == null ? '' : String(row[columns[i]]);
+        const content = formatDisplayValue(row[columns[i]], columns[i], Boolean(context.dataFileColumns));
+
         if (!content) {
           continue;
         }
 
-        if (shouldRenderMarkdownContent && MARKDOWN_PATTERN.test(content)) {
-          markdownCells.push({ td, content });
+        const markdown = shouldRenderMarkdownColumn(config.markdown ?? NO_MARKDOWN_COLUMNS, columns[i])
+          ? markdownCellSource(content) : undefined;
+
+        if (markdown !== undefined) {
+          markdownCells.push({ td, content: markdown });
         }
         else {
           td.textContent = content;
@@ -113,21 +133,24 @@ export class MarkdownTableRenderer extends BaseRenderer {
 
     if (markdownCells.length > 0) {
       const BATCH_SIZE = 50;
+
       for (let i = 0; i < markdownCells.length; i += BATCH_SIZE) {
         const batch = markdownCells.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map(({ td, content }) =>
-          context.MarkdownRenderer!.render(app, content, td, sourcePath ?? '', renderComponent)
+
+        await Promise.all(batch.map(({ td, content }) => context.MarkdownRenderer!.render(app, content, td, sourcePath ?? '', renderComponent)
         ));
       }
     }
 
     container.empty();
     container.append(...Array.from(tempContainer.childNodes));
-    addFloatingButtons(container, { results, columns, onRefresh });
+
+    addFloatingButtons(container, { results, columns, dataFileColumns: context.dataFileColumns, app: context.app,
+      exportFolder: context.settings.exportFolder, exportName: exportNameFor(context), onRefresh });
   }
 
-  private static resolveColumns(results: Record<string, unknown>[], configuredColumns?: string[]): string[] {
-    const availableColumns = Object.keys(results[0]).filter(column => !column.startsWith('_'));
+  private static resolveColumns(results: Record<string, unknown>[], configuredColumns?: string[], dataFileColumns?: readonly string[]): string[] {
+    const availableColumns = csvVisibleColumns(results[0], dataFileColumns);
 
     if (!configuredColumns?.length) {
       return availableColumns;

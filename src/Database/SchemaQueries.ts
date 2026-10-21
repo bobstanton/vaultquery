@@ -19,7 +19,7 @@ export const PRAGMA_STATEMENTS = [
 ] as const;
 
 export const SQL_QUERIES = {
-  GET_ALL_PROPERTY_KEYS: 'SELECT DISTINCT key FROM properties WHERE array_index IS NULL ORDER BY key',
+  GET_ALL_PROPERTY_KEYS: 'SELECT DISTINCT key FROM properties ORDER BY key',
   GET_VIEW_NAMES: "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name",
   DISCOVER_TABLE_STRUCTURES: `
     SELECT
@@ -112,6 +112,7 @@ export function processTableStructureResults(rows: unknown[][]): TableStructure[
     }
 
     const structure = structureMap.get(columnSignature)!;
+
     for (const tableName of tableNames) {
       if (tableName && tableName !== 'null' && !structure.tableNames.includes(tableName)) {
         structure.tableNames.push(tableName);
@@ -134,13 +135,16 @@ export function processTableStructureResults(rows: unknown[][]): TableStructure[
       if (!baseName) {
         baseName = 'unnamed';
       }
+
       viewName = baseName + '_table';
 
       let suffix = 1;
+
       while (usedViewNames.has(viewName)) {
         suffix++;
         viewName = `${baseName}_${suffix}_table`;
       }
+
       usedViewNames.add(viewName);
     } else {
       viewName = `table_view_${index}`;

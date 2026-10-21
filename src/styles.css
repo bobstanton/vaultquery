@@ -50,6 +50,34 @@ and preview tables. */
 	margin-inline-end: 0;
 }
 
+.markdown-rendered .vaultquery-table,
+.markdown-rendered .vaultquery-markdown-table,
+.markdown-rendered .vaultquery-schema table,
+.markdown-rendered .vaultquery-help-table-wrapper table {
+	margin-block: 0;
+}
+
+.vaultquery-table td p,
+.vaultquery-table th p,
+.vaultquery-markdown-table td p,
+.vaultquery-markdown-table th p {
+	margin-block: var(--size-4-1);
+}
+
+.vaultquery-table td p:first-child,
+.vaultquery-table th p:first-child,
+.vaultquery-markdown-table td p:first-child,
+.vaultquery-markdown-table th p:first-child {
+	margin-block-start: 0;
+}
+
+.vaultquery-table td p:last-child,
+.vaultquery-table th p:last-child,
+.vaultquery-markdown-table td p:last-child,
+.vaultquery-markdown-table th p:last-child {
+	margin-block-end: 0;
+}
+
 .vaultquery-table th,
 .vaultquery-markdown-table th,
 .vaultquery-schema table th,
@@ -136,11 +164,6 @@ and preview tables. */
 .vaultquery-help-table-wrapper table tbody tr:hover td,
 .performance-stats-table tbody tr:hover td {
 	background-color: var(--vaultquery-table-row-hover-background);
-}
-
-.vaultquery-container + .vaultquery-preview-container,
-.vaultquery-container .vaultquery-preview-container {
-	margin-top: 0; 
 }
 
 .vaultquery-error {
@@ -250,6 +273,35 @@ and preview tables. */
 	color: var(--text-muted);
 	font-size: var(--font-ui-medium);
 	text-align: center;
+}
+
+.vaultquery-provider-waiting {
+	min-height: 120px;
+	gap: var(--size-4-2);
+}
+
+.vaultquery-provider-waiting-elapsed {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+}
+
+.vaultquery-provider-freshness {
+	margin-top: var(--size-4-1);
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+}
+
+.vaultquery-nl-progress-detail {
+	margin-top: var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.vaultquery-nl-progress-elapsed {
+	margin-top: var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .vaultquery-progress-count {
@@ -412,11 +464,11 @@ and preview tables. */
 	min-height: calc(var(--input-height) + var(--vaultquery-calendar-day-min-height));
 }
 
-.vaultquery-container.vaultquery-calendar-output {
+.vaultquery-calendar-output {
 	padding-top: calc(var(--input-height) + var(--size-4-2));
 }
 
-.vaultquery-container.vaultquery-calendar-output .vaultquery-floating-buttons {
+.vaultquery-calendar-output > .vaultquery-floating-buttons {
 	z-index: 3;
 }
 
@@ -979,6 +1031,28 @@ and preview tables. */
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-medium);
 	color: var(--code-normal);
+}
+
+.vaultquery-nl-sql pre {
+	margin: 0;
+}
+
+.vaultquery-nl-config {
+	background-color: var(--code-background);
+	border-radius: var(--radius-s);
+	color: var(--code-normal);
+	font-family: var(--font-monospace);
+	font-size: var(--code-size);
+	overflow-x: auto;
+	padding: var(--size-4-3);
+}
+
+.vaultquery-nl-config pre {
+	margin: 0;
+}
+
+.vaultquery-nl-output {
+	position: relative;
 }
 
 .vaultquery-success {

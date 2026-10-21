@@ -13,6 +13,6 @@ export interface ISchemaManager {
   getViewNames(): string[] | Promise<string[]>;
   getViewColumns(viewName: string): string[] | Promise<string[]>;
   rebuildPropertiesView(): void | Promise<void>;
-  rebuildTableViews(enableDynamicTableViews: boolean): void | Promise<void>;
+  rebuildTableViews(enableDynamicTableViews: boolean): boolean | Promise<boolean>;
   discoverTableStructures(): TableStructure[] | Promise<TableStructure[]>;
 }

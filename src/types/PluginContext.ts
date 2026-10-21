@@ -1,3 +1,4 @@
+import type { IndexingReadiness } from '../Services/IndexingReadiness';
 import type { Plugin } from 'obsidian';
 import type { VaultQueryAPI } from '../VaultQueryAPI';
 import type { VaultQuerySettings } from '../Settings/Settings';
@@ -13,4 +14,5 @@ export interface VaultQueryPluginContext extends Plugin {
   settings: VaultQuerySettings;
   indexingStateManager: IndexingStateManagerContext;
   saveSettings(options?: { requiresFullReindex?: boolean }): Promise<void>;
+  indexingReadiness: Pick<IndexingReadiness, 'wait'>;
 }

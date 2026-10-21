@@ -5,7 +5,7 @@ import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@
 import { CONFIG_CAPABLE_LANGUAGES, PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
 import { SQL_KEYWORD_TOKENS as SQL_KEYWORDS, SQL_FUNCTION_TOKENS as SQL_FUNCTIONS, SQL_TYPE_TOKENS as SQL_TYPES } from '../Constants/SqlCatalog';
 import { CHART_TYPES } from '../Constants/BlockConfigCatalog';
-import { consumeSqlSingleQuotedString } from '../utils/SQLParsingUtils';
+import { tokenizeSqlStatement } from '../utils/SQLParsingUtils';
 import { skipWhitespace } from '../utils/StringUtils';
 
 const SQL_OPERATORS = new Set(['=', '<>', '!=', '<', '>', '<=', '>=', '||', '+', '-', '*', '/', '%']);
@@ -36,6 +36,7 @@ const operatorMark = Decoration.mark({ class: 'cm-operator' });
 const commentMark = Decoration.mark({ class: 'cm-comment' });
 const propertyMark = Decoration.mark({ class: 'cm-propertyName' });
 const labelMark = Decoration.mark({ class: 'cm-meta' });
+
 const noSpellcheckMark = Decoration.mark({
   attributes: {
     spellcheck: 'false',
@@ -44,6 +45,7 @@ const noSpellcheckMark = Decoration.mark({
     'data-vaultquery-codeblock-text': 'true',
   }
 });
+
 const codeBlockLineMark = Decoration.line({
   attributes: {
     spellcheck: 'false',
@@ -77,17 +79,20 @@ function rangeTokenSink(baseOffset: number, ranges: DecorationRange[]): TokenSin
 
 function consumeLineComment(text: string, pos: number): number {
   while (pos < text.length && text[pos] !== '\n') pos++;
+
   return pos;
 }
 
 function consumeBlockComment(text: string, pos: number): number {
   pos += 2;
   while (pos < text.length - 1 && !(text[pos] === '*' && text[pos + 1] === '/')) pos++;
+
   return Math.min(pos + 2, text.length);
 }
 
 function consumeEscapedString(text: string, pos: number, quote: string): number {
   pos++;
+
   while (pos < text.length) {
     if (text[pos] === '\\' && pos + 1 < text.length) {
       pos += 2;
@@ -100,17 +105,13 @@ function consumeEscapedString(text: string, pos: number, quote: string): number 
       pos++;
     }
   }
-  return pos;
-}
 
-function consumeUntilChar(text: string, pos: number, terminator: string): number {
-  pos++;
-  while (pos < text.length && text[pos] !== terminator) pos++;
-  return Math.min(pos + 1, text.length);
+  return pos;
 }
 
 function consumeWhile(text: string, pos: number, pattern: RegExp): number {
   while (pos < text.length && pattern.test(text[pos])) pos++;
+
   return pos;
 }
 
@@ -118,12 +119,14 @@ function tokenizeComment(text: string, pos: number, sink: TokenSink, linePrefix:
   if (text.startsWith(linePrefix, pos)) {
     const end = consumeLineComment(text, pos);
     sink.add(pos, end, commentMark);
+
     return end;
   }
 
   if (text[pos] === '/' && text[pos + 1] === '*') {
     const end = consumeBlockComment(text, pos);
     sink.add(pos, end, commentMark);
+
     return end;
   }
 
@@ -190,6 +193,7 @@ function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => bo
       const start = pos;
       const end = consumeWhile(text, pos, numberPattern);
       sink.add(start, end, numberMark);
+
       return end;
     }
 
@@ -197,6 +201,7 @@ function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => bo
       const start = pos;
       const end = consumeWhile(text, pos, identifierPattern);
       addIdentifier(text, start, end, sink);
+
       return end;
     }
 
@@ -204,47 +209,32 @@ function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => bo
   };
 }
 
-function tokenizeSql(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>): void {
-  tokenizeCharacterStream(text, builderTokenSink(baseOffset, builder), [
-    commentRule('--'),
-    (source, pos, sink) => {
-      if (source[pos] !== "'") return null;
-      const start = pos;
-      const end = consumeSqlSingleQuotedString(source, pos);
-      sink.add(start, end, stringMark);
-      return end;
-    },
-    (source, pos, sink) => {
-      if (source[pos] !== '"') return null;
-      const start = pos;
-      const end = consumeUntilChar(source, pos, '"');
-      sink.add(start, end, propertyMark);
-      return end;
-    },
-    numberOrIdentifierRule((source, pos) => /\d/.test(source[pos]) || (source[pos] === '.' && /\d/.test(source[pos + 1] || '')), /[\d.eE+-]/, /[a-zA-Z_]/, /[a-zA-Z0-9_]/, addSqlIdentifier),
-    (source, pos, sink) => {
-      if (source[pos] !== '{' || source[pos + 1] !== '{') return null;
-      const start = pos;
-      pos += 2;
-      while (pos < source.length - 1 && !(source[pos] === '}' && source[pos + 1] === '}')) pos++;
-      pos = Math.min(pos + 2, source.length);
-      sink.add(start, pos, stringMark);
-      return pos;
-    },
-    (source, pos, sink) => {
-      if (!SQL_OPERATORS.has(source[pos])) return null;
-      const start = pos;
-      const twoChar = source.slice(pos, pos + 2);
-      if (SQL_OPERATORS.has(twoChar)) {
-        pos += 2;
+function tokenizeSql(text: string, sink: TokenSink): void {
+  const tokens = tokenizeSqlStatement(text, true);
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+
+    switch (token.kind) {
+      case 'comment': sink.add(token.start, token.end, commentMark); break;
+      case 'literal':
+      case 'blob':
+      case 'placeholder': sink.add(token.start, token.end, stringMark); break;
+      case 'identifier':
+      case 'parameter': sink.add(token.start, token.end, propertyMark); break;
+      case 'number': sink.add(token.start, token.end, numberMark); break;
+      case 'word': addSqlIdentifier(text, token.start, token.end, sink); break;
+      case 'punctuation': {
+        const next = tokens[index + 1];
+        if (next?.start === token.end && SQL_OPERATORS.has(token.value + next.value)) {
+          sink.add(token.start, next.end, operatorMark);
+          index++;
+        }
+        else if (SQL_OPERATORS.has(token.value)) sink.add(token.start, token.end, operatorMark);
+        break;
       }
-      else {
-        pos++;
-      }
-      sink.add(start, pos, operatorMark);
-      return pos;
     }
-  ]);
+  }
 }
 
 function tokenizeJavaScriptCollect(text: string, baseOffset: number, ranges: DecorationRange[]): void {
@@ -254,6 +244,7 @@ function tokenizeJavaScriptCollect(text: string, baseOffset: number, ranges: Dec
 function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates: boolean): void {
   const templateRule: TokenRule = (source, pos, tokenSink) => {
     if (!parseTemplates || source[pos] !== '`') return null;
+
     return tokenizeTemplateString(source, pos, tokenSink);
   };
 
@@ -266,12 +257,14 @@ function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates:
       const start = pos;
       const end = consumeEscapedString(source, pos, quote);
       tokenSink.add(start, end, stringMark);
+
       return end;
     },
     numberOrIdentifierRule((source, pos) => /\d/.test(source[pos]), /[\d.eExXa-fA-F_]/, /[a-zA-Z_$]/, /[a-zA-Z0-9_$]/, addJsIdentifier),
     (source, pos, tokenSink) => {
       if (source[pos] === '=' && source[pos + 1] === '>') {
         tokenSink.add(pos, pos + 2, operatorMark);
+
         return pos + 2;
       }
 
@@ -280,6 +273,7 @@ function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates:
       pos++;
       while (pos < source.length && /[+\-*/%=<>!&|?:]/.test(source[pos])) pos++;
       tokenSink.add(start, pos, operatorMark);
+
       return pos;
     }
   ]);
@@ -299,11 +293,13 @@ function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): num
       if (pos > stringStart) {
         templateRanges.push({ from: stringStart, to: pos, mark: stringMark });
       }
+
       templateRanges.push({ from: pos, to: pos + 2, mark: operatorMark });
       pos += 2;
 
       let braceDepth = 1;
       const exprStart = pos;
+
       while (pos < len && braceDepth > 0) {
         if (text[pos] === '{') braceDepth++;
         else if (text[pos] === '}') braceDepth--;
@@ -320,13 +316,16 @@ function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): num
         templateRanges.push({ from: pos, to: pos + 1, mark: operatorMark });
         pos++;
       }
+
       stringStart = pos;
     }
     else if (text[pos] === '`') {
       pos++;
+
       if (pos > stringStart) {
         templateRanges.push({ from: stringStart, to: pos, mark: stringMark });
       }
+
       break;
     }
     else {
@@ -335,9 +334,11 @@ function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): num
   }
 
   templateRanges.sort((a, b) => a.from - b.from);
+
   for (const range of templateRanges) {
     sink.add(range.from, range.to, range.mark);
   }
+
   return pos;
 }
 
@@ -390,9 +391,11 @@ function classifyConfigYamlValue(key: string, value: string): Decoration {
   if (key === 'type' && CHART_TYPE_VALUES.has(value.toLowerCase())) {
     return keywordMark;
   }
+
   if (/^\d+(\.\d+)?$/.test(value)) {
     return numberMark;
   }
+
   return stringMark;
 }
 
@@ -400,9 +403,11 @@ function classifyGenericYamlValue(_key: string, value: string): Decoration {
   if (/^(true|false|yes|no)$/i.test(value)) {
     return keywordMark;
   }
+
   if (/^\d+(\.\d+)?$/.test(value)) {
     return numberMark;
   }
+
   return stringMark;
 }
 
@@ -429,16 +434,18 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (node.name.includes('HyperMD-codeblock-begin')) {
         const lineText = doc.sliceString(node.from, node.to);
         const match = lineText.match(/^```(\S+)/);
+
         if (match && VAULTQUERY_LANGUAGES.has(match[1])) {
           currentBlock = {
             language: match[1],
-            contentStart: node.to + 1, 
+            contentStart: node.to + 1,
             lines: []
           };
         }
         else {
           currentBlock = null;
         }
+
         return;
       }
 
@@ -450,11 +457,20 @@ function buildDecorations(view: EditorView): DecorationSet {
 
           let inTemplate = false;
           let inConfig = false;
+          const sqlRanges: DecorationRange[] = [];
+          let sqlRangeIndex = 0;
+          const first = currentBlock.lines[0].from;
+          const last = currentBlock.lines[currentBlock.lines.length - 1].to;
+
+          if (!isProviderDefinitionBlock) tokenizeSql(doc.sliceString(first, last), rangeTokenSink(first, sqlRanges));
 
           for (const line of currentBlock.lines) {
             const content = doc.sliceString(line.from, line.to);
             const trimmed = content.trim();
+            while (sqlRanges[sqlRangeIndex]?.to <= line.from) sqlRangeIndex++;
+            const continuesSqlToken = !inTemplate && !inConfig && sqlRanges[sqlRangeIndex]?.from < line.from;
             builder.add(line.from, line.from, codeBlockLineMark);
+
             if (line.from < line.to) {
               builder.add(line.from, line.to, noSpellcheckMark);
             }
@@ -464,7 +480,7 @@ function buildDecorations(view: EditorView): DecorationSet {
               continue;
             }
 
-            if (isConfigCapableBlock && trimmed.startsWith('config:')) {
+            if (!continuesSqlToken && isConfigCapableBlock && trimmed.startsWith('config:')) {
               const configStart = content.indexOf('config:');
               builder.add(line.from + configStart, line.from + configStart + 7, labelMark);
               inConfig = true;
@@ -476,14 +492,16 @@ function buildDecorations(view: EditorView): DecorationSet {
               continue;
             }
 
-            if (isQueryBlock && trimmed.startsWith('template:')) {
+            if (!continuesSqlToken && isQueryBlock && trimmed.startsWith('template:')) {
               const templateStart = content.indexOf('template:');
               builder.add(line.from + templateStart, line.from + templateStart + 9, labelMark);
 
               const afterTemplate = content.slice(templateStart + 9);
+
               if (afterTemplate.trim()) {
                 tokenizeJavaScript(afterTemplate, line.from + templateStart + 9, builder);
               }
+
               inTemplate = true;
               continue;
             }
@@ -492,11 +510,16 @@ function buildDecorations(view: EditorView): DecorationSet {
               tokenizeJavaScript(content, line.from, builder);
             }
             else {
-              tokenizeSql(content, line.from, builder);
+              for (let index = sqlRangeIndex; index < sqlRanges.length && sqlRanges[index].from < line.to; index++) {
+                const range = sqlRanges[index];
+                builder.add(Math.max(line.from, range.from), Math.min(line.to, range.to), range.mark);
+              }
             }
           }
         }
+
         currentBlock = null;
+
         return;
       }
 
@@ -554,21 +577,27 @@ function isInsideVaultqueryBlock(state: EditorState, pos: number): boolean {
   while (node) {
     if (node.name.includes('HyperMD-codeblock')) {
       let searchNode: SyntaxNode | null = node;
+
       while (searchNode?.prevSibling) {
         searchNode = searchNode.prevSibling;
+
         if (searchNode.name.includes('HyperMD-codeblock-begin')) {
           const lineText = doc.sliceString(searchNode.from, searchNode.to);
           const match = lineText.match(/^```(\S+)/);
+
           if (match && VAULTQUERY_LANGUAGES.has(match[1])) {
             return true;
           }
+
           return false;
         }
+
         if (searchNode.name.includes('HyperMD-codeblock-end')) {
           return false;
         }
       }
     }
+
     node = node.parent;
   }
 
@@ -584,7 +613,8 @@ export const disableAutoPairInVaultquery = EditorState.transactionFilter.of((tr:
   let asteriskInsertPos = -1;
 
   tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-    const insertedText = inserted.toString();
+    const insertedText = inserted.sliceString(0);
+
     if (insertedText === '**' && fromA === toA) {
       hasAutoPairedAsterisk = true;
       asteriskInsertPos = fromA;

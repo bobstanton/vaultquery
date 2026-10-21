@@ -11,13 +11,14 @@ export const INDEXING_SQL = {
   // Notes - see insertNoteCore in IndexingOperations.ts for why these are
   // separate INSERT/UPDATE statements rather than an UPSERT.
   CHECK_NOTE_EXISTS: 'SELECT 1 FROM notes WHERE path = ? LIMIT 1',
-  INSERT_NOTE: 'INSERT INTO notes (path, title, content, created, modified, size) VALUES (?, ?, ?, ?, ?, ?)',
+  INSERT_NOTE: 'INSERT INTO notes (path, title, content, created, modified, size, content_status) VALUES (?, ?, ?, ?, ?, ?, ?)',
   UPDATE_NOTE: `UPDATE notes SET
       title = ?,
       content = ?,
       created = ?,
       modified = ?,
-      size = ?
+      size = ?,
+      content_status = ?
     WHERE path = ?`,
   DELETE_NOTE: 'DELETE FROM notes WHERE path = ?',
   DELETE_ALL_NOTES: 'DELETE FROM notes',
@@ -25,7 +26,7 @@ export const INDEXING_SQL = {
 
   // Properties - Use separate INSERT/UPDATE for proper trigger semantics
   SELECT_PROPERTIES_FOR_PATH: 'SELECT key, value, value_type, array_index FROM properties WHERE path = ?',
-  SELECT_NOTE_PROPERTY_KEYS: 'SELECT DISTINCT key FROM properties WHERE path = ? AND array_index IS NULL',
+  SELECT_NOTE_PROPERTY_KEYS: 'SELECT DISTINCT key FROM properties WHERE path = ?',
   INSERT_PROPERTY: 'INSERT INTO properties (path, key, value, value_type, array_index) VALUES (?, ?, ?, ?, ?)',
   UPDATE_PROPERTY_BY_KEY: 'UPDATE properties SET key = ?, value = ?, value_type = ?, array_index = ? WHERE path = ? AND key = ? AND COALESCE(array_index, -1) = ?',
   DELETE_PROPERTY_BY_KEY: 'DELETE FROM properties WHERE path = ? AND key = ? AND COALESCE(array_index, -1) = ?',
@@ -60,11 +61,11 @@ export const INDEXING_SQL = {
 } as const;
 
 export function noteToParams(note: NoteRecord): (string | number | null)[] {
-  return [note.path, note.title, note.content, note.created, note.modified, note.size];
+  return [note.path, note.title, note.content, note.created, note.modified, note.size, note.content_status];
 }
 
 export function noteToUpdateParams(note: NoteRecord): (string | number | null)[] {
-  return [note.title, note.content, note.created, note.modified, note.size, note.path];
+  return [note.title, note.content, note.created, note.modified, note.size, note.content_status, note.path];
 }
 
 /**
@@ -96,8 +97,6 @@ export function userTriggerToParams(path: string, trigger: UserTriggerData, sqlH
 
 export const PREPARED_STATEMENT_CACHE_LIMIT = 300;
 
-/** Batch size for deleting rows by ID */
 export const BATCH_DELETE_CHUNK_SIZE = 500;
 
-/** Max rows per INSERT batch */
 export const MAX_ROWS_PER_INSERT_BATCH = 100;

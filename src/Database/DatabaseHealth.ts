@@ -20,6 +20,7 @@ export function checkSqlJsDatabaseHealth(db: Database | null, baseDiagnostics: R
 
     if (!notesTableExists) {
       const allTables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+
       diagnostics.existingTables = allTables.length > 0
         ? allTables[0].values.map(row => row[0])
         : [];
