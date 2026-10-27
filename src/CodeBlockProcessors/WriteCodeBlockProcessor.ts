@@ -1,5 +1,5 @@
 import { processQueryBlock } from './QueryBlockLifecycle';
-import { App, MarkdownPostProcessorContext, MarkdownRenderChild, setIcon } from 'obsidian';
+import { App, MarkdownPostProcessorContext, MarkdownRenderChild, Notice, setIcon } from 'obsidian';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { createLoadingIndicator } from '../utils/IndexingUtils';
 import { parseQueryBlock } from '../utils/QueryParsingUtils';
@@ -94,7 +94,18 @@ export class WriteCodeBlockProcessor {
 
     let currentPreviewResult: PreviewResult | null = null;
     let previewContainer: HTMLElement | null = null;
-    let applying = false;
+    let applyPending = false;
+    let refreshPending = false;
+
+    const refreshPreview = async (): Promise<void> => {
+      if (applyPending) {
+        refreshPending = true;
+
+        return;
+      }
+
+      await this.replacePreparedPreview(container, writeContainer, currentPreviewResult?.planId, parsed, sourcePath, ctx, planNotice);
+    };
 
     const loading = createLoadingIndicator(writeContainer, 'Generating preview...');
 
@@ -126,19 +137,27 @@ export class WriteCodeBlockProcessor {
         settings: this.plugin.settings,
         parsed: parsed,
         openFile: createOpenFileHandler(this.app),
-        onApply: () => {
-          if (applying) return;
-          applying = true;
-
+        onApply: async () => {
           const recoverStale = planId ? async () => {
             if (!this.renderGuard.isCurrent(container, renderVersion)) return;
 
             await this.replacePreparedPreview(container, writeContainer, planId, parsed, sourcePath, ctx,
-              'The file preview changed or expired. Review this fresh preview and apply again.');
+              'Nothing was written because this preview is no longer current. Review these changes and apply again.');
           } : undefined;
 
-          void this.applyPreview(currentPreviewResult!, previewContainer!, recoverStale)
-            .finally(() => { applying = false; });
+          try {
+            await this.applyPreview(currentPreviewResult!, previewContainer!, recoverStale);
+          }
+          finally {
+            refreshPending = false;
+          }
+        },
+        onApplyPendingChange: pending => {
+          applyPending = pending;
+          if (!pending && refreshPending) {
+            refreshPending = false;
+            void refreshPreview();
+          }
         },
         onCancel: () => {
           if (currentPreviewResult?.planId) api.discardPreview(currentPreviewResult.planId);
@@ -151,16 +170,14 @@ export class WriteCodeBlockProcessor {
 
           currentPreviewResult = null;
         },
-        onRefresh: async () => {
-          await this.replacePreparedPreview(container, writeContainer, planId, parsed, sourcePath, ctx);
-        }
+        onRefresh: refreshPreview
       };
 
       PreviewGridRenderer.renderPreview(currentPreviewResult, previewContext);
 
       if (planNotice) {
         const notice = writeContainer.createDiv({ cls: 'vaultquery-preview-notice', text: planNotice });
-        notice.setAttribute('role', 'status');
+        notice.setAttribute('role', 'alert');
         writeContainer.prepend(notice);
       }
     }
@@ -276,6 +293,8 @@ export class WriteCodeBlockProcessor {
 
     catch (error: unknown) {
       if (error instanceof FilePreviewStaleError && recoverStale) {
+        logger.info('Write preview requires another review', { table: previewResult.table, operation: previewResult.op, reason: error.message });
+        new Notice('Nothing was written. Review the refreshed preview and apply again.');
         await recoverStale();
 
         return;

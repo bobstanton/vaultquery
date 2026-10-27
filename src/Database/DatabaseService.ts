@@ -16,15 +16,15 @@ import type { EnabledFeatures } from './DatabaseSchema';
 import { createSchema as createSchemaCore, createIndexes as createIndexesCore, runPragmaStatements as runPragmaStatementsCore, MatRefreshSqlCache } from './SchemaOperations';
 import type { IndexCreationState } from './SchemaOperations';
 import { StatementCache } from './StatementCache';
-import { DatabaseLock, exportWithRuntimeStateRestore, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
-import type { ExportRuntimeState, UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
+import { DatabaseLock, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
+import type { UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
 import { INDEXING_SQL, PREPARED_STATEMENT_CACHE_LIMIT, MAX_ROWS_PER_INSERT_BATCH } from './IndexingQueries';
 import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
 import type { IndexingDbAdapter } from './IndexingOperations';
 import { CustomSQLFunctions } from './CustomSQLFunctions';
 import { DatabaseSchemaManager } from './DatabaseSchemaManager';
 import type { VaultFileAdapter } from './DatabaseInterface';
-import { loadWasmBinary, cacheWasmBinaryIfNeeded, CDN_URL } from './WasmLoader';
+import { loadWasmBinary, cacheWasmBinaryIfNeeded } from './WasmLoader';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
 import { queryStatementRows, queryStatementValues, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
@@ -62,7 +62,6 @@ export interface QueryMirrorSnapshot {
 
 export class VaultDatabase {
   private csvOperations?: DataFileDatabaseOperations;
-  private app: App;
   private db: Database;
   private fileAdapter: VaultFileAdapter | null;
   private databasePath: string;
@@ -85,8 +84,7 @@ export class VaultDatabase {
   private exportGeneration = 0;
   private readonly queryCursors = new QueryBatchCursors(() => this.db);
 
-  private constructor(app: App, db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
-    this.app = app;
+  private constructor(_app: App, db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
     this.db = db;
     this.fileAdapter = fileAdapter;
     this.useMemoryStorage = useMemoryStorage;
@@ -106,7 +104,6 @@ export class VaultDatabase {
 
     const sqlJs = await initSqlJs({
       wasmBinary,
-      locateFile: wasmBinary ? undefined : (() => CDN_URL)
     });
 
     const db = new sqlJs.Database(new Uint8Array(data));
@@ -126,13 +123,13 @@ export class VaultDatabase {
     const adapter = wasmAdapter || fileAdapter;
 
     const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
-    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
     const { wasmBinary } = wasmLoadResult;
 
     const sqlJs = await initSqlJs({
       wasmBinary,
-      locateFile: wasmBinary ? undefined : (() => CDN_URL)
     });
+
+    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
 
     let db: Database;
 
@@ -212,32 +209,13 @@ export class VaultDatabase {
     runPragmaStatementsCore(this.db, error => logger.warn('Some database optimizations are not available', error));
   }
 
-  private exportRuntimeState(): ExportRuntimeState {
-    return {
-      statementCache: this.statementCache,
-      matRefreshSqlCache: this.matRefreshSqlCache,
-      registeredFunctionSources: this.registeredFunctionSources,
-      runPragmaStatements: () => this.runPragmaStatements(),
-      registerBuiltinFunctions: () => {
-        CustomSQLFunctions.register(this.db, this.app);
-        this.triggerFunctions?.register(this.db);
-      },
-      registerCustomFunction: (name, source) => {
-        this.registeredFunctionHashes.delete(name);
-        this.registerCustomFunction(name, source);
-      },
-    };
-  }
-
   public acquireDatabaseLock(): Promise<() => void> {
     return this.dbLock.acquire();
   }
 
   private exportWithRuntimeState(): Uint8Array {
-    this.queryCursors.invalidate();
     this.exportGeneration++;
-
-    return exportWithRuntimeStateRestore(this.db, this.exportRuntimeState());
+    return this.db.export();
   }
 
   private snapshotVersion(): string {

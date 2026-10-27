@@ -1156,7 +1156,7 @@ export function render(container: HTMLElement, ctx: RenderContext): void {
   para36.createEl('code', { cls: 'vaultquery-help-code', text: "vaultquery-write" });
   para36.appendText(" blocks before applying.");
   const para37 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para37.appendText("Previews expire after five minutes. Changed files or relevant settings require a new preview. A failed batch can leave some files changed; check the result before retrying.");
+  para37.appendText("Pending previews follow the query auto-refresh setting; refreshing never applies changes. Previews expire after five minutes. Changed files or relevant settings require a new preview. A failed batch can leave some files changed; check the result before retrying.");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Insert new note" });
   const codeBlock22 = container.createEl('pre', { cls: 'HyperMD-codeblock HyperMD-codeblock-bg display-only' });
   codeBlock22.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "```vaultquery-write\n" });

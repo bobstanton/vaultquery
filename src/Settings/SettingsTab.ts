@@ -658,7 +658,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
           items: [
             {
               name: 'SQL.js WASM source',
-              desc: 'Controls how the SQLite WebAssembly binary is loaded. Auto uses a local file when present and falls back to sql.js.org. Local only never uses the network. CDN only always downloads from sql.js.org.',
+              desc: 'Auto uses a versioned local cache, then downloads the exact sql.js version used by this build from jsDelivr. Local only uses sql-wasm.wasm or a custom path without network access.',
               control: {
                 type: 'dropdown',
                 key: 'wasmSource',
@@ -667,13 +667,13 @@ export class VaultQuerySettingTab extends PluginSettingTab {
             },
             {
               name: 'Cache WASM locally',
-              desc: 'Saves a CDN-loaded SQL.js WASM binary to the plugin folder for later local loading.',
+              desc: 'After successful initialization, saves the downloaded binary under a filename containing its sql.js version.',
               visible: settings.wasm.source !== 'local',
               control: { type: 'toggle', key: 'wasmCacheLocally' },
             },
             {
               name: 'Custom WASM path',
-              desc: 'Optional path to sql-wasm.wasm. Empty uses the plugin folder. Absolute paths and vault-relative paths are supported.',
+              desc: 'Optional path to a WASM file matching this build. Empty uses the plugin folder. Absolute paths and vault-relative paths are supported.',
               visible: settings.wasm.source !== 'cdn',
               control: { type: 'text', key: 'wasmCustomPath', placeholder: 'Leave empty for default' },
             },

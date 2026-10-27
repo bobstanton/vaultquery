@@ -19,6 +19,8 @@ export const SQL_FUNCTION_TOKENS = new Set([
   'date', 'time', 'datetime', 'julianday', 'strftime',
   'ifnull', 'iif', 'glob', 'hex', 'quote', 'zeroblob',
   'total', 'group_concat', 'json', 'json_extract', 'json_array', 'json_object',
+  'jsonb', 'jsonb_extract', 'json_each', 'json_tree', 'jsonb_each', 'jsonb_tree',
+  'json_array_insert', 'jsonb_array_insert', 'json_quote', 'unistr', 'unistr_quote', 'format',
 ]);
 
 export const SQL_TYPE_TOKENS = new Set([

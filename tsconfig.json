@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "resolveJsonModule": true,
     "outDir": "dist",
     "noEmit": true,
     "inlineSourceMap": true,

@@ -1,6 +1,6 @@
 {
 	"name": "vaultquery",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Query notes and frontmatter through a local SQLite index with output to table, chart or calendar.",
 	"main": "main.js",
 	"types": "index.d.ts",
@@ -79,7 +79,7 @@
 		"papaparse": "^5.7.0",
 		"placeholder-resolver": "git+https://github.com/bobstanton/placeholder-resolver.git#3ed9fc1ae04e27681788906046065f1cb7112c4f",
 		"slickgrid": "^5.20.2",
-		"sql.js": "1.14.2",
+		"sql.js": "~1.15.2",
 		"user-template-renderer": "git+https://github.com/bobstanton/user-template-renderer.git"
 	},
 	"overrides": {

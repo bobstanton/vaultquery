@@ -94,13 +94,15 @@ export class MarkdownTableUtils {
 
       let j = endLineExclusive;
       let block_id: string | undefined;
+      let blockLine = j;
+      while (blockLine < lines.length && !lines[blockLine].trim()) blockLine++;
 
-      if (j < lines.length) {
-        const blockMatch = lines[j].match(/\^([\w-]+)\s*$/);
+      if (blockLine < lines.length) {
+        const blockMatch = lines[blockLine].match(/^\s*\^([\w-]+)\s*$/);
 
         if (blockMatch) {
           block_id = blockMatch[1];
-          j++;
+          j = blockLine + 1;
         }
       }
 
@@ -109,7 +111,7 @@ export class MarkdownTableUtils {
         table_name: block_id ?? currentHeading ?? noteTitle,
         block_id,
         start_offset: lineOffsets[startLine] + contentOffset,
-        end_offset: lineOffsets[j] + contentOffset,
+        end_offset: Math.min(lineOffsets[j], content.length) + contentOffset,
         line_number: startLine + 1
       });
 
@@ -127,7 +129,7 @@ export class MarkdownTableUtils {
 
     for (const { startLine, endLineExclusive } of this.iterateTables(lines)) {
       if (found === tableIndex) {
-        return { start: lineOffsets[startLine], end: lineOffsets[endLineExclusive] };
+        return { start: lineOffsets[startLine], end: Math.min(lineOffsets[endLineExclusive], content.length) };
       }
 
       found++;

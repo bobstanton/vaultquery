@@ -1,6 +1,4 @@
 import type { Database } from 'sql.js';
-import type { StatementCache } from './StatementCache';
-import type { MatRefreshSqlCache } from './SchemaOperations';
 
 // Logic shared between the main-thread VaultDatabase and the database worker.
 // Must stay free of Obsidian imports (directly or transitively): the worker
@@ -62,29 +60,6 @@ export class DatabaseLock {
 
     return releaseLock!;
   }
-}
-
-export interface ExportRuntimeState {
-  statementCache: StatementCache;
-  matRefreshSqlCache: MatRefreshSqlCache;
-  registeredFunctionSources: ReadonlyMap<string, string>;
-  runPragmaStatements: () => void;
-  registerBuiltinFunctions: () => void;
-  registerCustomFunction: (name: string, source: string) => void;
-}
-
-export function exportWithRuntimeStateRestore(db: Database, state: ExportRuntimeState): Uint8Array {
-  state.statementCache.freeAll();
-  const data = db.export();
-  state.matRefreshSqlCache.invalidate();
-  state.runPragmaStatements();
-  state.registerBuiltinFunctions();
-
-  for (const [name, source] of Array.from(state.registeredFunctionSources.entries())) {
-    state.registerCustomFunction(name, source);
-  }
-
-  return data;
 }
 
 export async function runBatchIndexing(db: Database, isInitialIndexing: boolean, runInTx: () => void | Promise<void>): Promise<void> {

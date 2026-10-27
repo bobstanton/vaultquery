@@ -198,7 +198,6 @@ export class WorkerDatabase {
     const adapter = wasmAdapter || fileAdapter;
 
     const wasmLoadResult = await loadWasmBinary(adapter, pluginDir, wasmSettings);
-    await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
     const { wasmBinary } = wasmLoadResult;
 
     const instance = new WorkerDatabase(
@@ -211,6 +210,7 @@ export class WorkerDatabase {
     try {
       await instance.ready;
       await instance.callWorker({ type: 'init', wasmBinary }, WORKER_SETUP_TIMEOUT_MS);
+      await cacheWasmBinaryIfNeeded(wasmLoadResult, adapter, pluginDir, wasmSettings);
 
       if (!useMemoryStorage && fileAdapter && await fileAdapter.exists(actualDatabasePath)) {
         await instance.importDatabase(await fileAdapter.readBinary(actualDatabasePath));

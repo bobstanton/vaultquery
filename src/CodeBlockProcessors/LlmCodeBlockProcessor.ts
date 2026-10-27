@@ -284,7 +284,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       throw new Error('The saved query is not a single SELECT statement. It was not run.');
     }
 
-    if (request.showSql) {
+    if (request.showSql && generated.statementKind !== 'write') {
       const sqlEl = container.createDiv({ cls: 'vaultquery-nl-sql' });
       BaseRenderer.renderSqlCodeBlock(this.app, sqlEl, generated.sql);
 

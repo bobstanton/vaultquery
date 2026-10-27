@@ -323,7 +323,7 @@ Set the view preview row limit in settings (default: 10; 0 disables previews). M
 
 Preview changes in `vaultquery-write` blocks before applying.
 
-Previews expire after five minutes. Changed files or relevant settings require a new preview. A failed batch can leave some files changed; check the result before retrying.
+Pending previews follow the query auto-refresh setting; refreshing never applies changes. Previews expire after five minutes. Changed files or relevant settings require a new preview. A failed batch can leave some files changed; check the result before retrying.
 
 ## Insert new note
 

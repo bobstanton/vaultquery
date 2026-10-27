@@ -1,6 +1,6 @@
 # VaultQuery
 
-Query and update vault files with SQL. Display results as tables, charts, calendars, or JavaScript templates.
+Query and update notes using SQL. Display results as a table, chart, calendar, or using JavaScript.
 
 Documentation site: https://vaultquery.stanton.dev/
 
@@ -338,17 +338,14 @@ Network requests depend on enabled features:
 
 | Package    | URL                                                                       | Purpose                                                                                                                                                                                                                                                  |
 | ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VaultQuery | `https://sql.js.org/dist/sql-wasm.wasm`                                   | Loads the SQL.js WebAssembly binary required for the local SQLite database when CDN loading is selected or local loading falls back to CDN.                                                                                                              |
+| VaultQuery | `https://cdn.jsdelivr.net/npm/sql.js@<version>/dist/sql-wasm.wasm`        | Downloads the WASM for the sql.js version installed when this plugin was built.                                                                                                                                                                          |
 | VaultQuery | The provider URL configured in settings                                   | Translates a natural language request into SQL and selects a VaultQuery output. Sends the database schema description, known property names, and the natural language request, plus failed SQL and error messages when a generated statement is retried. |
 | VaultQuery | The HTTPS URL in a `vaultquery-remote-csv` or `vaultquery-web-json` block | Downloads a read-only CSV or JSON snapshot during discovery or refresh. Requests contain the source URL and optional cache validators; vault contents are not uploaded.                                                                                  |
 
 SQL.js loading modes:
 
-| Mode         | Behavior                                                                     | Network activity                                       |
-| ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `Auto`       | Tries a local `sql-wasm.wasm` file first, then falls back to the SQL.js CDN. | Only if the local file is missing.                     |
-| `Local only` | Loads `sql-wasm.wasm` from the plugin folder or custom path.                 | None. Initialization fails if the file is unavailable. |
-| `CDN only`   | Downloads `sql-wasm.wasm` from `sql.js.org`.                                 | One request during database initialization.            |
-
-When local caching is enabled, a CDN-loaded binary is saved to the plugin folder for later use.
-
+| Mode         | Behavior                                                                           | Network activity                                       |
+| ------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `Auto`       | Loads the versioned cache or custom path, then downloads that build's sql.js WASM. | Only if the local file is missing.                     |
+| `Local only` | Loads `sql-wasm.wasm` from the plugin folder or custom path.                       | None. Initialization fails if the file is unavailable. |
+| `CDN only`   | Downloads that build's exact sql.js version from jsDelivr.                         | One request during database initialization.            |

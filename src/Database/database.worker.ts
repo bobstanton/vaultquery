@@ -18,14 +18,10 @@ import { createUserSqlFunction } from '../utils/UserFunctionEvaluator';
 import { checkSqlJsDatabaseHealth } from './DatabaseHealth';
 import { queryStatementRows, queryStatementValues, runMultiRowInsertBatches, runPreparedStatement } from './StatementRows';
 import { batchDeleteRowsByIds } from './BatchDelete';
-import { exportWithRuntimeStateRestore, runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
+import { runBatchIndexing, mapUserViewRow, mapUserFunctionRow, mapUserTriggerRow } from './DatabaseCore';
 import type { UserViewRow, UserFunctionRow, UserTriggerRow } from './DatabaseCore';
 import { insertNoteCore, replaceTasksCore, replaceHeadingsCore, replaceListItemsCore, replacePropertiesCore, replaceUserFunctionsCore, replaceUserTriggersCore, performIndexingOperationsCore } from './IndexingOperations';
 import type { IndexingLogger, IndexingDbAdapter } from './IndexingOperations';
-
-// Intentionally duplicates WasmLoader.CDN_URL: the worker bundle cannot import
-// WasmLoader because it depends on 'obsidian'.
-const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
 
 let db: Database | null = null;
 
@@ -304,9 +300,9 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         break;
       }
       case 'init': {
+        if (!request.wasmBinary) throw new Error('Missing SQLite WASM binary');
         sqlJsModule = await initSqlJs({
           wasmBinary: request.wasmBinary,
-          locateFile: request.wasmBinary ? undefined : (() => CDN_URL)
         });
 
         db = new sqlJsModule.Database();
@@ -394,16 +390,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
 
       case 'export': {
         if (!db) throw new Error('Database not initialized');
-        const activeDb = db;
-
-        const data = exportWithRuntimeStateRestore(activeDb, {
-          statementCache,
-          matRefreshSqlCache,
-          registeredFunctionSources: registeredCustomFunctionSources,
-          runPragmaStatements,
-          registerBuiltinFunctions: () => WorkerSQLFunctions.register(activeDb),
-          registerCustomFunction,
-        });
+        const data = db.export();
 
         // Transfer instead of structured-clone: the database can be tens of
         // megabytes, and export() already returned a fresh buffer we own.

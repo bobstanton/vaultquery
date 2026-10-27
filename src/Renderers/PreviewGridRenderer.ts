@@ -1,6 +1,7 @@
 import { BaseRenderer } from './BaseRenderer';
 import { previewPresentation, type PreviewPresentation } from './PreviewPresentation';
-import { QueryRefreshRegistry } from './QueryRefreshRegistry';
+import { QueryRefreshRegistry, resolveAutoRefreshSetting } from './QueryRefreshRegistry';
+import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import { SlickGridRenderer } from './SlickGridRenderer';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { ConfirmationModal } from '../Modals/ConfirmationModal';
@@ -13,7 +14,8 @@ import type { PreviewResult } from '../Services/PreviewService';
 declare const activeWindow: Window;
 
 export interface PreviewRenderContext extends RenderContext {
-  onApply?: () => void;
+  onApply?: () => void | Promise<void>;
+  onApplyPendingChange?: (pending: boolean) => void;
   onCancel?: () => void;
 }
 
@@ -45,7 +47,13 @@ export class PreviewGridRenderer {
     });
 
     if (context.onRefresh) {
-      QueryRefreshRegistry.register(container, { onRefresh: context.onRefresh });
+      const operations = previewResult.multiResults ?? [previewResult];
+      const targets = new Set(operations.map(operation => operation.table));
+      QueryRefreshRegistry.register(container, {
+        onRefresh: context.onRefresh,
+        autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed),
+        sql: [context.parsed?.query ?? '', ...[...targets].map(table => `SELECT * FROM ${quoteIdentifier(table)}`)].join(';\n'),
+      });
     }
   }
 
@@ -405,11 +413,21 @@ export class PreviewGridRenderer {
       text: 'Apply changes'
     });
 
+    let applyPending = false;
     applyButton.addEventListener('click', () => {
+      if (applyPending) return;
+      applyPending = true;
+      context.onApplyPendingChange?.(true);
       void (async () => {
-        if (await this.confirmApply(previewResult, context)) {
-          container.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-          context.onApply?.();
+        try {
+          if (await this.confirmApply(previewResult, context)) {
+            container.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+            await context.onApply?.();
+          }
+        }
+        finally {
+          applyPending = false;
+          context.onApplyPendingChange?.(false);
         }
       })();
     });

@@ -1,96 +1,40 @@
 import { requestUrl } from 'obsidian';
 import type { VaultFileAdapter } from './DatabaseInterface';
 import type { WasmSettings } from '../Settings/Settings';
-import { getErrorMessage } from '../utils/ErrorMessages';
 import { logger as rootLogger } from '../utils/logger';
+import { CDN_URL, WASM_CACHE_FILENAME } from './SqlJsVersion';
 
 const logger = rootLogger.scope('WasmLoader');
 
-// Intentionally duplicated in database.worker.ts: the worker bundle cannot
-// import this module because it depends on 'obsidian'.
-export const CDN_URL = 'https://sql.js.org/dist/sql-wasm.wasm';
-const DEFAULT_WASM_FILENAME = 'sql-wasm.wasm';
-
 interface WasmLoadResult {
-  wasmBinary: ArrayBuffer | undefined;
+  wasmBinary: ArrayBuffer;
   fromCdn: boolean;
 }
 
 export async function loadWasmBinary(adapter: VaultFileAdapter | null, pluginDir: string | undefined, wasmSettings?: WasmSettings): Promise<WasmLoadResult> {
   const source = wasmSettings?.source ?? 'auto';
-  const customPath = wasmSettings?.customPath?.trim();
+  const filename = source === 'local' ? 'sql-wasm.wasm' : WASM_CACHE_FILENAME;
+  const localPath = wasmSettings?.customPath?.trim() || (pluginDir ? `${pluginDir}/${filename}` : null);
 
-  const getLocalPath = (): string | null => customPath || (pluginDir ? `${pluginDir}/${DEFAULT_WASM_FILENAME}` : null);
-
-  const tryLoadLocal = async (): Promise<ArrayBuffer | null> => {
-    const localPath = getLocalPath();
-    if (!localPath || !adapter || !await adapter.exists(localPath)) return null;
-
-    return adapter.readBinary(localPath);
-  };
-
-  const loadFromCdn = async (): Promise<ArrayBuffer> => {
-    const response = await requestUrl({ url: CDN_URL });
-
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Failed to fetch WASM from CDN: ${response.status}`);
+  if (source !== 'cdn') {
+    if (localPath && adapter && await adapter.exists(localPath)) {
+      return { wasmBinary: await adapter.readBinary(localPath), fromCdn: false };
     }
-
-    return response.arrayBuffer;
-  };
-
-  switch (source) {
-    case 'local': {
-      const localBinary = await tryLoadLocal();
-
-      if (!localBinary) {
-        const localPath = getLocalPath();
-        throw new Error(`WASM source is set to 'local' but file not found at: ${localPath || '(no path configured)'}`);
-      }
-
-      return { wasmBinary: localBinary, fromCdn: false };
-    }
-
-    case 'cdn': {
-      const cdnBinary = await loadFromCdn();
-
-      return { wasmBinary: cdnBinary, fromCdn: true };
-    }
-
-    case 'auto':
-    default: {
-      const localBinary = await tryLoadLocal();
-
-      if (localBinary) {
-        return { wasmBinary: localBinary, fromCdn: false };
-      }
-
-      try {
-        const cdnBinary = await loadFromCdn();
-
-        return { wasmBinary: cdnBinary, fromCdn: true };
-      }
-      catch (error) {
-        const localPath = getLocalPath();
-        throw new Error(
-          `Failed to load sql.js WASM. Checked local path ${localPath || '(no path configured)'} and CDN ${CDN_URL}: ${getErrorMessage(error)}`
-        );
-      }
+    if (source === 'local') {
+      throw new Error(`WASM source is set to 'local' but file not found at: ${localPath || '(no path configured)'}`);
     }
   }
+
+  const response = await requestUrl({ url: CDN_URL });
+  if (response.status < 200 || response.status >= 300) throw new Error(`Failed to fetch WASM from ${CDN_URL}: HTTP ${response.status}`);
+  return { wasmBinary: response.arrayBuffer, fromCdn: true };
 }
 
 export async function cacheWasmBinaryIfNeeded(result: WasmLoadResult, adapter: VaultFileAdapter | null, pluginDir: string | undefined, wasmSettings: WasmSettings | undefined): Promise<void> {
-  if (!result.fromCdn || !result.wasmBinary || !wasmSettings?.cacheLocally || !adapter || !pluginDir) {
-    return;
-  }
-
+  if (!result.fromCdn || !wasmSettings?.cacheLocally || !adapter || !pluginDir) return;
   try {
-    const cachePath = `${pluginDir}/${DEFAULT_WASM_FILENAME}`;
-    await adapter.writeBinary(cachePath, result.wasmBinary);
-    logger.debug('Cached WASM binary to:', cachePath);
-  }
-  catch (error) {
-    logger.warn('Failed to cache WASM binary:', getErrorMessage(error));
+    await adapter.writeBinary(`${pluginDir}/${WASM_CACHE_FILENAME}`, result.wasmBinary);
+  } catch (error) {
+    logger.warn('Failed to cache WASM binary:', error);
   }
 }
