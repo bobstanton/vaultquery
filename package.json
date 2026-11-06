@@ -1,6 +1,6 @@
 {
 	"name": "vaultquery",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"description": "Query notes and frontmatter through a local SQLite index with output to table, chart or calendar.",
 	"main": "main.js",
 	"types": "index.d.ts",

@@ -4,7 +4,7 @@ import type { SyntaxNode } from '@lezer/common';
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { CONFIG_CAPABLE_LANGUAGES, PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
 import { SQL_KEYWORD_TOKENS as SQL_KEYWORDS, SQL_FUNCTION_TOKENS as SQL_FUNCTIONS, SQL_TYPE_TOKENS as SQL_TYPES } from '../Constants/SqlCatalog';
-import { CHART_TYPES } from '../Constants/BlockConfigCatalog';
+import { CHART_TYPES, CHART_RENDERERS } from '../Constants/BlockConfigCatalog';
 import { tokenizeSqlStatement } from '../utils/SQLParsingUtils';
 import { skipWhitespace } from '../utils/StringUtils';
 
@@ -347,6 +347,7 @@ function tokenizeJavaScript(text: string, baseOffset: number, builder: RangeSetB
 }
 
 const CHART_TYPE_VALUES = new Set<string>(CHART_TYPES);
+const CHART_RENDERER_VALUES = new Set<string>(CHART_RENDERERS);
 
 interface YamlEntry {
   key: string;
@@ -389,6 +390,10 @@ type YamlValueClassifier = (key: string, value: string) => Decoration;
 
 function classifyConfigYamlValue(key: string, value: string): Decoration {
   if (key === 'type' && CHART_TYPE_VALUES.has(value.toLowerCase())) {
+    return keywordMark;
+  }
+
+  if (key === 'renderer' && CHART_RENDERER_VALUES.has(value.toLowerCase())) {
     return keywordMark;
   }
 

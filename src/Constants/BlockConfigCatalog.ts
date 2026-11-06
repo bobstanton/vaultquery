@@ -10,6 +10,9 @@ export const CHART_TYPES = ['bar', 'line', 'pie', 'doughnut', 'scatter'] as cons
 
 export type ChartTypeName = (typeof CHART_TYPES)[number];
 
+export const CHART_RENDERERS = ['chartjs', 'pele'] as const;
+export type ChartRendererName = (typeof CHART_RENDERERS)[number];
+
 export interface OptionBounds {
   min: number;
   max?: number;
@@ -103,6 +106,11 @@ const MARKDOWN_CONFIG_KEYS: ConfigKeyDefinition[] = [
 ];
 
 const CHART_CONFIG_KEYS: ConfigKeyDefinition[] = [
+  {
+    key: 'renderer',
+    detail: 'Chart.js by default; Pele requires Obsidian 1.15 or later and uses native chart features',
+    values: enumValues(...CHART_RENDERERS),
+  },
   {
     key: 'type',
     detail: 'Required',
@@ -242,6 +250,7 @@ const NATURAL_LANGUAGE_CONFIG_KEYS: ConfigKeyDefinition[] = [
     values: BOOLEAN_VALUES,
   },
   { key: 'type', detail: 'Applies to chart output', values: enumValues(...CHART_TYPES) },
+  { key: 'renderer', detail: 'Chart renderer; defaults to chartjs', values: enumValues(...CHART_RENDERERS) },
   { key: 'title', detail: 'Shown above chart output', values: [sampleValue('Tasks by status')] },
   { key: 'datasetLabel', detail: 'Shown in the chart legend', values: [sampleValue('Tasks')] },
   { key: 'xLabel', detail: 'Applies to bar, line, and scatter charts', values: [sampleValue('Date')] },

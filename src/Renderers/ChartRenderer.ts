@@ -4,8 +4,8 @@ import type { BubbleDataPoint, ChartTypeRegistry, Point } from 'chart.js';
 import { BaseRenderer } from './BaseRenderer';
 import { getErrorMessage } from '../utils/ErrorMessages';
 import { formatUnknownValue } from '../utils/ResultFormatUtils';
-import { CHART_TYPES } from '../Constants/BlockConfigCatalog';
-import type { ChartTypeName } from '../Constants/BlockConfigCatalog';
+import { CHART_TYPES, CHART_RENDERERS } from '../Constants/BlockConfigCatalog';
+import type { ChartTypeName, ChartRendererName } from '../Constants/BlockConfigCatalog';
 
 type ChartDataPoint = number | Point | [number, number] | BubbleDataPoint | null;
 type AnyDataset = ChartDataset<keyof ChartTypeRegistry, ChartDataPoint[]>;
@@ -20,8 +20,9 @@ function ensureChartRegistration(): void {
 
 type ChartType = ChartTypeName;
 
-interface ChartConfig {
+export interface ChartConfig {
   type: ChartType;
+  renderer: ChartRendererName;
   title?: string;
   xLabel?: string;
   yLabel?: string;
@@ -67,7 +68,12 @@ export class ChartRenderer {
   }
 
   static parseConfig(options?: Record<string, unknown>): ChartConfig {
-    const config: Partial<ChartConfig> = {};
+    const renderer = options?.renderer ?? 'chartjs';
+    if (typeof renderer !== 'string' || !(CHART_RENDERERS as readonly string[]).includes(renderer.trim().toLowerCase())) {
+      throw new Error('Unknown chart renderer. Use renderer: chartjs or renderer: pele.');
+    }
+
+    const config: Partial<ChartConfig> = { renderer: renderer.trim().toLowerCase() as ChartRendererName };
 
     const type = this.parseChartType(options?.type);
 

@@ -9,6 +9,7 @@ export interface FloatingButtonsOptions {
   app?: App;
   exportFolder?: string;
   exportName?: string;
+  readMermaid?: () => string | undefined;
   onRefresh?: (force?: boolean) => Promise<void>;
 }
 
@@ -20,6 +21,7 @@ interface FloatingButtonsState {
   app?: App;
   exportFolder: string;
   exportName: string;
+  readMermaid?: () => string | undefined;
   onRefresh?: (force?: boolean) => Promise<void>;
   shape: string;
   listeners: AbortController;
@@ -29,6 +31,7 @@ function release(state: FloatingButtonsState): void {
   state.listeners.abort();
   state.readResults = undefined;
   state.readColumns = undefined;
+  state.readMermaid = undefined;
   state.onRefresh = undefined;
   state.app = undefined;
 }
@@ -68,6 +71,7 @@ export function addFloatingButtons(container: HTMLElement, options: FloatingButt
   if (existing?.buttonContainer.isConnected && existing.buttonContainer.parentElement === container && existing.shape === shape) {
     existing.readResults = readResults;
     existing.readColumns = readColumns;
+    existing.readMermaid = options.readMermaid;
     existing.dataFileColumns = options.dataFileColumns;
     existing.app = options.app;
     existing.exportFolder = options.exportFolder ?? existing.exportFolder;
@@ -93,6 +97,7 @@ export function addFloatingButtons(container: HTMLElement, options: FloatingButt
     buttonContainer,
     readResults,
     readColumns,
+    readMermaid: options.readMermaid,
     dataFileColumns: options.dataFileColumns,
     app: options.app,
     exportFolder: options.exportFolder ?? '',
@@ -111,6 +116,7 @@ export function addFloatingButtons(container: HTMLElement, options: FloatingButt
       get exportFolder() { return state.exportFolder; },
       get name() { return state.exportName; },
       get dataFileColumns() { return state.dataFileColumns; },
+      get readMermaid() { return state.readMermaid; },
       readRows: () => state.readResults?.() ?? [],
       readColumns: () => state.readColumns?.(),
     }, state.listeners.signal);

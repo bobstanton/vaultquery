@@ -7,6 +7,7 @@ import { VaultQuerySettings, mergeSettings, normalizeSettings } from './Settings
 import { VaultQuerySettingTab } from './Settings/SettingsTab';
 import { SlickGridRenderer } from './Renderers/SlickGridRenderer';
 import { ChartRenderer } from './Renderers/ChartRenderer';
+import { PeleChartRenderer } from './Renderers/PeleChartRenderer';
 import { DatabaseRecoveryManager } from './Managers/DatabaseRecoveryManager';
 import { IndexingStateManager } from './Managers/IndexingStateManager';
 import { QueryCodeBlockProcessor } from './CodeBlockProcessors/QueryCodeBlockProcessor';
@@ -465,6 +466,7 @@ export default class VaultQueryPlugin extends Plugin {
 
       SlickGridRenderer.cleanup();
       ChartRenderer.cleanup();
+      PeleChartRenderer.cleanup();
 
       if (this.api) {
         void this.api.close().catch(error => logger.lifecycle.error('Error closing database during unload', error));

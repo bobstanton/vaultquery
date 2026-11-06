@@ -7,6 +7,8 @@ title: VaultQuery Chart Help
 
 Use `vaultquery-chart` to render query results as a chart. Query must include `label` and `value` columns (or `x`/`y` for scatter). Add a `series` column for multiple datasets.
 
+Charts use Chart.js by default. Set `renderer: pele` to use Obsidian's native Pele renderer on Obsidian 1.15 or later.
+
 ## Bar chart
 
 ~~~vaultquery-chart
@@ -118,6 +120,22 @@ type: bar
 title: Sales vs Trend
 ~~~
 
+## Pele renderer
+
+~~~vaultquery-chart
+SELECT status as label, COUNT(*) as value
+FROM tasks
+GROUP BY status;
+
+config:
+renderer: pele
+type: bar
+title: Tasks by status
+datasetLabel: Tasks
+~~~
+
+Pele renders charts using Obsidian's diagram renderer, theme colors, fonts, and native sizing and zoom behavior. 
+
 ## Chart result columns
 
 | Column            | Description                                            |
@@ -136,6 +154,7 @@ title: Sales vs Trend
 | Setting                  | Description                                                       | Examples                                    |
 | ------------------------ | ----------------------------------------------------------------- | ------------------------------------------- |
 | `type`                   | Required                                                          | `bar`, `line`, `pie`, `doughnut`, `scatter` |
+| `renderer`               | Defaults to Chart.js; Pele requires Obsidian 1.15 or later         | `chartjs`, `pele`                            |
 | `title`                  | Shown above the chart                                             | `Task count`                                |
 | `datasetLabel`           | Shown in the legend                                               | `Tasks`                                     |
 | `xLabel`                 | Applies to bar, line, and scatter charts                          | `Status`                                    |

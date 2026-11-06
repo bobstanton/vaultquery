@@ -1,4 +1,5 @@
 import { ChartRenderer } from './ChartRenderer';
+import { PeleChartRenderer } from './PeleChartRenderer';
 import { CalendarRenderer } from './CalendarRenderer';
 import { MarkdownTableRenderer } from './MarkdownTableRenderer';
 import { SlickGridRenderer } from './SlickGridRenderer';
@@ -17,10 +18,13 @@ export class QueryRenderer {
     const { parsed, container } = context;
     const outputKind = parsed.output?.kind ?? 'table';
 
+    PeleChartRenderer.cleanupContainer(container);
+
     container.removeClass('vaultquery-calendar-output');
 
     if (outputKind === 'chart') {
       this.prepareNonGridRender(context);
+      ChartRenderer.cleanupContainer(container);
 
       const chartContext: ChartContext = {
         results: context.results,
@@ -28,9 +32,16 @@ export class QueryRenderer {
         config: ChartRenderer.parseConfig(parsed.output?.options)
       };
 
-      ChartRenderer.renderChart(chartContext);
+      if (chartContext.config.renderer === 'pele') {
+        if (!await PeleChartRenderer.render(context, chartContext.config)) return;
+      }
+      else {
+        ChartRenderer.renderChart(chartContext);
+      }
 
-      this.addOutputButtons(context);
+      const readMermaid = chartContext.config.renderer === 'pele' && context.results.length > 0
+        ? () => PeleChartRenderer.getSource(container) : undefined;
+      this.addOutputButtons(context, readMermaid);
 
       return;
     }
@@ -87,11 +98,11 @@ export class QueryRenderer {
     this.addOutputButtons(context);
   }
 
-  private static addOutputButtons(context: RenderContext): void {
+  private static addOutputButtons(context: RenderContext, readMermaid?: () => string | undefined): void {
     addFloatingButtons(context.container, { results: context.readResults ?? context.results,
       columns: context.readColumns ?? context.dataFileColumns, dataFileColumns: context.dataFileColumns,
       app: context.app, exportFolder: context.settings.exportFolder, exportName: exportNameFor(context),
-      onRefresh: context.onRefresh });
+      onRefresh: context.onRefresh, readMermaid });
   }
 
   private static prepareNonGridRender(context: RenderContext): void {

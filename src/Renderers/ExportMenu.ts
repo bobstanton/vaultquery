@@ -14,6 +14,7 @@ export interface ExportSource {
   exportFolder: string;
   readRows: () => Record<string, unknown>[];
   readColumns?: () => readonly string[] | undefined;
+  readMermaid?: () => string | undefined;
   dataFileColumns?: readonly string[];
   name: string;
 }
@@ -44,6 +45,11 @@ export function showExportMenu(event: MouseEvent, source: ExportSource): void {
       .onClick(() => { void copy(source, format, capabilities.clipboardLimitBytes); }));
   }
 
+  if (source.readMermaid) {
+    menu.addItem(item => item.setSection('copy').setTitle('Copy as Mermaid').setIcon('clipboard')
+      .onClick(() => { void copyMermaid(source, capabilities.clipboardLimitBytes); }));
+  }
+
   if (source.app) {
     for (const format of OFFERED) {
       menu.addItem(item => item.setSection('save').setTitle(`${TARGET_LABELS[target]} ${EXPORT_FORMATS[format].label}`).setIcon('download')
@@ -70,6 +76,25 @@ async function copy(source: ExportSource, format: 'md' | 'csv' | 'json', limitBy
   } catch (error) {
     logger.error('Copy failed', error);
     new Notice(error instanceof Error ? error.message : 'The rows could not be copied.');
+  }
+}
+
+async function copyMermaid(source: ExportSource, limitBytes: number): Promise<void> {
+  try {
+    const mermaid = source.readMermaid?.();
+    if (mermaid === undefined) return;
+    const body = buildCapped(['```mermaid\n', mermaid, '\n```\n'], limitBytes);
+
+    if (body === undefined) {
+      new Notice(`This chart is too large to copy (over ${Math.round(limitBytes / 1024).toLocaleString()} KB).`);
+      return;
+    }
+
+    await copyToClipboard(body);
+    new Notice('Copied chart as Mermaid');
+  } catch (error) {
+    logger.error('Mermaid copy failed', error);
+    new Notice(error instanceof Error ? error.message : 'The chart could not be copied.');
   }
 }
 
