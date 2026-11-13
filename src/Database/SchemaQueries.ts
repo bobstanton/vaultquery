@@ -130,6 +130,7 @@ export function processTableStructureResults(rows: unknown[][]): TableStructure[
 
     if (data.tableNames.length > 0) {
       const commonName = findCommonTableName(data.tableNames);
+
       baseName = sanitizeIdentifier(commonName || data.tableNames[0]);
 
       if (!baseName) {

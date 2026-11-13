@@ -63,6 +63,7 @@ export class PreparedFileWriteRegistry {
     assertAccess();
     this.expire();
     const id = crypto.randomUUID();
+
     this.plans.set(id, { kind, paths: [...paths], data, expires: Date.now() + 5 * 60_000, assertAccess });
     this.schedule();
 
@@ -80,6 +81,7 @@ export class PreparedFileWriteRegistry {
     this.updateAccess();
     this.expire();
     const plan = id ? this.plans.get(id) : undefined;
+
     if (!plan || plan.kind !== kind || this.disposed) throw new FilePreviewStaleError();
     this.plans.delete(id!);
     this.schedule();
@@ -102,6 +104,7 @@ export class PreparedFileWriteRegistry {
 
   discard(id: string): void {
     const plan = this.plans.get(id);
+
     if (!plan) return;
     this.plans.delete(id);
     this.schedule();
@@ -115,6 +118,7 @@ export class PreparedFileWriteRegistry {
 
   async withPath<T>(path: string, work: () => Promise<T>): Promise<T> {
     const operation = (this.pendingPaths.get(path) ?? Promise.resolve()).catch(() => {}).then(work);
+
     this.pendingPaths.set(path, operation);
 
     try {
@@ -128,6 +132,7 @@ export class PreparedFileWriteRegistry {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.invalidate();
+
     await Promise.allSettled([...this.active]);
   }
 
@@ -143,6 +148,7 @@ export class PreparedFileWriteRegistry {
 
     if (this.plans.size) {
       const expiry = Array.from(this.plans.values()).reduce((earliest, plan) => Math.min(earliest, plan.expires), Infinity);
+
       this.timer = window.setTimeout(() => { this.timer = undefined; this.expire(); }, Math.max(1, expiry - Date.now()));
     }
   }

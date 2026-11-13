@@ -71,9 +71,11 @@ export class PreviewService {
   private previewSingleStatementDml(sql: string, params: unknown[] = []): PreviewResult {
     const strippedSql = stripLeadingCte(sql);
     const op = detectDmlOperation(strippedSql);
+
     if (!op) throw new Error(ERROR_MESSAGES.DML_UNSUPPORTED_OPERATION);
 
     const table = extractTargetTableViaExplain(this.db, sql);
+
     if (!table) throw new Error(ERROR_MESSAGES.DML_TABLE_NOT_FOUND);
 
     const pkCols = getPrimaryKeyCols(this.db, table);
@@ -102,6 +104,7 @@ export class PreviewService {
 
     const multiResults: PreviewResult[] = [];
     const savepoint = "multi_preview";
+
     this.db.exec(`SAVEPOINT ${savepoint}`);
     this.db.exec('PRAGMA defer_foreign_keys = ON');
     let activeStatement = validatedStatements[0];
@@ -110,6 +113,7 @@ export class PreviewService {
       for (const statement of validatedStatements) {
         activeStatement = statement;
         const result = this.previewStatementAndApplyToTransaction(statement, params);
+
         multiResults.push(result);
       }
 
@@ -140,6 +144,7 @@ export class PreviewService {
       }
 
       this.resetDeferredForeignKeys();
+
       throw new Error(friendlySqliteError(e, { table: activeStatement.table }));
     }
   }
@@ -156,6 +161,7 @@ export class PreviewService {
     const applyChanges = mode === 'apply-to-transaction';
     const savepoint = applyChanges ? 'statement_preview' : 'preview';
     const { sql, op, table, pkCols } = statement;
+
     this.db.exec(`SAVEPOINT ${savepoint}`);
 
     try {
@@ -166,6 +172,7 @@ export class PreviewService {
 
         this.db.exec(`ROLLBACK TO ${savepoint}`);
         const { before, after } = this.buildPreviewRows(op, table, pkCols, affected, ids, rowids);
+
         this.db.exec(`RELEASE ${savepoint}`);
 
         if (applyChanges) {
@@ -270,6 +277,7 @@ export class PreviewService {
     for (const affectedRow of affected) {
       const conditions = viewKeyColumns.map(col => `${quoteIdentifier(col)} = ?`).join(' AND ');
       const values = viewKeyColumns.map(col => affectedRow[col]);
+
       before.push(...selectRows(this.db, `SELECT * FROM ${quoteIdentifier(table)} WHERE ${conditions}`, values));
     }
 
@@ -299,6 +307,7 @@ export class PreviewService {
     };
 
     const patternKeys = viewKeyPatterns[table];
+
     if (patternKeys?.every(k => k in sampleRow)) return patternKeys;
 
     if (table.endsWith('_table') && ['path', 'table_index', 'row_index'].every(k => k in sampleRow)) {
@@ -327,6 +336,7 @@ function selectRows(db: Database, sql: string, params: unknown[] = []): Row[] {
 
 function buildReturningList(pkCols: string[], tryRowid: boolean): string {
   const parts: string[] = [];
+
   if (tryRowid) parts.push("rowid");
 
   for (const c of pkCols) {
@@ -389,6 +399,7 @@ function tryCollectRowids(rows: Row[]): number[] {
 
   for (const r of rows) {
     const v = r.rowid;
+
     if (typeof v === "number" && Number.isFinite(v)) out.push(v);
   }
 
@@ -476,6 +487,7 @@ function extractTargetTableViaExplain(db: Database, sql: string): string | null 
 
     for (const row of rows) {
       const opcode = formatUnknownValue(row.opcode).toUpperCase();
+
       if (opcode !== "OPENWRITE") continue;
 
       const rootpage = Number(row.p2);

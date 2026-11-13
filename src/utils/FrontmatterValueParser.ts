@@ -57,6 +57,7 @@ export function parseFrontmatterValue(value: string | null, type: string | null)
     case 'tags':
       try {
         const parsed: unknown = JSON.parse(value);
+
         if (isFrontmatterValueArray(parsed)) return parsed;
       }
       catch (e) {

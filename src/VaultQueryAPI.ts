@@ -1,4 +1,5 @@
 import { isDataFilePath } from './Tabular/TabularTableOwnership';
+import { SQL_SYNTAX, type SqlSyntax } from './Constants/SqlCatalog';
 import { pathExtension } from './utils/PathUtils';
 import type { QueryValue } from './Database/QueryValues';
 import { awaitQueryOperation, consumeQuerySnapshot, QueryIterationInvalidatedError, throwIfQueryAborted } from './Database/QueryIteration';
@@ -189,6 +190,7 @@ export interface QueryMirrorStatus {
 }
 
 export interface IVaultQueryAPI {
+  readonly sqlSyntax?: SqlSyntax;
   iterateQueryBatches(sql: string, noteSource?: NoteSource, options?: QueryIterationOptions): AsyncIterableIterator<QueryResult[]>;
   /**
    * Run a single SELECT against the indexed vault data, excluding action functions.
@@ -379,6 +381,10 @@ export type { EventRef };
 const MIRROR_READ_LOST_RACE = /abort due to ROLLBACK/i;
 
 export class VaultQueryAPI implements IVaultQueryAPI {
+  get sqlSyntax(): SqlSyntax {
+    return SQL_SYNTAX;
+  }
+
   private readonly otherFileIndex: OtherFileIndexingService;
   private otherFileSettingsKey = '';
   private readonly imageIndex: ImageIndexingService;
@@ -580,6 +586,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         if (mirror && (tables.length || relocations.length)) {
           try {
             await publishProviderSnapshots(this.database, mirror, tables, relocations);
+
             await this.syncCustomViewsToQueryMirror(mirror);
           }
           catch (error) {
@@ -598,6 +605,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
       if (!this.providerRefreshWave && (tables.length || relocations.length)) {
         const changed = [...tables, ...relocations.flatMap(relocation => [relocation.previous.table, relocation.current.table])];
+
         window.setTimeout(() => { void QueryRefreshRegistry.refreshAll({ force: true, tables: changed }); }, 0);
       }
     });
@@ -662,6 +670,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
           this.providerSnapshots.finishDefinitionDiscovery();
           await this.providerSnapshots.reconcile();
+
           await this.providerSnapshots.publishReadySnapshots();
         }
         catch (error) {
@@ -679,6 +688,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         // Register user-defined SQLite triggers after indexing completes (if enabled)
         if (this.settings.enableTriggers) {
           this.registerUserTriggers();
+
           await this.queueMirrorTriggerSync();
         }
 
@@ -755,6 +765,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     for (const [viewName, sql] of this.registeredCustomViews) {
       try {
         await this.database.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
+
         await this.database.run(sql);
       }
       catch (error) {
@@ -767,6 +778,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (this.providerRefreshWave) return;
     const refreshExistingQueries = QueryRefreshRegistry.hasEntries();
     const wave = this.tableProviderService.refreshStaleDefinitions();
+
     this.providerRefreshWave = wave;
 
     void wave
@@ -846,6 +858,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     const writeSyncService = new WriteSyncService(app, database, settings);
 
     const api = new VaultQueryAPI(app, settings, database, indexingService, writeSyncService, triggerFunctions, options.eventBus);
+
     api.indexingWorker = indexingWorker;
 
     if (!settings.enabledFeatures.indexContent) {
@@ -871,6 +884,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     try {
       if ((await api.database.all('SELECT 1 FROM sqlite_schema WHERE name = ? COLLATE NOCASE', ['_vq_provider_snapshots'])).length) {
         const rows = await api.database.all('SELECT table_name FROM main._vq_provider_snapshots');
+
         api.providerSnapshots.reservePersistedNames(rows.map(row => String(row.table_name)));
       }
     }
@@ -934,6 +948,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     await this.rebuildBootstrapNotePropertiesView(mainThreadDb);
 
     const finishedWorker = this.indexingWorker;
+
     this.indexingWorker = null;
 
     this.otherFileWriteService = undefined;
@@ -947,8 +962,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     mainThreadDb.registerTriggerFunctions(this.triggerFunctions);
 
     const restored = await this.otherFileIndex.reconcile(false);
+
     if (restored.filesRemoved || restored.filesIndexed || restored.failedPaths.length) {
       await finishedWorker.close(false);
+
       await this.restoreQueryMirror();
     } else await this.adoptQueryMirror(finishedWorker, mainThreadDb);
   }
@@ -987,6 +1004,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       logger.warn('Query mirror setup failed - queries stay on the main thread', error);
       this.queryMirror = null;
       this.queryMirrorDisabledReason = `setup failed: ${getErrorMessage(error)}`;
+
       await VaultQueryAPI.closeQuietly(worker);
     }
   }
@@ -1002,8 +1020,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     for (const name of TRIGGER_FUNCTION_NAMES) {
       const arity = Number(functions.find(row => row.name === name)?.narg);
+
       if (!Number.isInteger(arity) || arity < 0) throw new Error(`Missing trigger function signature: ${name}`);
       const params = Array.from({ length: arity }, (_, index) => `arg${index}`).join(', ');
+
       await mirror.registerCustomFunction(name, `(${params}) => 0`);
     }
   }
@@ -1026,6 +1046,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private async createQueryMirror(): Promise<void> {
     const main = this.database;
+
     if (!(main instanceof VaultDatabase)) return;
     let worker: WorkerDatabase | undefined;
 
@@ -1042,6 +1063,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       await main.withTransferLock(async () => {
         for (let attempt = 0; attempt < 3 && !this.closing; attempt++) {
           const snapshot = await main.createQueryMirrorSnapshot();
+
           await candidate.importDatabase(snapshot.data);
           await this.registerMirrorTriggerFunctions(main, candidate);
 
@@ -1083,6 +1105,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     const forward = (work: (mirror: WorkerDatabase) => Promise<unknown>): (() => Promise<void>) | void => {
       const mirror = this.queryMirror;
+
       if (!mirror) return;
 
       return async () => work(mirror).then(() => undefined).catch(error => {
@@ -1104,6 +1127,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       try {
         const result = await work();
         const forwarded = forward(mirrorWork);
+
         if (forwarded) await forwarded().then(() => this.queueMirrorTriggerSync());
 
         return result;
@@ -1113,6 +1137,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     };
 
     const originalIndexNote = mainThreadDb.indexNote.bind(mainThreadDb);
+
     mainThreadDb.indexNote = data => forwardIndex(() => originalIndexNote(data), mirror => mirror.indexNote(data));
     const originalIndexBatch = mainThreadDb.indexNotesBatch.bind(mainThreadDb);
 
@@ -1139,6 +1164,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
         if (!providerMutation && !readsProvider && !csvMutation) {
           const forwarded = forward(mirror => mirror.run(sql, params));
+
           if (forwarded) await forwarded();
         }
 
@@ -1156,6 +1182,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private queueMirrorSync(key: 'providerMirrorSync' | 'mirrorTriggerSync', work: () => Promise<void>): Promise<void> {
     const previous = this[key] ?? Promise.resolve();
     const sync = previous.catch(() => undefined).then(work);
+
     this[key] = sync;
 
     const clear = (): void => {
@@ -1169,6 +1196,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private async syncMirrorTriggers(): Promise<void> {
     const mirror = this.queryMirror;
+
     if (!mirror || !this.settings.enableTriggers) return;
 
     try {
@@ -1200,10 +1228,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private async syncProviderTablesToQueryMirror(tableNames: string[]): Promise<void> {
     const mirror = this.queryMirror;
+
     if (!mirror || tableNames.length === 0) return;
 
     const registered = new Set(this.tableProviderService.getRegisteredTableNames());
     const tables = Array.from(new Set(tableNames)).filter(tableName => registered.has(tableName));
+
     if (tables.length === 0) return;
 
     const startedAt = performance.now();
@@ -1241,8 +1271,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
             const paramRows = rows.map(row => columns.map((column): string | number | null => {
               const value = row[column];
+
               if (value === null) return null;
               if (typeof value === 'string' || typeof value === 'number') return value;
+
               throw new Error(`Unsupported provider mirror value in ${tableName}.${column}`);
             }));
 
@@ -1279,12 +1311,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private async syncCustomViewsToQueryMirror(mirror: WorkerDatabase): Promise<void> {
     for (const [viewName, sql] of this.registeredCustomViews) {
       await mirror.run(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
+
       await mirror.run(sql);
     }
   }
 
   private disableQueryMirror(reason: string): void {
     const mirror = this.queryMirror;
+
     if (!mirror) return;
     this.queryMirror = null;
     this.queryMirrorDisabledReason = reason;
@@ -1307,6 +1341,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     if (columns.includes('key') && columns.includes('value') && columns.includes('value_type')) {
       database.schema.rebuildPropertiesView();
+
       await database.saveToDisk();
     }
   }
@@ -1326,6 +1361,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       this.disableQueryMirror(force ? 'forced full vault reindex' : 'full vault reindex');
       if (force) await this.indexingService.forceReindexVault();
       else await this.indexingService.reindexVault();
+
       await this.fileSweep;
     });
 
@@ -1368,6 +1404,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (this.otherFileIndex.selected(file.path)) {
       this.otherFileIndex.invalidate(file.path);
       await this.otherFileIndex.processBatch([], [file.path]);
+
       await this.database.saveToDisk();
     }
   }
@@ -1386,6 +1423,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
       if (!await this.needsIndexing(file)) {
         const names = this.providerSnapshots.confirmIndexedPath(file.path, providerRevisions.get(file.path));
+
         this.tableProviderService.refreshSnapshotsAfterRead(names);
 
         if (names.length) {
@@ -1400,6 +1438,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     if (removals.length || candidates.length) {
       const csv = await this.getCsvIndexingService().processBatch(removals, candidates);
+
       result.filesIndexed += csv.filesIndexed;
       result.filesRemoved += csv.filesRemoved;
       result.failedPaths.push(...csv.failedPaths);
@@ -1409,10 +1448,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     for (const [index, label] of this.snapshotIndexes) {
       const removed = filePathsToRemove.filter(path => index.has(path));
       const candidates = filesToIndex.filter(file => index.selected(file.path) || index.has(file.path)).map(file => file.path);
+
       if (!removed.length && !candidates.length) continue;
 
       try {
         const batch = await index.processBatch(removed, candidates);
+
         result.filesIndexed += batch.filesIndexed;
         result.filesRemoved += batch.filesRemoved;
         result.failedPaths.push(...batch.failedPaths);
@@ -1454,6 +1495,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     for (const [index, label] of this.snapshotIndexes) {
       if (!index.has(path)) continue;
       const result = await index.processBatch([path], []);
+
       if (result.failedRemovalPaths.length) throw new Error(`${label} removal failed: ${path}`);
     }
   }
@@ -1601,6 +1643,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         if (comparablePath(this.externalRoots.sourceFor(file.path) ?? '') !== comparablePath(status.path)) continue;
         if (this.claimsExternalFile(file.path)) continue;
         const extension = pathExtension(file.path).toLowerCase() || '(none)';
+
         types.set(extension, (types.get(extension) ?? 0) + 1);
       }
 
@@ -1640,8 +1683,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       await this.externalRoots.exclusive(async () => {
         if (this.closing) return;
         const scopes = this.pendingExternalFullRefresh ? undefined : [...this.pendingExternalScopes.values()];
+
         this.pendingExternalScopes.clear();
         this.pendingExternalFullRefresh = false;
+
         try {
           await this.runExternalRefresh(scopes);
         }
@@ -1659,6 +1704,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
       return;
     }
+
     if (this.pendingExternalFullRefresh) return;
 
     mergeExternalRefreshScope(this.pendingExternalScopes, scope);
@@ -1675,6 +1721,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private async refreshExternalScopes(scopes?: ExternalRefreshScope[]): Promise<void> {
     if (this.closing || !this.externalRoots.configured) return;
     const refresh = this.externalRefresh = this.externalRoots.exclusive(() => this.runExternalRefresh(scopes));
+
     await refresh;
   }
 
@@ -1692,6 +1739,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (this.externalScheduleTimers.has(key)) continue;
       const path = root.path;
       const timer = window.setInterval(() => this.scheduleExternalReconcile({ root: path }), root.refreshMinutes * 60_000);
+
       this.externalScheduleTimers.set(key, { timer, minutes: root.refreshMinutes });
     }
   }
@@ -1733,6 +1781,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         const image = this.imageIndex.state(path);
         const file = this.otherFileIndex.state(path);
         const reason = image?.metadata_status === 'read_error' ? image.metadata_error : file?.content_status === 'read_error' ? file.content_error : null;
+
         if (reason) failures.push({ path, reason });
       }
     }
@@ -1752,6 +1801,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     } else {
       for (const scope of scopes) {
         const diff = await this.externalRoots.refresh(scope);
+
         if (scope.file) this.invalidateFileSnapshots(scope.file);
 
         for (const path of [...diff.added, ...diff.changed]) {
@@ -1785,6 +1835,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     if (this.settings.enableDataFileReads) {
       const csv = this.getCsvIndexingService();
+
       results.push(await (scopes ? csv.processBatch(removed, changed) : csv.reconcile(false)));
     }
 
@@ -1807,11 +1858,13 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.syncExternalSchedules();
     this.publishExternalRootStatus();
     const key = this.externalConfigurationKey();
+
     if (key === this.externalSettingsKey) return;
     this.externalSettingsKey = key;
     if (this.closing) return;
 
     this.externalRefresh = this.externalRoots.exclusive(() => this.runExternalRefresh());
+
     await this.externalRefresh;
   }
 
@@ -1839,8 +1892,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     for (const file of this.externalRoots.files()) {
       if (this.claimsExternalFile(file.path)) continue;
       const source = this.externalRoots.sourceFor(file.path);
+
       if (!source) continue;
       const key = comparablePath(source);
+
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
@@ -1859,6 +1914,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     const add = (source: string, rows: number) => {
       const key = comparablePath(source);
+
       counts.set(key, (counts.get(key) ?? 0) + rows);
     };
 
@@ -1870,6 +1926,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     for (const source of this.getDataFileSources()) {
       const root = this.externalRoots.sourceFor(source.path);
+
       if (root) add(root, 1);
     }
 
@@ -1882,12 +1939,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   public async updateImageSettings(): Promise<void> {
     const key = this.imageConfigurationKey();
+
     if (key === this.imageSettingsKey) return;
     this.imageSettingsKey = key;
     this.imageIndex.updateSelection();
     if (this.closing) return;
 
     this.imageSweep = this.runImageSweep(false);
+
     await this.imageSweep;
   }
 
@@ -1898,6 +1957,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public async updateOtherFileContentSettings(): Promise<void> {
     this.preparedWrites.updateAccess();
     const key = this.otherFileConfigurationKey();
+
     if (key === this.otherFileSettingsKey) return;
     this.otherFileIndex.updateSelection();
 
@@ -1913,6 +1973,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public async updateCsvSettings(): Promise<void> {
     this.preparedWrites.updateAccess();
     const readsChanged = this.tabularFileReadsEnabled !== this.settings.enableDataFileReads;
+
     this.tabularFileReadsEnabled = this.settings.enableDataFileReads;
     if (!readsChanged) return;
 
@@ -1921,14 +1982,18 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       else {
         if (this.getIndexingStatus().isIndexing) await this.waitForIndexing();
         await this.transferToMainThread();
+
         await this.getCsvIndexingService().updateSettings();
       }
 
       this.csvStartupError = undefined;
+
       await this.database.saveToDisk();
     }
     catch (error) {
-      this.csvStartupError = error; throw error;
+      this.csvStartupError = error;
+
+ throw error;
     }
     finally {
       window.setTimeout(() => { void QueryRefreshRegistry.refreshAll({ force: true }); }, 0);
@@ -1982,6 +2047,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       this.invalidateOtherFileContents(path);
       this.invalidateDataFile(path);
       const file = this.app.vault.getAbstractFileByPath(path);
+
       if (file instanceof TFile) files.push(file);
       else removed.push(path);
     }
@@ -1992,8 +2058,10 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
       for (const file of files) {
         const other = this.otherFileIndex.state(file.path);
+
         if (other && other.content_status !== 'ready') errors.push(`${file.path}: ${other.content_error ?? other.content_status}`);
         const csv = this.getDataFileSources().find(source => source.path === file.path);
+
         if (csv && csv.status !== 'ready') errors.push(`${file.path}: ${csv.error ?? csv.status}`);
       }
 
@@ -2088,6 +2156,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (this.getIndexingStatus().isIndexing) await this.waitForIndexing();
       await this.transferToMainThread();
       await this.ensureCsvQueryReady(sql, true);
+
       await this.processPendingTriggerActions();
     }
 
@@ -2177,12 +2246,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   public async updateProviderSettings(): Promise<void> {
     this.tableProviderService.setEnabled(this.settings.enableThirdPartyProviderTables, this.settings.enableRemoteDataReads);
+
     await this.ensureRemoteDataProviders();
   }
 
   private async ensureRemoteDataProviders(): Promise<void> {
     const registered = new Set(this.tableProviderService.getRegisteredProviders().map(provider => provider.id));
     const pending = (['csv', 'json'] as const).filter(format => !registered.has(webProviderId(format)));
+
     if (!this.settings.enableRemoteDataReads || !pending.length) return;
     if (this.remoteDataRegistration) return this.remoteDataRegistration;
 
@@ -2252,6 +2323,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   public async getQueryProviderStatus(sql: string): Promise<TableProviderStatus[]> {
     if (!this.tableProviderService.hasProviderDefinitionDiscovery()) return [];
     const referenced = new Set([...this.getSqlAnalysis(sql).exactReferences].map(name => sqliteIdentifierKey(name)));
+
     if (!referenced.size) return [];
 
     return this.tableProviderService.getStatus().filter(status => referenced.has(sqliteIdentifierKey(status.tableName)));
@@ -2381,10 +2453,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       } catch (error) {
         if (!(error instanceof QueryIterationInvalidatedError) || attempt >= QUERY_RETRY_ATTEMPTS) {
           this.logQueryFailure(error, noteSource, started);
+
           throw error;
         }
 
         logger.debug('Query interrupted by an index change; retrying', { attempt: attempt + 1 });
+
         await new Promise<void>(resolve => window.setTimeout(resolve, QUERY_RETRY_DELAY_MS * (attempt + 1)));
       }
     }
@@ -2392,6 +2466,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private async attemptQuery(sql: string, noteSource: NoteSource | undefined): Promise<QueryResult[]> {
     const prepared = await this.prepareQuery(sql, noteSource);
+
     sql = prepared.sql;
     let dependencies = prepared.dependencies;
 
@@ -2435,6 +2510,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     this.assertProviderSnapshotWriteAllowed(sql);
     if (!isSelectOnly(sql)) throw new Error(ERROR_MESSAGES.QUERY_UNSAFE_OPERATIONS);
     const warning = this.checkForUnindexedData(sql);
+
     if (warning) throw new Error(warning);
     if (this.providerMirrorSync) await this.providerMirrorSync;
 
@@ -2448,6 +2524,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private handleQueryMirrorError(mirror: WorkerDatabase, error: unknown, fallback = true): boolean {
     if (error instanceof QueryIterationInvalidatedError) return false;
     const message = getErrorMessage(error);
+
     if (/no such (table|function|column|view)/i.test(message)) {
       logger.debug('Query mirror cannot serve this query', { message, fallback });
     } else if (MIRROR_READ_LOST_RACE.test(message)) {
@@ -2501,6 +2578,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
 
       const prepared = await awaitQueryOperation(this.prepareQuery(sql, noteSource), signal);
+
       sql = prepared.sql;
       dependencies = prepared.dependencies;
       mirror = this.queryMirror;
@@ -2526,6 +2604,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         throwIfQueryAborted(signal);
         if (batch.done) break;
         const rows = batch.value as QueryResult[];
+
         this.recordCsvHeaders(rows, dependencies);
         delivered = true;
 
@@ -2534,6 +2613,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     } catch (error) {
       if (signal.aborted) logger.debug('Query iteration canceled', { elapsedMs: Math.round(performance.now() - started) });
       else this.logQueryFailure(error, noteSource, started);
+
       throw error;
     } finally {
       abort();
@@ -2565,16 +2645,19 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         if (this.providerRefreshWave && this.queryDependsOnProviderReadiness(sql)
           && !this.readsOnlySnapshotProviders(dependencies.relations)) {
           waited = true;
+
           await this.providerRefreshWave;
         }
 
         if (dependencies.relations.some(name => this.providerSnapshots.owns(name) && !this.providerSnapshots.ready(name))) {
           waited = true;
+
           await this.providerSnapshots.assertReadable(dependencies.relations);
         }
 
         if (dependencies.relations.some(name => isDataFilePath(name) || sqliteIdentifierKey(name) === '_vq_data_files')) {
           waited = true;
+
           await this.ensureCsvQueryReady(sql, false, dependencies);
         }
       } catch (error) {
@@ -2582,10 +2665,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
 
       const current = waited ? await this.csvDependencies.revalidate(sql, dependencies) : dependencies;
+
       if (current !== dependencies) { dependencies = current; continue; }
 
       if (readinessError) {
         this.tableProviderService.refreshSnapshotsAfterRead(dependencies.relations);
+
         throw readinessError;
       }
 
@@ -2604,6 +2689,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private queryDependsOnProviderReadiness(sql: string): boolean {
     const referencedTables = this.getSqlAnalysis(sql).exactReferences;
+
     this.customViewKeys ??= new Set(Array.from(this.registeredCustomViews.keys(), sqliteIdentifierKey));
 
     for (const tableName of referencedTables) {
@@ -2620,6 +2706,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     for (const name of resolved.relations) {
       const key = sqliteIdentifierKey(name);
+
       if (isDataFilePath(name)) { dependencies.add(name); continue; }
       if (key === '_vq_data_files') { readsRegistry = true; continue; }
     }
@@ -2736,6 +2823,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
       await step('query mirror', () => {
         const mirror = this.queryMirror;
+
         if (!mirror) return;
         this.queryMirror = null;
         this.queryMirrorDisabledReason = 'plugin shutdown';
@@ -2976,6 +3064,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   private readonly scopeResolver = async (sql: string, tables: ReadonlySet<string>): Promise<boolean> => {
     if (this.closing) return false;
     const resolved = await this.csvDependencies.resolve(sql);
+
     if (resolved.hasEmptyView) return true;
 
     return resolved.relations.some(name => tables.has(sqliteIdentifierKey(name)));
@@ -2999,6 +3088,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     while (this.sqlAnalysisCache.size > VaultQueryAPI.SQL_ANALYSIS_CACHE_LIMIT) {
       const oldestKey = this.sqlAnalysisCache.keys().next().value;
+
       if (oldestKey === undefined) break;
       this.sqlAnalysisCache.delete(oldestKey);
     }
@@ -3024,6 +3114,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
 
     const otherFileDml = this.getSqlMutationTargets(sql).some(name => sqliteIdentifierKey(name) === 'other_files');
+
     if (otherFileDml) otherFileWriteStatements(sql);
     this.assertProviderSnapshotWriteAllowed(sql, otherFileDml);
 
@@ -3079,6 +3170,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     catch (error: unknown) {
       // Don't log syntax errors to console - they're expected during editing
       if (error instanceof FilePreviewStaleError) throw error;
+
       throw new Error(ERROR_MESSAGES.PREVIEW_FAILED(getErrorMessage(error)));
     }
   }
@@ -3125,6 +3217,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     if (!kind) {
       if (isDataFilePath(previewResult.table)) assertDataFileReads(this.settings);
+
       throw new FilePreviewStaleError();
     }
 
@@ -3167,11 +3260,13 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
         if (paths.length) {
           await this.refreshWrittenFiles(paths).catch(refreshError => logger.warn('Could not refresh Markdown recovery state', refreshError));
+
           await this.saveToDisk().catch(saveError => logger.warn('Could not save Markdown recovery state', saveError));
         }
 
         if (error instanceof FileWriteApplyError) throw error;
         if (affectedPaths.length) throw new FileWriteApplyError(getErrorMessage(error), 'index', affectedPaths, [], []);
+
         throw error;
       } finally {
         QueryRefreshRegistry.scheduleAutoRefresh();

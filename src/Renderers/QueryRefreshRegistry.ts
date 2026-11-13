@@ -117,6 +117,7 @@ export class QueryRefreshRegistry {
       }
 
       const missed = entry.missedTables;
+
       entry.missedTables = undefined;
       const pending = missed === 'all' ? undefined : scope && missed ? new Set([...scope, ...missed]) : missed ?? scope;
 
@@ -146,11 +147,13 @@ export class QueryRefreshRegistry {
     };
 
     const workerCount = Math.min(REFRESH_CONCURRENCY, refreshes.length);
+
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
   }
 
   private static watchForReattach(container: HTMLElement): void {
     const Observer = container.ownerDocument?.defaultView?.IntersectionObserver;
+
     if (!Observer || this.reattachWatches.has(container)) return;
 
     const observer = new Observer((records) => {
@@ -170,6 +173,7 @@ export class QueryRefreshRegistry {
     this.stopReattachWatch(container);
     const entry = this.entries.get(container);
     const missed = entry?.missedTables;
+
     if (!entry || !missed || !container.isConnected) return;
 
     entry.missedTables = undefined;
@@ -241,8 +245,10 @@ export class QueryRefreshRegistry {
     try {
       while (this.pendingScope !== null) {
         const scope = this.pendingScope;
+
         this.pendingScope = null;
         const startedAt = performance.now();
+
         await this.refreshAll(scope === 'all' ? {} : { tables: scope });
         this.lastRefreshMs = performance.now() - startedAt;
 

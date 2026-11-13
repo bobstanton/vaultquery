@@ -23,6 +23,7 @@ export class ExternalFileCatalog {
 
     while (pending.length) {
       const entry = this.directories.get(pending.pop()!);
+
       if (!entry) continue;
 
       for (const path of entry.files) {
@@ -52,6 +53,7 @@ export class ExternalFileCatalog {
 
     for (const [path, file] of found) {
       const before = previous.get(path);
+
       if (!before) { diff.added.push(path); this.addPath(path); }
       else if (before.stat.size !== file.stat.size || before.stat.mtime !== file.stat.mtime) diff.changed.push(path);
       this.files.set(path, file);
@@ -71,13 +73,16 @@ export class ExternalFileCatalog {
   private addPath(path: string): void {
     let directory = parent(comparablePath(path));
     let entry = this.directories.get(directory);
+
     if (!entry) this.directories.set(directory, entry = { files: new Set(), children: new Set() });
     entry.files.add(path);
 
     while (true) {
       const ancestor = parent(directory);
+
       if (!ancestor || ancestor === directory) break;
       const existing = this.directories.get(ancestor);
+
       if (existing) { existing.children.add(directory); break; }
       this.directories.set(ancestor, { files: new Set(), children: new Set([directory]) });
       directory = ancestor;
@@ -86,13 +91,16 @@ export class ExternalFileCatalog {
 
   private removePath(path: string): void {
     let directory = parent(comparablePath(path));
+
     this.directories.get(directory)?.files.delete(path);
 
     while (true) {
       const entry = this.directories.get(directory);
+
       if (!entry || entry.files.size || entry.children.size) break;
       this.directories.delete(directory);
       const ancestor = parent(directory);
+
       if (!ancestor || ancestor === directory) break;
       this.directories.get(ancestor)?.children.delete(directory);
       directory = ancestor;

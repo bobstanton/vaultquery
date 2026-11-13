@@ -133,6 +133,7 @@ function showInlineButtonResult(result: InlineButtonResult): void {
 
 function createInlineButtonElement(owner: Document, plugin: VaultQueryPluginContext, spec: InlineButtonSpec, sourcePath: string, debounce = true): HTMLButtonElement {
   const button = owner.body.createEl('button');
+
   button.detach();
   let lastClickTime = 0;
 

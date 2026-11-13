@@ -9,6 +9,7 @@ self.onmessage = (event: MessageEvent<{ id: number; buffer: ArrayBuffer; extensi
 
   try {
     const result = parseImagePrefix(buffer, extension, size, true, domParser);
+
     self.postMessage({ id, buffer, result }, { transfer: [buffer] });
   } catch (error) {
     self.postMessage({ id, error: getErrorMessage(error) });

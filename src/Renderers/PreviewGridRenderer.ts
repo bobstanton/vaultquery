@@ -49,6 +49,7 @@ export class PreviewGridRenderer {
     if (context.onRefresh) {
       const operations = previewResult.multiResults ?? [previewResult];
       const targets = new Set(operations.map(operation => operation.table));
+
       QueryRefreshRegistry.register(container, {
         onRefresh: context.onRefresh,
         autoRefresh: resolveAutoRefreshSetting(context.settings, context.parsed),
@@ -95,6 +96,7 @@ export class PreviewGridRenderer {
       case 'multi': {
         const operations = previewResult.multiResults || [];
         const totalRows = previewTotalRowCount(operations);
+
         summaryText = `🔄 Multi-statement operation affecting ${totalRows} rows across ${operations.length} operations.`;
         summaryClass = 'vaultquery-summary-multi';
         break;
@@ -123,6 +125,7 @@ export class PreviewGridRenderer {
       }
 
       const codeContainer = sqlSection.createDiv({ cls: 'vaultquery-sql-code-container' });
+
       BaseRenderer.renderSqlCodeBlock(context.app, codeContainer, sql);
     });
   }
@@ -180,6 +183,7 @@ export class PreviewGridRenderer {
       e.preventDefault();
 
       const row = cell.closest('.slick-row') as HTMLElement;
+
       if (!row) return;
 
       const rowIndex = self.rowIndexOfRowElement(row);
@@ -209,6 +213,7 @@ export class PreviewGridRenderer {
 
   private static toggleOperationDetails(gridContainer: HTMLElement, rowIndex: number, previewResult: PreviewResult, context: PreviewRenderContext, detailsColumnIndex: number): void {
     const operationData = previewResult.multiResults?.[rowIndex];
+
     if (!operationData) return;
 
     const existingDetails = gridContainer.querySelector(`[data-details-for="${rowIndex}"]`);
@@ -224,6 +229,7 @@ export class PreviewGridRenderer {
 
     allDetails.forEach(el => {
       const detailsFor = Number(el.getAttribute('data-details-for'));
+
       this.removeOperationDetails(el);
 
       if (!Number.isNaN(detailsFor)) {
@@ -234,12 +240,14 @@ export class PreviewGridRenderer {
     const rowElement = this.findRowElement(gridContainer, rowIndex);
 
     const detailsContainer = gridContainer.createDiv();
+
     detailsContainer.detach();
     detailsContainer.className = 'vaultquery-operation-details';
     detailsContainer.setAttribute('data-details-for', rowIndex.toString());
 
     const title = detailsContainer.createDiv({ cls: 'vaultquery-subgrid-title' });
     const strong = title.createEl('strong');
+
     strong.appendText(`${this.getOperationIcon(operationData.op)} `);
     strong.appendText(`${operationData.op.toUpperCase()} Details - ${operationData.table} table`);
 
@@ -414,14 +422,17 @@ export class PreviewGridRenderer {
     });
 
     let applyPending = false;
+
     applyButton.addEventListener('click', () => {
       if (applyPending) return;
       applyPending = true;
       context.onApplyPendingChange?.(true);
+
       void (async () => {
         try {
           if (await this.confirmApply(previewResult, context)) {
             container.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+
             await context.onApply?.();
           }
         }

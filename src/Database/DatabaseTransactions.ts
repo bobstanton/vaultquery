@@ -11,10 +11,12 @@ export async function runDatabaseTransaction<T>(operations: TransactionOperation
   try {
     operations.beforeBegin?.();
     const begin = operations.execute('BEGIN TRANSACTION');
+
     if (begin) await begin;
 
     if (deferFK) {
       const pendingEnable = operations.execute('PRAGMA defer_foreign_keys = ON');
+
       if (pendingEnable) await pendingEnable;
     }
 
@@ -23,10 +25,12 @@ export async function runDatabaseTransaction<T>(operations: TransactionOperation
 
       if (deferFK) {
         const disable = operations.execute('PRAGMA defer_foreign_keys = OFF');
+
         if (disable) await disable;
       }
 
       const commit = operations.execute('COMMIT');
+
       if (commit) await commit;
 
       return result;
@@ -34,6 +38,7 @@ export async function runDatabaseTransaction<T>(operations: TransactionOperation
     catch (error) {
       try {
         const rollback = operations.execute('ROLLBACK');
+
         if (rollback) await rollback;
       }
       catch (rollbackError) {

@@ -49,6 +49,7 @@ export class SharedSQLFunctions {
     db.create_function('regexp', (patternValue: unknown, textValue: unknown) => {
       const pattern = regexText(patternValue);
       const text = regexText(textValue);
+
       if (pattern === null || text === null) return null;
 
       try {
@@ -65,6 +66,7 @@ export class SharedSQLFunctions {
       const text = regexText(textValue);
       const pattern = regexText(patternValue);
       const replacement = regexText(replacementValue);
+
       if (text === null || pattern === null || replacement === null) return null;
 
       try {

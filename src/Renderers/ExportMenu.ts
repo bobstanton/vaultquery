@@ -82,11 +82,13 @@ async function copy(source: ExportSource, format: 'md' | 'csv' | 'json', limitBy
 async function copyMermaid(source: ExportSource, limitBytes: number): Promise<void> {
   try {
     const mermaid = source.readMermaid?.();
+
     if (mermaid === undefined) return;
     const body = buildCapped(['```mermaid\n', mermaid, '\n```\n'], limitBytes);
 
     if (body === undefined) {
       new Notice(`This chart is too large to copy (over ${Math.round(limitBytes / 1024).toLocaleString()} KB).`);
+
       return;
     }
 
@@ -100,6 +102,7 @@ async function copyMermaid(source: ExportSource, limitBytes: number): Promise<vo
 
 async function save(source: ExportSource, format: 'md' | 'csv' | 'json', target: ExportTargetKind): Promise<void> {
   const app = source.app;
+
   if (!app) return;
 
   try {
@@ -107,6 +110,7 @@ async function save(source: ExportSource, format: 'md' | 'csv' | 'json', target:
     const descriptor = EXPORT_FORMATS[format];
     const file = { name: exportFileName(source.name, descriptor.extension), chunks: chunks(source, rows, format), mime: descriptor.mime };
     const saved = await saveExport(app, file, target, source.exportFolder);
+
     new Notice(`Saved ${describe(rows.length, format)} to ${saved.label}`);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') return;

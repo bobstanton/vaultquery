@@ -37,6 +37,7 @@ function querySources(sql: string, tokens: readonly SqlLexToken[]): QuerySources
 
     const name = sqliteIdentifierKey(alias ?? relation.name);
     const isProperties = sqliteIdentifierKey(relation.name) === 'properties' && (!relation.schema || sqliteIdentifierKey(relation.schema) === 'main');
+
     sources.aliases.set(name, !sources.aliases.has(name) && isProperties);
   };
 
@@ -51,6 +52,7 @@ function querySources(sql: string, tokens: readonly SqlLexToken[]): QuerySources
 
     if (token.value === '(') {
       const after = skipParenthesizedTokens(tokens, index);
+
       if (after < 0) break;
       index = after - 1;
       continue;
@@ -74,6 +76,7 @@ function propertyKeyEnd(sql: string, tokens: readonly SqlLexToken[], start: numb
 
   while (index < tokens.length) {
     const name = readSqlIdentifier(sql, tokens[index]);
+
     if (name === null) return null;
     names.push(sqliteIdentifierKey(name));
     index++;
@@ -94,6 +97,7 @@ function comparisonEnd(tokens: readonly SqlLexToken[], start: number): number | 
   const first = tokens[start]?.value;
   const second = tokens[start + 1]?.value;
   const adjacent = tokens[start + 1]?.start === tokens[start]?.start + 1;
+
   if (first === '=') return second === '=' && adjacent ? start + 2 : start + 1;
   if (adjacent && (first === '!' && second === '=' || first === '<' && second === '>')) return start + 2;
 
@@ -151,6 +155,7 @@ function predicateLiterals(sql: string, tokens: readonly SqlLexToken[], sources:
     else if (token.kind === 'literal') {
       const right = comparisonEnd(tokens, index + 1);
       const end = right === null ? null : propertyKeyEnd(sql, tokens, right, sources);
+
       if (end !== null && operandBoundary(tokens[end], false)) literals.push(token);
     }
   }
@@ -167,10 +172,12 @@ function queryLiterals(sql: string, tokens: readonly SqlLexToken[]): SqlLexToken
   const collect = (start: number, end: number): boolean => {
     for (let index = start; index < end; index++) {
       const token = tokens[index];
+
       local.push(token);
       if (token.value === ')') return false;
       if (token.value !== '(') continue;
       const after = skipParenthesizedTokens(tokens, index);
+
       if (after < 0 || after > end) return false;
 
       if (tokenIsWord(tokens[index + 1], 'SELECT')) literals.push(...queryLiterals(sql, tokens.slice(index + 1, after - 1)));
@@ -196,6 +203,7 @@ function buildKeyLookup(keys: string[]): Map<string, string | null> {
 
   for (const key of new Set(keys)) {
     const normalised = normalise(key);
+
     if (normalised.length === 0) continue;
     lookup.set(normalised, lookup.has(normalised) ? null : key);
   }
@@ -221,9 +229,11 @@ export function repairPropertyKeys(sql: string, keys: string[] | undefined): str
 
   for (const literal of literals.sort((a, b) => a.start - b.start)) {
     const raw = literal.value;
+
     if (literal.start < offset || raw.length < 2 || !raw.endsWith("'") || raw.slice(1, -1).replace(/''/g, '').includes("'")) continue;
     const value = raw.slice(1, -1).replace(/''/g, "'");
     const stored = lookup.get(normalise(value));
+
     if (!stored || stored === value) continue;
     logger.debug('Corrected a frontmatter name', `${value} to ${stored}`);
     parts.push(sql.slice(offset, literal.start), `'${escapeSqlString(stored)}'`);

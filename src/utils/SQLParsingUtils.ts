@@ -13,22 +13,27 @@ interface SqlDdlHeader {
 
 function readSqlDdlHeader(sql: string, tokens = tokenizeSqlStatement(sql)): SqlDdlHeader | null {
   const operation = tokens[0];
+
   if (operation?.kind !== 'word' || !['CREATE', 'DROP', 'ALTER'].includes(operation.value)) return null;
   let index = 1;
+
   if (operation.value === 'CREATE' && (tokenIsWord(tokens[index], 'TEMP') || tokenIsWord(tokens[index], 'TEMPORARY'))) index++;
   if (operation.value === 'CREATE' && tokenIsWord(tokens[index], 'UNIQUE')) index++;
   const kind = tokens[index++];
+
   if (kind?.kind !== 'word' || !['TABLE', 'VIEW', 'TRIGGER', 'INDEX'].includes(kind.value)) return null;
   const conditionStart = index;
 
   if (tokenIsWord(tokens[index], 'IF')) {
     const words = operation.value === 'CREATE' ? ['IF', 'NOT', 'EXISTS'] : ['IF', 'EXISTS'];
+
     if (operation.value === 'ALTER' || !words.every((word, offset) => tokenIsWord(tokens[index + offset], word))) return null;
     index += words.length;
   }
 
   const condition = tokens.slice(conditionStart, index);
   const object = readQualifiedSqlIdentifier(sql, tokens, index, true);
+
   if (!object) return null;
 
   return { operation: operation.value, kind: kind.value, name: object.name, nameToken: tokens[object.next - 1], next: object.next, condition };
@@ -37,8 +42,10 @@ function readSqlDdlHeader(sql: string, tokens = tokenizeSqlStatement(sql)): SqlD
 export function parseSQLObjectName(sql: string, type: 'VIEW' | 'TRIGGER'): string | null {
   const tokens = tokenizeSqlStatement(sql);
   const header = readSqlDdlHeader(sql, tokens);
+
   if (header?.operation !== 'CREATE' || header.kind !== type) return null;
   let next = header.next;
+
   if (type === 'VIEW' && tokens[next]?.value === '(') next = skipParenthesizedTokens(tokens, next);
   if (type === 'VIEW' && !tokenIsWord(tokens[next], 'AS')) return null;
 
@@ -81,9 +88,11 @@ export function disallowedSqlStatement(sql: string, allowSchemaChanges = false):
   for (const statement of splitSqlStatements(sql)) {
     const tokens = tokenizeSqlStatement(statement);
     let start = 0;
+
     while (tokens[start]?.value === '(') start++;
     const index = findMainStatementToken(tokens.slice(start));
     const token = index < 0 ? undefined : tokens[start + index];
+
     if (token?.kind !== 'word' || !allowed.has(token.value)) return token?.value ?? 'statement';
   }
 
@@ -92,6 +101,7 @@ export function disallowedSqlStatement(sql: string, allowSchemaChanges = false):
 
 export function rewriteTriggerWithPrefix(triggerSql: string, prefix: string): string {
   const header = readSqlDdlHeader(triggerSql);
+
   if (header?.operation !== 'CREATE' || header.kind !== 'TRIGGER') return triggerSql;
   let result = triggerSql.slice(0, header.nameToken.start) + quoteIdentifier(prefix + header.name) + triggerSql.slice(header.nameToken.end);
 
@@ -107,6 +117,7 @@ function ddlRelation(sql: string, tokens: readonly SqlLexToken[], header: SqlDdl
 
   for (let index = header.next; index < tokens.length; index++) {
     const token = tokens[index];
+
     if (token.value === ';' || tokenIsWord(token, 'BEGIN') || tokenIsWord(token, 'WHEN')) break;
     if (tokenIsWord(token, 'ON')) return readQualifiedSqlIdentifier(sql, tokens, index + 1, true);
   }
@@ -117,8 +128,10 @@ function ddlRelation(sql: string, tokens: readonly SqlLexToken[], header: SqlDdl
 export function rewriteTriggerTarget(sql: string, table: string, replacement: string): string {
   const tokens = tokenizeSqlStatement(sql);
   const header = readSqlDdlHeader(sql, tokens);
+
   if (header?.kind !== 'TRIGGER') return sql;
   const relation = ddlRelation(sql, tokens, header);
+
   if (!relation || sqliteIdentifierKey(relation.name) !== sqliteIdentifierKey(table)) return sql;
   const name = tokens[relation.next - 1];
 
@@ -131,8 +144,10 @@ export function sqlUpdatesColumn(sql: string, table: string, column: string): bo
   for (let index = 0; index < tokens.length; index++) {
     if (!tokenIsWord(tokens[index], 'UPDATE')) continue;
     const relation = readQualifiedSqlIdentifier(sql, tokens, dmlTargetStart(tokens, index), true);
+
     if (!relation || sqliteIdentifierKey(relation.name) !== sqliteIdentifierKey(table)) continue;
     let cursor = relation.next;
+
     if (tokenIsWord(tokens[cursor], 'AS')) cursor += 2;
     if (tokenIsWord(tokens[cursor], 'INDEXED') && tokenIsWord(tokens[cursor + 1], 'BY')) cursor += 3;
     else if (tokenIsWord(tokens[cursor], 'NOT') && tokenIsWord(tokens[cursor + 1], 'INDEXED')) cursor += 2;
@@ -143,6 +158,7 @@ export function sqlUpdatesColumn(sql: string, table: string, column: string): bo
 
       if (tokens[cursor]?.value === '(') {
         const after = skipParenthesizedTokens(tokens, cursor);
+
         if (after < 0) break;
 
         for (let name = cursor + 1; name < after - 1; name += 2) {
@@ -159,12 +175,14 @@ export function sqlUpdatesColumn(sql: string, table: string, column: string): bo
 
       while (cursor < tokens.length && (tokens[cursor].value !== ',' || cases > 0)) {
         const token = tokens[cursor];
+
         if (token.value === ';') break;
         if (tokenIsWord(token, 'CASE')) cases++;
         else if (cases > 0 && tokenIsWord(token, 'END')) cases--;
         else if (cases === 0 && token.kind === 'word' && ['WHERE', 'FROM', 'RETURNING', 'ORDER', 'LIMIT', 'END'].includes(token.value)) break;
         if (token.value === '(') {
           const after = skipParenthesizedTokens(tokens, cursor);
+
           if (after < 0) break;
           cursor = after;
         }
@@ -199,6 +217,7 @@ export function extractAllCodeBlocks(content: string): ExtractedCodeBlocks {
 
   for (const block of scanMarkdownCodeFences(content)) {
     const match = /^vaultquery-(view|function|trigger)$/.exec(block.language);
+
     if (!match) continue;
 
     switch (match[1]) {
@@ -265,11 +284,13 @@ export function tokenizeSqlStatement(sql: string, includeComments = false): read
     const all = tokenizeSqlUncached(sql);
     const tokens = all.filter(token => token.kind !== 'comment');
     const bytes = sql.length * 4 + all.length * 88;
+
     cached = { tokens, all, bytes };
 
     if (bytes <= TOKEN_CACHE_BYTES) {
       while (tokenCache.size >= 128 || tokenCacheBytes + bytes > TOKEN_CACHE_BYTES) {
         const oldest = tokenCache.keys().next().value;
+
         if (oldest === undefined) break;
         tokenCacheBytes -= tokenCache.get(oldest)!.bytes;
         tokenCache.delete(oldest);
@@ -314,11 +335,13 @@ function tokenizeSqlUncached(sql: string): readonly SqlLexToken[] {
 
     if (char === '-' && sql[index + 1] === '-') {
       const end = sql.indexOf('\n', index + 2);
+
       index = end < 0 ? sql.length : end;
       kind = 'comment';
     }
     else if (char === '/' && sql[index + 1] === '*') {
       const end = sql.indexOf('*/', index + 2);
+
       index = end < 0 ? sql.length : end + 2;
       kind = 'comment';
     }
@@ -332,6 +355,7 @@ function tokenizeSqlUncached(sql: string): readonly SqlLexToken[] {
     }
     else if (char === '{' && sql[index + 1] === '{') {
       const end = sql.indexOf('}}', index + 2);
+
       index = end < 0 ? sql.length : end + 2;
       kind = 'placeholder';
     }
@@ -348,6 +372,7 @@ function tokenizeSqlUncached(sql: string): readonly SqlLexToken[] {
 
         if (sql[index] === '(') {
           const end = sql.indexOf(')', index + 1);
+
           index = end < 0 ? sql.length : end + 1;
         }
       }
@@ -367,6 +392,7 @@ function tokenizeSqlUncached(sql: string): readonly SqlLexToken[] {
     else index++;
 
     const raw = sql.slice(start, index);
+
     tokens.push({ kind, value: kind === 'word' ? raw.replace(/[a-z]/g, letter => letter.toUpperCase()) : raw, start, end: index });
   }
 
@@ -427,6 +453,7 @@ function findMainStatementToken(tokens: readonly SqlLexToken[]): number {
 export function detectSqlOperation(sql: string): SqlOperation | null {
   const tokens = tokenizeSqlStatement(sql);
   const operationToken = tokens[findMainStatementToken(tokens)];
+
   if (operationToken?.kind !== 'word') return null;
 
   switch (operationToken.value) {
@@ -449,13 +476,14 @@ export function hasSqlFileActionFunctions(sql: string): boolean {
   return [...extractSqlFunctionCalls(sql)].some(name => ACTION_FUNCTIONS.has(name) && !NON_FILE_ACTION_FUNCTIONS.has(name));
 }
 
-
 const selectOnlyCache = new Map<string, boolean>();
 
 export function isSelectOnly(sql: string): boolean {
   const cached = selectOnlyCache.get(sql);
+
   if (cached !== undefined) return cached;
   const result = classifySelectOnly(sql);
+
   if (selectOnlyCache.size >= 200) selectOnlyCache.delete(selectOnlyCache.keys().next().value!);
   selectOnlyCache.set(sql, result);
 
@@ -464,12 +492,14 @@ export function isSelectOnly(sql: string): boolean {
 
 function classifySelectOnly(sql: string): boolean {
   const statements = splitSqlStatements(sql);
+
   if (statements.length !== 1) return false;
   let statement = statements[0];
   const tokens = tokenizeSqlStatement(statement);
 
   if (tokenIsWord(tokens[0], 'EXPLAIN')) {
     const index = tokenIsWord(tokens[1], 'QUERY') && tokenIsWord(tokens[2], 'PLAN') ? 3 : 1;
+
     if (!tokens[index]) return false;
     statement = statement.slice(tokens[index].start);
   }
@@ -522,6 +552,7 @@ export function splitSqlStatements(sql: string): string[] {
 
     if (index === statementToken) {
       let kind = index + 1;
+
       if (tokenIsWord(tokens[kind], 'TEMP') || tokenIsWord(tokens[kind], 'TEMPORARY')) kind++;
       inTrigger = tokenIsWord(token, 'CREATE') && tokenIsWord(tokens[kind], 'TRIGGER');
     }
@@ -537,12 +568,14 @@ export function splitSqlStatements(sql: string): string[] {
 
     if (token.value !== ';' || inTrigger) continue;
     const text = cleaned.slice(start, token.start).trim();
+
     if (text) statements.push(text);
     start = token.end;
     statementToken = index + 1;
   }
 
   const tail = cleaned.slice(start).trim();
+
   if (tail) statements.push(tail);
 
   return statements;
@@ -566,12 +599,15 @@ export function sqlIdentifierAtCursor(sql: string): { start: number; query: stri
   const tokens = tokenizeSqlStatement(sql);
   let index = tokens.length - 1;
   const last = tokens[index];
+
   if (!last || last.end !== sql.length) return null;
   const trailingDot = last.kind === 'punctuation' && last.value === '.';
+
   if (!trailingDot && last.kind !== 'identifier' && last.kind !== 'word') return null;
   const decode = (token: SqlLexToken): string => readSqlIdentifier(sql, token) ?? token.value.slice(1).replace(/""/g, '"').replace(/``/g, '`');
   let query = trailingDot ? '' : decode(last);
   let start = last.start;
+
   if (!trailingDot) index--;
 
   if (tokens[index]?.value === '.') {
@@ -604,11 +640,13 @@ export function extractSqlReferencedTables(sql: string): Set<string> {
 
       if (tokenIsWord(token, 'WITH')) {
         let cursor = index + 1;
+
         if (tokenIsWord(tokens[cursor], 'RECURSIVE')) cursor++;
         const bodies: Array<[number, number]> = [];
 
         while (cursor < end) {
           const name = readSqlIdentifier(sql, tokens[cursor++]);
+
           if (name === null) break;
           if (tokens[cursor]?.value === '(') cursor = skipParenthesizedTokens(tokens, cursor);
           if (cursor < 0 || !tokenIsWord(tokens[cursor++], 'AS')) break;
@@ -616,6 +654,7 @@ export function extractSqlReferencedTables(sql: string): Set<string> {
           if (tokenIsWord(tokens[cursor], 'MATERIALIZED')) cursor++;
           if (tokens[cursor]?.value !== '(') break;
           const after = skipParenthesizedTokens(tokens, cursor);
+
           if (after < 0) break;
           ctes.add(fold(name));
           bodies.push([cursor + 1, after - 1]);
@@ -636,8 +675,10 @@ export function extractSqlReferencedTables(sql: string): Set<string> {
 
       if (token.kind === 'punctuation' && token.value === '(') {
         const after = skipParenthesizedTokens(tokens, index);
+
         if (after < 0) return;
         const beginsQuery = tokenIsWord(tokens[index + 1], 'SELECT') || tokenIsWord(tokens[index + 1], 'WITH');
+
         scan(index + 1, after - 1, ctes, expectRelation && !beginsQuery);
         expectRelation = false;
         index = after - 1;
@@ -672,6 +713,7 @@ export function extractSqlReferencedTables(sql: string): Set<string> {
 export function extractSqlMutationTarget(sql: string): string | null {
   const tokens = tokenizeSqlStatement(sql);
   const first = tokens[findMainStatementToken(tokens)];
+
   if (first?.kind !== 'word') return null;
   if (['INSERT', 'UPDATE', 'DELETE'].includes(first.value)) return extractDmlTargetTable(sql);
   if (!['CREATE', 'DROP', 'ALTER', 'REPLACE'].includes(first.value)) return null;
@@ -697,6 +739,7 @@ export function extractSqlMutationTarget(sql: string): string | null {
 export function extractSqlDdlObject(sql: string): { kind: string; name: string; relation?: string } | null {
   const tokens = tokenizeSqlStatement(sql);
   const header = readSqlDdlHeader(sql, tokens);
+
   if (!header) return null;
 
   return { kind: header.kind, name: header.name, relation: ddlRelation(sql, tokens, header)?.name };
@@ -709,6 +752,7 @@ export function extractSqlFunctionCalls(sql: string): Set<string> {
   for (let index = 0; index < tokens.length - 1; index++) {
     if (tokens[index + 1].value !== '(') continue;
     const name = readSqlIdentifier(sql, tokens[index], true);
+
     if (name !== null) names.add(sqliteIdentifierKey(name));
   }
 
@@ -718,10 +762,13 @@ export function extractSqlFunctionCalls(sql: string): Set<string> {
 export function csvInsertColumns(sql: string): string[] | null {
   const tokens = tokenizeSqlStatement(sql);
   const first = findMainStatementToken(tokens);
+
   if (!tokenIsWord(tokens[first], 'INSERT')) return [];
   const relation = readQualifiedSqlIdentifier(sql, tokens, dmlTargetStart(tokens, first));
+
   if (!relation) return null;
   let cursor = relation.next;
+
   if (tokenIsWord(tokens[cursor], 'AS')) cursor += 2;
   if (tokenIsWord(tokens[cursor], 'DEFAULT') && tokenIsWord(tokens[cursor + 1], 'VALUES')) return [];
   if (tokens[cursor++]?.value !== '(') return null;
@@ -729,6 +776,7 @@ export function csvInsertColumns(sql: string): string[] | null {
 
   while (cursor < tokens.length) {
     const name = readSqlIdentifier(sql, tokens[cursor++]);
+
     if (name === null) return null;
     columns.push(name);
     if (tokens[cursor]?.value === ')') return columns;
@@ -740,6 +788,7 @@ export function csvInsertColumns(sql: string): string[] | null {
 
 export function otherFileWriteStatements(sql: string): Array<{ sql: string; op: DmlOperation }> {
   const statements = splitSqlStatements(sql);
+
   if (!statements.length) throw new Error('A file write preview requires at least one statement.');
 
   return statements.map(statement => {
@@ -769,15 +818,18 @@ export function otherFileWriteStatements(sql: string): Array<{ sql: string; op: 
       const set = tokens.findIndex((token, i) => i > relation.next - 1 && tokenIsWord(token, 'SET'));
       let column = set + 1;
       const tuple = tokens[column]?.value === '(';
+
       if (tuple) column++;
       const name = readSqlIdentifier(statement, tokens[column]);
       let equal = column + 1;
+
       if (tuple && tokens[equal++]?.value !== ')') throw new Error('Only file content can be updated.');
       if (set < 0 || name?.toLowerCase() !== 'content' || tokens[equal]?.value !== '=') throw new Error('Only file content can be updated.');
       let depth = 0;
 
       for (let i = equal + 1; i < tokens.length; i++) {
         const token = tokens[i];
+
         if (depth === 0 && token.kind === 'word' && ['WHERE', 'FROM', 'RETURNING', 'ORDER', 'LIMIT'].includes(token.value)) break;
         if (token.kind !== 'punctuation') continue;
         if (token.value === '(') depth++;
@@ -800,15 +852,19 @@ export function extractSqlAliasMap(sqlSource: string): Map<string, string> {
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
+
     if (token.kind !== 'word' || !['FROM', 'JOIN', 'UPDATE', 'INTO'].includes(token.value)) continue;
     const start = token.value === 'UPDATE' ? dmlTargetStart(tokens, index) : index + 1;
     const relation = readQualifiedSqlIdentifier(sqlSource, tokens, start);
+
     if (!relation) continue;
     aliases.set(relation.name.toLowerCase(), relation.name);
     const aliasIndex = tokenIsWord(tokens[relation.next], 'AS') ? relation.next + 1 : relation.next;
     const aliasToken = tokens[aliasIndex];
+
     if (aliasToken?.kind === 'word' && clauses.has(aliasToken.value)) continue;
     const alias = readSqlIdentifier(sqlSource, aliasToken);
+
     if (alias !== null) aliases.set(alias.toLowerCase(), relation.name);
   }
 
@@ -818,6 +874,7 @@ export function extractSqlAliasMap(sqlSource: string): Map<string, string> {
 export function stripLeadingCte(sql: string, dmlWords: string[] = ["INSERT", "UPDATE", "DELETE"]): string {
   const trimmed = stripSqlComments(sql).trim();
   const tokens = tokenizeSqlStatement(trimmed);
+
   if (!tokenIsWord(tokens[0], 'WITH')) return trimmed;
   const operationToken = tokens[findMainStatementToken(tokens)];
 
@@ -845,12 +902,15 @@ export function extractDmlTargetTable(sql: string): string | null {
 
 function dmlTargetStart(tokens: readonly SqlLexToken[], operation: number): number {
   const token = tokens[operation];
+
   if (token?.kind !== 'word' || !['INSERT', 'UPDATE', 'DELETE'].includes(token.value)) return -1;
   let index = operation + 1;
+
   if (token.value === 'DELETE') return tokenIsWord(tokens[index], 'FROM') ? index + 1 : -1;
 
   if (tokenIsWord(tokens[index], 'OR')) {
     const conflict = tokens[index + 1];
+
     if (conflict?.kind !== 'word' || !['ROLLBACK', 'ABORT', 'REPLACE', 'FAIL', 'IGNORE'].includes(conflict.value)) return -1;
     index += 2;
   }
@@ -865,8 +925,10 @@ export function readSqlIdentifier(sql: string, token: SqlLexToken | undefined, a
   if (token?.kind !== 'identifier' && !(allowStringLiteral && token?.kind === 'literal')) return null;
   const quote = token.value[0];
   const close = quote === '[' ? ']' : quote;
+
   if (token.value.length < 2 || !token.value.endsWith(close)) return null;
   const body = token.value.slice(1, -1);
+
   if (quote !== '[' && body.split(close + close).join('').includes(close)) return null;
 
   return quote === '[' ? body : body.split(close + close).join(close);
@@ -874,6 +936,7 @@ export function readSqlIdentifier(sql: string, token: SqlLexToken | undefined, a
 
 export function readQualifiedSqlIdentifier(sql: string, tokens: readonly SqlLexToken[], start: number, allowStringLiteral = false): { name: string; next: number; schema?: string } | null {
   let name = readSqlIdentifier(sql, tokens[start], allowStringLiteral);
+
   if (name === null) return null;
   let schema: string | undefined;
   let next = start + 1;

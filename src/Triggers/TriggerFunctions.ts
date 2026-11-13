@@ -70,8 +70,10 @@ export class TriggerFunctions {
 
   private guarded(fn: () => PendingAction | null, allowInPreview = false): 0 | 1 {
     const options: QueueOptions = allowInPreview ? { duringPreview: 'allow' } : {};
+
     if (!this.canQueue(options)) return 0;
     const action = fn();
+
     if (action === null) return 0;
 
     return this.queueAction(action, options) ? 1 : 0;
@@ -115,6 +117,7 @@ export class TriggerFunctions {
 
     if ((options.deferWindow ?? 'honor') === 'honor' && this.currentDeferKey) {
       const existing = this.deferredActionsByKey.get(this.currentDeferKey) || [];
+
       existing.push(action);
       this.deferredActionsByKey.set(this.currentDeferKey, existing);
     } else {
@@ -530,6 +533,7 @@ export class TriggerFunctions {
 
   public getPendingActions(): PendingAction[] {
     const actions = [...this.pendingActions];
+
     this.pendingActions = [];
 
     const pathsWithLineActions = new Set<string>();

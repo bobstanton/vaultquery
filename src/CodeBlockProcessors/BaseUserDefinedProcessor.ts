@@ -24,6 +24,7 @@ export abstract class BaseUserDefinedProcessor {
 
     cleanupRenderedOutput(el);
     const container = el.createDiv({ cls: this.getContainerClass() });
+
     trackVaultQueryBlock(container, ctx);
 
     void this.plugin.indexingReadiness.wait(container).then(() => {

@@ -15,7 +15,6 @@ interface PropertyKey {
 
 export type PropertyChanges = Changes<PropertyData, PropertyKey>;
 
-
 /** Create composite key for properties (no id column in table) */
 function propertyKey(key: string, arrayIndex: number | null): string {
   return `${key}\0${arrayIndex ?? ''}`;
@@ -81,6 +80,7 @@ export function detectPropertyChanges(file: PropertyData[], existing: PropertyDa
 
       if (changed || match.array_index !== prop.array_index) {
         const id: PropertyKey = { key: match.key, array_index: match.array_index };
+
         result.updated.push({ id, old: match, new: prop });
       }
     } else {

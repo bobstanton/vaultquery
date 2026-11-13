@@ -131,6 +131,7 @@ export class IndexingService {
 
   private async performReindex(force: boolean): Promise<void> {
     const reindexId = ++IndexingService.reindexSequence;
+
     // Settings may have changed since construction (e.g. exclude patterns edited
     // in the settings tab, which schedules this reindex).
     this.performanceMonitor.startOperation();
@@ -158,6 +159,7 @@ export class IndexingService {
       }
       else {
         const result = await this.getFilesToProcess();
+
         toIndex = result.toIndex;
         toRemove = result.toRemove;
 
@@ -280,6 +282,7 @@ export class IndexingService {
 
   private async getPropertyKeyCounts(paths: readonly string[]): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
+
     if (!this.settings.enabledFeatures.indexFrontmatter) return counts;
 
     for (let offset = 0; offset < paths.length; offset += 500) {
@@ -301,6 +304,7 @@ export class IndexingService {
     for (let offset = 0; offset < paths.length; offset += 500) {
       const chunk = paths.slice(offset, offset + 500);
       const rows = await this.database.all(`SELECT count(*) AS occurrences FROM table_cells WHERE path IN (${chunk.map(() => '?').join(',')})`, chunk);
+
       total += Number(rows[0]?.occurrences ?? 0);
     }
 
@@ -378,6 +382,7 @@ export class IndexingService {
 
   public async indexNote(file: TFile, content?: string): Promise<void> {
     const existingResults = await this.database.all(INDEXING_SQL.CHECK_NOTE_EXISTS, [file.path]);
+
     await this.indexSingleNote(file, existingResults.length > 0, content);
   }
 
@@ -393,6 +398,7 @@ export class IndexingService {
 
   public async processRealtimeBatch(filePathsToRemove: readonly string[], candidateFiles: readonly TFile[], force = false): Promise<RealtimeIndexBatchResult> {
     const startedAt = performance.now();
+
     this.beginIndexing();
     const releaseDeferral = this.holdRefreshDeferral();
 
@@ -447,10 +453,12 @@ export class IndexingService {
 
       const failedRemovals = new Set(failedRemovalPaths);
       const { indexedFiles, failedPaths } = await this.processRealtimeFiles(filesToIndex.filter(file => !failedRemovals.has(file.path)));
+
       failedPaths.push(...filesToIndex.filter(file => failedRemovals.has(file.path)).map(file => file.path));
 
       const propertyKeysAfter = await this.getPropertyKeyCounts(affectedPaths);
       const propertyKeysChanged = await this.globalPropertyKeysChanged(propertyKeysBefore, propertyKeysAfter);
+
       this.realtimePropertiesRebuildPending ||= propertyKeysChanged;
 
       if (this.realtimePropertiesRebuildPending) {
@@ -521,6 +529,7 @@ export class IndexingService {
       });
 
       const ready = prepared.filter(entry => entry !== null);
+
       if (ready.length === 0) continue;
 
       try {
@@ -640,6 +649,7 @@ export class IndexingService {
     for (let offset = 0; offset < paths.length; offset += this.BATCH_SIZE_FILES) {
       const batch = paths.slice(offset, offset + this.BATCH_SIZE_FILES);
       const placeholders = batch.map(() => '?').join(',');
+
       await this.database.run(`${INDEXING_SQL.DELETE_NOTES_BY_PATH_IN}(${placeholders})`, batch);
 
       if (performance.now() - lastYield >= 8 || offset + batch.length === paths.length) {
@@ -716,6 +726,7 @@ export class IndexingService {
     for (let i = 0; i < filePaths.length; i += CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
+
       await this.database.run(`${INDEXING_SQL.DELETE_NOTES_BY_PATH_IN}(${placeholders})`, chunk);
     }
 
@@ -812,6 +823,7 @@ export class IndexingService {
     const prepareMs = performance.now() - prepareStartedAt;
 
     const databaseStartedAt = performance.now();
+
     await this.database.indexNotesBatch(batchData, isInitialIndexing, true);
     const databaseMs = performance.now() - databaseStartedAt;
     const batchBytes = batch.reduce((total, file) => total + file.stat.size, 0);
@@ -875,6 +887,7 @@ export class IndexingService {
 
     for (const file of batch) {
       const indexData = await this.prepareNoteForIndexing(file);
+
       await this.database.indexNote(indexData);
 
       indexed++;
@@ -906,6 +919,7 @@ export class IndexingService {
     if (content === undefined) {
       if (contentAvailable) {
         const readStartedAt = performance.now();
+
         content = await this.app.vault.cachedRead(file);
         readWaitMs = performance.now() - readStartedAt;
       } else content = '';
@@ -917,6 +931,7 @@ export class IndexingService {
 
     if (this.providerDefinitionBlockHandler?.hasProviderDefinitionDiscovery()) {
       const providerStartedAt = performance.now();
+
       await this.providerDefinitionBlockHandler.indexProviderDefinitionBlocks(file.path, content);
       providerWaitMs = performance.now() - providerStartedAt;
     }
@@ -1000,6 +1015,7 @@ export class IndexingService {
     }
 
     const prototype: unknown = Object.getPrototypeOf(frontmatter);
+
     if (prototype !== Object.prototype && prototype !== null) return [];
 
     return this.processFrontmatterProperties(frontmatter as Record<string, unknown>);
@@ -1435,6 +1451,7 @@ export class IndexingService {
 
     seen.add(line);
     const depth = this.computeListIndentLevelFromCache(parent, itemsByLine, depthByLine, seen) + 1;
+
     seen.delete(line);
     depthByLine.set(line, depth);
 
@@ -1457,6 +1474,7 @@ export class IndexingService {
   private getNextContextOccurrence(contextOccurrences: Map<string, number>, lineIndex: number, lines: string[]): number {
     const contextKey = ContentLocationService.computeContextKey(lineIndex, lines);
     const occurrence = contextOccurrences.get(contextKey) ?? 0;
+
     contextOccurrences.set(contextKey, occurrence + 1);
 
     return occurrence;
@@ -1480,6 +1498,7 @@ export class IndexingService {
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
           const { valueType, valueString } = convertValue(item);
+
           results.push({ key: fullKey, value: valueString, valueType, arrayIndex: index });
         });
       }
@@ -1488,6 +1507,7 @@ export class IndexingService {
       }
       else {
         const { valueType, valueString } = convertValue(value);
+
         results.push({ key: fullKey, value: valueString, valueType, arrayIndex: null });
       }
     }

@@ -21,8 +21,10 @@ export async function* mapConcurrent<T, R>(items: Iterable<T>, concurrency: numb
   const fill = () => {
     while (!done && outstanding < limit && !cancelled()) {
       const next = iterator.next();
+
       if (next.done) { done = true; break; }
       const item = next.value, index = nextIndex++;
+
       outstanding++;
 
       // Work can reject after cancellation, so attach rejection handlers before it starts.
@@ -40,6 +42,7 @@ export async function* mapConcurrent<T, R>(items: Iterable<T>, concurrency: numb
       if (!completed.length) await new Promise<void>(resolve => { wake = resolve; });
       if (cancelled()) return;
       const result = completed.shift()!;
+
       outstanding--;
       if (!result.ok) throw result.error;
       fill();

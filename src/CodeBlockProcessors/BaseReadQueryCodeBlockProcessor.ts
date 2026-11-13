@@ -44,11 +44,14 @@ export abstract class BaseReadQueryCodeBlockProcessor {
     const key = `${sourcePath}\u0000${query}`;
     const revision = QueryRefreshRegistry.dataRevision();
     const shared = inFlightQueries.get(key);
+
     if (shared && shared.revision === revision) return shared.rows;
 
     const rows = api.query(query, sourcePath);
+
     inFlightQueries.set(key, { revision, rows });
     const release = (): void => { if (inFlightQueries.get(key)?.rows === rows) inFlightQueries.delete(key); };
+
     rows.then(release, release);
 
     return rows;
@@ -85,6 +88,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
 
   protected async processQueryInContainer(container: HTMLElement, parsed: ParsedQuery, ctx: MarkdownPostProcessorContext): Promise<void> {
     const api = this.plugin.api;
+
     if (!api) return;
 
     const renderVersion = this.renderGuard.begin(container);
@@ -120,6 +124,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       };
 
       const renderStartedAt = performance.now();
+
       await QueryRenderer.render(renderContext);
       this.stopWaiting(container);
       this.waitStartedAt.delete(container);
@@ -172,6 +177,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
 
   private async showProviderWaiting(container: HTMLElement, error: ProviderSnapshotUnavailableError): Promise<boolean> {
     const api = this.plugin.api;
+
     if (!api || !error.tableName) return false;
     const startedAt = this.waitStartedAt.get(container) ?? Date.now();
 
@@ -179,6 +185,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       const statuses = await api.getTableProviderStatus();
       const key = error.tableName.toLowerCase();
       const status = statuses.find(candidate => candidate.tableName.toLowerCase() === key);
+
       if (!isProviderTableArriving(status, Date.now() - startedAt)) return false;
       this.waitStartedAt.set(container, startedAt);
       this.waiting.set(container, renderProviderWaiting(container, status!, startedAt));
@@ -196,7 +203,6 @@ export abstract class BaseReadQueryCodeBlockProcessor {
     this.waiting.get(container)?.stop();
     this.waiting.delete(container);
   }
-
 }
 
 export function createForcedOutputProcessor(outputKind: ReadQueryOutputKind) {

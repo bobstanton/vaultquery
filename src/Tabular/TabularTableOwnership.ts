@@ -55,6 +55,7 @@ export function ensureRegistry(db: Database | RegistryMirror, name: string, sql:
   if ('all' in db) {
     return db.all(REGISTRY_SCHEMA_SQL, [name]).then(async rows => {
       const missing = registryMissing(name, sql, rows[0]?.sql);
+
       if (missing) await db.run(sql);
 
       return missing;
@@ -62,6 +63,7 @@ export function ensureRegistry(db: Database | RegistryMirror, name: string, sql:
   }
 
   const missing = registryMissing(name, sql, readRows(db, REGISTRY_SCHEMA_SQL, [name])[0]?.[0]);
+
   if (missing) db.run(sql);
 
   return missing;

@@ -32,6 +32,7 @@ export class FunctionHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
         const truncated = source.length > 50 ? source.substring(0, 47) + '...' : source;
         const escaped = truncated.replace(/\|/g, '\\|').replace(/\n/g, ' ');
         const fileName = path.split('/').pop() || path;
+
         sections.push(`| \`${signature}\` | ${fileName} | \`${escaped}\` |`);
       }
 

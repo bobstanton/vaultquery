@@ -22,6 +22,7 @@ export interface SnapshotDatabase {
 }
 
 const key = (name: string): string => name.toLowerCase();
+
 interface PreparedRuntime extends SnapshotRuntime {
   readonly key: string;
   readonly signature: string;
@@ -133,6 +134,7 @@ export class ProviderSnapshotCoordinator {
 
   public invalidatePath(path: string): void {
     const runtimes = this.definitions.filter(runtime => runtime.sourcePath === path);
+
     if (!runtimes.length) return;
     this.dirtyPaths.set(path, (this.dirtyPaths.get(path) ?? 0) + 1);
 
@@ -162,6 +164,7 @@ export class ProviderSnapshotCoordinator {
   public setDefinitions(inputs: SnapshotRuntime[]): void {
     const definitions = inputs.map(input => {
       const runtime = prepareRuntime(input);
+
       this.preparedRuntimes.set(input, runtime);
       this.preparedRuntimes.set(runtime, runtime);
 
@@ -173,6 +176,7 @@ export class ProviderSnapshotCoordinator {
 
     for (const runtime of definitions) {
       const id = runtimeKey(runtime);
+
       if (!signatures.has(id)) signatures.set(id, new Set());
       signatures.get(id)!.add(runtimeSignature(runtime));
       counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -203,6 +207,7 @@ export class ProviderSnapshotCoordinator {
       for (const table of runtime.definition.requestedTables ?? []) {
         const tableKey = key(table);
         const ambiguous = this.tableRuntimes.has(tableKey) || counts.get(runtimeKey(runtime)) !== 1;
+
         this.tableRuntimes.set(tableKey, ambiguous ? null : runtime);
       }
     }
@@ -232,6 +237,7 @@ export class ProviderSnapshotCoordinator {
     if (!this.enabled || this.disposed || this.restorationPending || this.initializationError || this.initialized !== this.database()) return undefined;
     const runtime = this.runtimeFor(name);
     const record = this.stored.get(key(name));
+
     if (!runtime || !record || this.dirtyPaths.has(runtime.sourcePath) || this.pendingMoves.has(record.sourcePath)) return undefined;
     const owner = ownerFor(runtime, record.table);
 
@@ -278,12 +284,15 @@ export class ProviderSnapshotCoordinator {
       await operation; this.initializationError = undefined;
     }
     catch (error) {
-      this.initializationError = getErrorMessage(error); throw error;
+      this.initializationError = getErrorMessage(error);
+
+ throw error;
     }
   }
 
   private async initializeNow(force = false): Promise<void> {
     const database = this.database();
+
     if (!database) return;
     if (!this.enabled && database.hasProviderSnapshots && !await database.hasProviderSnapshots()) return;
     if (!force && this.initialized === database && !this.initializationError) return;
@@ -335,6 +344,7 @@ export class ProviderSnapshotCoordinator {
 
   private checkSnapshotLimits(table: string, bytes: number, columns: number): void {
     const limits = this.limits();
+
     checkDataFileSize(table, bytes, limits);
 
     if (columns > limits.maxColumns) {
@@ -359,6 +369,7 @@ export class ProviderSnapshotCoordinator {
 
   public async reconcile(path?: string, awaitingReplacement = false): Promise<void> {
     const pathRevision = path === undefined ? undefined : this.dirtyPaths.get(path);
+
     await this.queue.enqueue(() => this.reconcileNow(path, pathRevision, awaitingReplacement));
   }
 
@@ -372,6 +383,7 @@ export class ProviderSnapshotCoordinator {
     }
 
     const database = this.database();
+
     if (!database || !this.enabled) return;
     const removed: string[] = [];
     const relocations: ProviderSnapshotRelocation[] = [];
@@ -422,6 +434,7 @@ export class ProviderSnapshotCoordinator {
       if (this.tableRuntimes.get(key(record.table)) === null) continue;
       const runtime = this.runtimeFor(record.table);
       const owner = runtime ? ownerFor(runtime, record.table) : undefined;
+
       if (owner && sameSnapshotOwner(record, owner) && record.fingerprint === owner.fingerprint) continue;
       await database.withProviderSnapshots(operations => operations.remove(record));
       this.stored.delete(key(record.table));
@@ -435,12 +448,14 @@ export class ProviderSnapshotCoordinator {
   public async publishReadySnapshots(): Promise<void> {
     await this.queue.enqueue(async () => {
       const tables = this.names().filter(name => this.ready(name));
+
       if (tables.length) await this.publish(tables);
     });
   }
 
   public stale(input: SnapshotRuntime, now = Date.now()): boolean {
     const runtime = this.preparedRuntimes.get(input) ?? prepareRuntime(input);
+
     if (!this.enabled || this.disposed || (this.retries.get(runtimeKey(runtime))?.next ?? 0) > now) return false;
 
     return (runtime.definition.requestedTables ?? []).some(table => {
@@ -456,6 +471,7 @@ export class ProviderSnapshotCoordinator {
       if (this.ready(name)) continue;
       const runtime = this.runtimeFor(name);
       const pending = runtime ? this.pending.get(runtimeKey(runtime)) : undefined;
+
       if (pending && runtime && this.controllers.has(runtimeKey(runtime))) await pending.catch(() => {});
 
       if (!this.ready(name)) {
@@ -476,6 +492,7 @@ export class ProviderSnapshotCoordinator {
     const runtime = this.preparedRuntimes.get(input) ?? prepareRuntime(input);
     const id = runtimeKey(runtime);
     const existing = this.pending.get(id);
+
     if (existing) return existing;
     const generation = this.generation;
     let resolve!: (tables: string[]) => void;
@@ -551,6 +568,7 @@ export class ProviderSnapshotCoordinator {
       }
 
       const document = snapshot.document;
+
       this.checkSnapshotLimits(snapshot.table, document.sourceBytes, document.columns.length);
     }
   }
@@ -573,6 +591,7 @@ export class ProviderSnapshotCoordinator {
       generation = this.generation;
       if (!this.isCurrent(runtime, generation)) return undefined;
       const database = this.database();
+
       if (!database) throw new Error('Provider loading is waiting for the main database.');
       this.assertDeclaredTables(runtime, tables);
 
@@ -587,6 +606,7 @@ export class ProviderSnapshotCoordinator {
 
       if (!this.isCurrent(runtime, generation) || database !== this.database()) return undefined;
       const controller = new AbortController();
+
       this.controllers.set(runtimeKey(runtime), controller);
 
       return { database, controller };
@@ -608,6 +628,7 @@ export class ProviderSnapshotCoordinator {
         this.assertDeclaredTables(runtime, tables);
         this.validateResult(result, tables);
         const snapshots = result.snapshots ?? [];
+
         materializing = snapshots.length > 0;
 
         const records = await database.withProviderSnapshots(operations => {
@@ -622,6 +643,7 @@ export class ProviderSnapshotCoordinator {
 
         for (const record of records) {
           const previous = this.stored.get(key(record.table));
+
           this.schemaChanges.set(key(record.table), Boolean(previous && JSON.stringify(previous.columns) !== JSON.stringify(record.columns)));
           this.stored.set(key(record.table), record);
         }
@@ -631,6 +653,7 @@ export class ProviderSnapshotCoordinator {
         this.errors.delete(runtimeKey(runtime));
         this.retries.delete(runtimeKey(runtime));
         const changed = snapshots.map(snapshot => snapshot.table);
+
         if (changed.length) await this.publish(changed);
 
         return changed;
@@ -641,6 +664,7 @@ export class ProviderSnapshotCoordinator {
         if (!current()) return [];
         this.errors.set(runtimeKey(runtime), getErrorMessage(error));
         const attempts = (this.retries.get(runtimeKey(runtime))?.attempts ?? 0) + 1;
+
         this.retries.set(runtimeKey(runtime), { attempts, next: Date.now() + Math.min(300_000, 5000 * 2 ** Math.min(attempts - 1, 6)) });
 
         if (!committed && this.invalidatesSnapshot(error, materializing)) {
@@ -648,8 +672,10 @@ export class ProviderSnapshotCoordinator {
 
           for (const table of tables) {
             const record = this.stored.get(key(table));
+
             if (!record) continue;
             const didRemove = await database.withProviderSnapshots(operations => current() && operations.remove(record));
+
             if (!didRemove) continue;
             this.stored.delete(key(table));
             removed.push(table);

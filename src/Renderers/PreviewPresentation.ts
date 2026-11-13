@@ -34,6 +34,7 @@ export function previewPresentation(result: PreviewResult, options: PreviewOptio
   const keyed = rowKey ? new Map(after.map(row => [row[rowKey], row])) : undefined;
   const pairs = before.map((row, index) => [row, (keyed ? keyed.get(row[rowKey!]) : after[index]) ?? {}]);
   const changed = new Set(columns.filter(column => pairs.some(([a, b]) => !equalValues(a[column], b[column]))));
+
   if (!changed.size) return present([], 0, []);
 
   const context = preserveText ? [] : [...new Set([
@@ -44,6 +45,7 @@ export function previewPresentation(result: PreviewResult, options: PreviewOptio
 
   const unique = (label: string): string => {
     let key = label, suffix = 1;
+
     while (reserved.has(key)) key = `${label} [preview ${suffix++}]`;
     reserved.add(key);
 
@@ -61,6 +63,7 @@ export function previewPresentation(result: PreviewResult, options: PreviewOptio
 
     for (const field of fields) {
       const value = (field.proposed ? b : a)[field.column];
+
       if (!preserveText && (value === undefined && !changed.has(field.column)
         || field.column === 'array_index' && (a.array_index == null || a.array_index === '')
         && (b.array_index == null || b.array_index === ''))) continue;

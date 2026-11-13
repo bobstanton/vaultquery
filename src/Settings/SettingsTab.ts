@@ -60,6 +60,7 @@ function rootControl<K extends keyof ExternalRoot>(
     },
     set: (settings, value, id) => {
       const root = settings.externalRoots[Number(id)];
+
       if (root) root[field] = parse(value);
     },
   };
@@ -125,6 +126,7 @@ const KEY_CONTROLS: Record<string, ControlAccessor> = {
 
 function resolveControl(key: string): { control: ControlAccessor; id: string } {
   const prefixed = PREFIX_CONTROLS.find(([prefix]) => key.startsWith(prefix));
+
   if (prefixed) return { control: prefixed[1], id: key.slice(prefixed[0].length) };
 
   return { control: KEY_CONTROLS[key] ?? PLAIN_CONTROL, id: key };
@@ -151,6 +153,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
   public getSettingDefinitions(): SettingDefinitionItem[] {
     const settings = this.plugin.settings;
+
     this.externalStatusRows.clear();
 
     const state: SettingsUiState = {
@@ -425,9 +428,11 @@ export class VaultQuerySettingTab extends PluginSettingTab {
                   .setButtonText('View stats')
                   .onClick(() => {
                     const api = this.plugin.api;
+
                     if (!api) return;
 
                     const stats = api.getPerformanceStats();
+
                     new IndexingStatsModal(this.app, stats).open();
                   }));
               },
@@ -715,9 +720,11 @@ export class VaultQuerySettingTab extends PluginSettingTab {
   private externalRootStatus(path: string): string {
     if (!this.external.files) return 'Files already indexed stay queryable; this device cannot read the folder';
     const status = this.plugin.api?.getExternalRootStatus().find(root => root.path === normalizeRootPath(path));
+
     if (!status) return 'Not scanned yet';
     const found = status.filesFound.toLocaleString();
     const indexed = status.filesIndexed.toLocaleString();
+
     if (status.scanning) return `Scanning. ${found} files found, ${indexed} indexed`;
     const failures = status.failures.length ? `, ${status.failures.length} failed` : '';
 
@@ -749,6 +756,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
       .onClick(() => {
         const api = this.plugin.api;
         const path = this.externalRootPath(index);
+
         if (!api || !path) return;
         button.setButtonText('Scanning...');
         button.setDisabled(true);
@@ -778,6 +786,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
   private externalRootDescription(path: string): string {
     if (!this.external.files) return UNAVAILABLE_FOLDERS;
     const status = this.plugin.api?.getExternalRootStatus().find(root => root.path === normalizeRootPath(path));
+
     if (!status || status.state === 'ready') return 'Absolute path to a folder outside the vault';
 
     return status.error ?? 'This folder could not be used';
@@ -791,6 +800,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
   public async setControlValue(key: string, value: unknown): Promise<void> {
     const { control, id } = resolveControl(key);
+
     if (control.accepts && !control.accepts(value)) return;
     control.set(this.plugin.settings, value, id);
 
@@ -805,6 +815,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
   private describeProvider(provider: LlmProviderConfig): string {
     const parts = ['Endpoint'];
+
     if (provider.model?.trim()) parts.push(provider.model);
     if (provider.id === this.plugin.settings.llm.defaultProviderId) parts.push('Default');
 
@@ -864,6 +875,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
   private async deleteProvider(id: string): Promise<void> {
     const llm = this.plugin.settings.llm;
+
     llm.providers = llm.providers.filter(provider => provider.id !== id);
 
     await this.plugin.saveSettings();
@@ -903,6 +915,7 @@ export class VaultQuerySettingTab extends PluginSettingTab {
 
           if (status.isIndexing && status.progress) {
             const percentage = Math.round((status.progress.current / status.progress.total) * 100);
+
             button.setButtonText(`Rebuilding... ${percentage}%`);
             window.setTimeout(checkProgress, 500);
           }

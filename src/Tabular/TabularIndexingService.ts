@@ -101,6 +101,7 @@ export class DataFileIndexingService {
     this.sources.set(source.path, source);
     const key = sqliteIdentifierKey(source.path);
     let paths = this.sourcePathsByKey.get(key);
+
     if (!paths) this.sourcePathsByKey.set(key, paths = new Set());
     paths.add(source.path);
     this.sourceList = undefined;
@@ -131,6 +132,7 @@ export class DataFileIndexingService {
 
   private cancelRecovery(path: string): void {
     const timer = this.recoveryTimers.get(path);
+
     if (timer !== undefined) window.clearTimeout(timer);
     this.recoveryTimers.delete(path);
     this.recoveryAttempts.delete(path);
@@ -139,6 +141,7 @@ export class DataFileIndexingService {
   private scheduleRecovery(path: string): void {
     const delays = [1000, 5000, 15000];
     const attempt = this.recoveryAttempts.get(path) ?? 0;
+
     if (this.disposed || !this.shouldIndex(path) || this.recoveryTimers.has(path) || attempt >= delays.length) return;
     this.recoveryAttempts.set(path, attempt + 1);
 
@@ -197,6 +200,7 @@ export class DataFileIndexingService {
   public deindex(path: string): Promise<void> {
     return this.queue.enqueue(async () => {
       await this.initialize(false);
+
       await this.remove(path);
     });
   }
@@ -229,9 +233,11 @@ export class DataFileIndexingService {
     this.sources.delete(path);
     const key = sqliteIdentifierKey(path);
     const paths = this.sourcePathsByKey.get(key);
+
     paths?.delete(path);
     if (!paths?.size) this.sourcePathsByKey.delete(key);
     this.sourceList = undefined;
+
     await this.publish({ kind: 'remove', path });
   }
 
@@ -257,8 +263,10 @@ export class DataFileIndexingService {
 
     for (const file of this.settings.enableDataFileReads ? files ?? this.vault.getFiles() : []) {
       const key = sqliteIdentifierKey(file.path);
+
       if (!candidateKeys.has(key) || !this.shouldIndex(file.path)) continue;
       const group = groups.get(key);
+
       if (group) group.push(file.path);
       else groups.set(key, [file.path]);
     }
@@ -303,8 +311,10 @@ export class DataFileIndexingService {
           });
 
           const { document, mtime, revision } = await readDataFile(file, dataFileParseLimits(this.settings.dataFileMaxSizeMiB));
+
           if (cancelled()) break;
           const latest = await file.stat();
+
           if (cancelled()) break;
 
           if (!latest || latest.mtime !== mtime || latest.size !== document.sourceBytes || generation !== this.dirty.get(path)) {
@@ -344,6 +354,7 @@ export class DataFileIndexingService {
           if (cancelled()) break;
           if (attempt < 2 && (generation !== this.dirty.get(path) || error instanceof DataFileError && error.code === 'source-changed')) continue;
           const message = getErrorMessage(error);
+
           logger.warn('Data file indexing failed', { path, error: message });
 
           try {
@@ -357,6 +368,7 @@ export class DataFileIndexingService {
             if (cancelled() || !source) break;
             this.setSource(source);
             changed = true;
+
             await this.publish({ kind: 'unavailable', source });
           }
           catch (failure) {

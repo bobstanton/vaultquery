@@ -24,6 +24,7 @@ export class MarkdownTableUtils {
     while (i < lines.length - 1) {
       if (this.isTableRow(lines[i]) && this.isAlignRow(lines[i + 1])) {
         let j = i + 2;
+
         while (j < lines.length && this.isTableRow(lines[j])) j++;
 
         yield { startLine: i, endLineExclusive: j };
@@ -95,6 +96,7 @@ export class MarkdownTableUtils {
       let j = endLineExclusive;
       let block_id: string | undefined;
       let blockLine = j;
+
       while (blockLine < lines.length && !lines[blockLine].trim()) blockLine++;
 
       if (blockLine < lines.length) {
@@ -140,6 +142,7 @@ export class MarkdownTableUtils {
 
   static isMarkdownTable(s: string): boolean {
     const lines = s.trim().split('\n');
+
     if (lines.length < 2) return false;
     if (!this.isTableRow(lines[0])) return false;
     if (!this.isAlignRow(lines[1])) return false;

@@ -29,12 +29,14 @@ export class IndexingReadiness {
 
     return new Promise<VaultQueryAPI>((resolve, reject) => {
       const loading = container?.createDiv({ cls: 'vaultquery-loading' });
+
       if (loading) renderIndexingProgress(loading, this.plugin.api?.getIndexingStatus().progress);
       this.waiting.add({ container, loading, resolve, reject });
 
       if (!this.stopListening) {
         const workspace: Events = this.plugin.app.workspace;
         const ref = workspace.on(VAULTQUERY_API_READY_EVENT, () => this.update());
+
         this.stopListening = () => workspace.offref(ref);
         this.apiDeadline = Date.now() + 30_000;
         this.timer = window.setInterval(() => this.update(), 500);

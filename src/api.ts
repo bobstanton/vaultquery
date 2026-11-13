@@ -28,3 +28,4 @@ export { QueryIterationInvalidatedError } from './Database/QueryIteration';
 export type { QueryIterationOptions } from './Database/QueryIteration';
 
 export type { SchemaTable, SchemaColumnDoc } from './Database/SchemaDocumentation';
+export type { SqlSyntax } from './Constants/SqlCatalog';

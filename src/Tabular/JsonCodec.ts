@@ -50,6 +50,7 @@ function selectRows(root: JsonValue, path: string): { rows: JsonValue[]; propert
 
   if (isRecord(root)) {
     const arrays = Object.entries(root).filter((entry): entry is [string, JsonValue[]] => Array.isArray(entry[1]));
+
     if (arrays.length === 1) return { rows: arrays[0][1], property: arrays[0][0] };
 
     if (arrays.length > 1) {
@@ -76,6 +77,7 @@ function hasUnsafeIntegers(source: string): boolean {
 
 export function parseJson(source: string, path: string, limits: TabularParseLimits = dataFileParseLimits()): TabularDocument {
   const sourceBytes = dataFileUtf8ByteLength(source, path);
+
   checkDataFileSize(path, sourceBytes, limits);
   const bom = source.startsWith('\ufeff');
   const input = bom ? source.slice(1) : source;
@@ -101,6 +103,7 @@ export function parseJson(source: string, path: string, limits: TabularParseLimi
   }
 
   const order = [...names];
+
   if (!order.length) throw new DataFileError(path, 'format', 'The JSON array contains no columns.');
   validateCsvHeaders(order, path);
   const columns: TabularColumn[] = order.map(name => ({ name, type: types.get(name) ?? 'TEXT' }));
@@ -115,6 +118,7 @@ export function parseJson(source: string, path: string, limits: TabularParseLimi
 
 export function serializeJson(document: TabularDocument, rows: TabularRows, limits: TabularParseLimits = dataFileParseLimits(), origins: RowOrigins = []): string {
   const { path, columns, format } = document;
+
   if (format.kind !== 'json') throw new DataFileError(path, 'format', 'This document was not read from a JSON file.');
   if (format.unsafeIntegers) throw new DataFileError(path, 'format', 'This file is read-only because writing whole numbers past 2^53 would lose precision.');
   const root = parseSource(format.bom ? document.source.slice(1) : document.source, path);
@@ -126,12 +130,14 @@ export function serializeJson(document: TabularDocument, rows: TabularRows, limi
     const stored = origin === null ? undefined : document.rows[origin];
     const original = stored === undefined ? undefined : originals[origin!];
     const unchanged = (column: number): boolean => stored !== undefined && original !== undefined && stored[column] === row[column];
+
     if (format.scalarRows) return unchanged(0) ? original! : jsonValue(path, columns[0], row[0]);
     const entry = Object.assign(Object.create(null) as Record<string, JsonValue>, original !== undefined && isRecord(original) ? original : {});
 
     columns.forEach((column, position) => {
       if (unchanged(position)) return;
       const value = row[position];
+
       if (value !== null) entry[column.name] = jsonValue(path, column, value);
       else if (Object.prototype.hasOwnProperty.call(entry, column.name)) entry[column.name] = null;
     });
@@ -142,6 +148,7 @@ export function serializeJson(document: TabularDocument, rows: TabularRows, limi
   const output = format.root === null ? entries : { ...root as Record<string, JsonValue>, [format.root]: entries };
   const text = JSON.stringify(output, null, format.indent) + (format.terminalNewline ? '\n' : '');
   const framed = (format.bom ? '\ufeff' : '') + (format.newline === '\r\n' ? text.replace(/\n/g, '\r\n') : text);
+
   checkDataFileSize(path, dataFileUtf8ByteLength(framed, path), limits);
 
   return framed;
@@ -180,6 +187,7 @@ function jsonValue(path: string, column: TabularColumn, value: TabularValue): Js
 
 function rowsAt(root: JsonValue, property: string | null, path: string): JsonValue[] {
   const rows = property === null ? root : isRecord(root) ? root[property] : undefined;
+
   if (!Array.isArray(rows)) throw new DataFileError(path, 'source-changed', property === null ? 'The file no longer holds an array of rows.' : `The ${property} property no longer holds the rows.`);
 
   return rows;

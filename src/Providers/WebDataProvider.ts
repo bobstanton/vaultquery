@@ -22,9 +22,11 @@ export function parseWebDataDefinition(source: string, format: DataFileFormat): 
   for (const line of source.split(/\r?\n/)) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
     const match = /^\s*([A-Za-z]+)\s*:\s*(.*?)\s*$/.exec(line);
+
     if (!match || !['id', 'url', 'table', 'cache'].includes(match[1])) throw new Error(`Remote ${label} accepts only id, url, table, and cache, one key per line.`);
     if (values.has(match[1])) throw new Error(`Duplicate remote ${label} key: ${match[1]}.`);
     let value = match[2];
+
     if (value.startsWith('"')) {
       try {
         value = JSON.parse(value) as string;
@@ -38,15 +40,19 @@ export function parseWebDataDefinition(source: string, format: DataFileFormat): 
   }
 
   const id = values.get('id') ?? '';
+
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(id)) throw new Error(`Remote ${label} id must start with a letter and contain only letters, digits, and underscores.`);
   const prefix = `web_${format}`;
   const table = values.get('table') ?? `${prefix}_${id}`;
+
   validateSnapshotTableName(table);
   if (new RegExp(`^${prefix}$`, 'i').test(table)) throw new Error(`The ${prefix} table name is reserved.`);
   const url = webCsvUrl(values.get('url') ?? '').href;
   const age = /^(\d+)(m|h|d)$/.exec(values.get('cache') ?? '1h');
+
   if (!age) throw new Error(`Remote ${label} cache must be a positive duration such as 30m, 1h, or 2d.`);
   const cacheDurationMs = Number(age[1]) * ({ m: 60_000, h: 3_600_000, d: 86_400_000 }[age[2]] ?? 0);
+
   if (!Number.isSafeInteger(cacheDurationMs) || cacheDurationMs <= 0 || !Number.isSafeInteger(Date.now() + cacheDurationMs)) throw new Error(`Remote ${label} cache is outside the supported range.`);
 
   return { id, requestedTables: [table], request: { url, cacheDurationMs } };
@@ -70,23 +76,28 @@ export function createWebDataProvider(format: DataFileFormat, settings: Pick<Vau
     },
     refresh: async context => {
       const table = context.requestedTables?.[0];
+
       if (!table || context.requestedTables?.length !== 1) throw new Error(`Remote ${label} requires one reserved table.`);
       const url = webCsvUrl(typeof context.request?.url === 'string' ? context.request.url : '').href;
       const cacheDurationMs = Number(context.request?.cacheDurationMs);
+
       if (!Number.isSafeInteger(cacheDurationMs) || cacheDurationMs <= 0) throw new Error(`Remote ${label} refresh age is invalid.`);
       if (transport.busy) throw new Error(`A remote ${label} download is still in progress. Retry after it finishes.`);
       const limits = dataFileParseLimits(settings.dataFileMaxSizeMiB);
       const maxBytes = limits.maxFileBytes;
       const previous = context.existingSnapshots?.find(snapshot => snapshot.table === table);
       const headers: Record<string, string> = {};
+
       if (previous?.etag) headers['If-None-Match'] = previous.etag;
       else if (previous?.lastModified) headers['If-Modified-Since'] = previous.lastModified;
       let received = false;
 
       try {
         let response = await transport.download({ url, format, maxBytes, headers, signal: context.signal });
+
         if (response.status === 304 && !previous) response = await transport.download({ url, format, maxBytes, signal: context.signal });
         const asOf = Date.now();
+
         received = true;
 
         const metadata = { table, asOf, validatedAt: asOf, expiresAt: asOf + cacheDurationMs,
@@ -107,6 +118,7 @@ export function createWebDataProvider(format: DataFileFormat, settings: Pick<Vau
 
         const document = decodeDataFileBytes(response.bytes, table, format, limits);
         const revision = await sha256Hex(response.bytes);
+
         if (previous?.revision === revision) return { tables: {}, unchangedSnapshots: [{ ...metadata, asOf: previous.asOf, revision }] };
 
         return { tables: {}, snapshots: [{ kind: 'table', ...metadata, revision, document }] };

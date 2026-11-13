@@ -34,7 +34,6 @@ const WORKER_SETUP_TIMEOUT_MS = 30_000;
 export class WorkerUnavailableError extends Error {}
 class WorkerTimeoutError extends WorkerUnavailableError {}
 
-
 class WorkerSchemaProxy implements ISchemaManager {
   constructor(private callWorker: <T = unknown>(message: WorkerRequestBody) => Promise<T>) {}
 
@@ -91,6 +90,7 @@ export class WorkerDatabase {
 
     this.ready = new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new WorkerTimeoutError('Database worker startup timed out')), WORKER_SETUP_TIMEOUT_MS);
+
       this.readyResolve = () => { window.clearTimeout(timeout); resolve(); };
       this.readyReject = error => { window.clearTimeout(timeout); reject(error); };
     });
@@ -134,6 +134,7 @@ export class WorkerDatabase {
 
       this.readyReject(new WorkerUnavailableError(message));
       const pending = Array.from(this.pendingWorkerCalls.values());
+
       this.pendingWorkerCalls.clear();
 
       for (const call of pending) {
@@ -217,6 +218,7 @@ export class WorkerDatabase {
       }
     } catch (error) {
       instance.worker.terminate();
+
       throw error;
     }
 

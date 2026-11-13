@@ -72,18 +72,21 @@ export class WriteCodeBlockProcessor {
     const warningDiv = container.createDiv({ cls: 'vaultquery-write-warning' });
     const header = warningDiv.createDiv({ cls: 'vaultquery-message-header' });
     const icon = header.createSpan({ cls: 'vaultquery-message-icon' });
+
     setIcon(icon, 'alert-triangle');
     header.createEl('strong', { text: 'Write operations disabled' });
     warningDiv.createEl('p', { text: 'Write operations are disabled in plugin settings. Enable them to use insert, update, and delete operations.' });
 
     const writeContainer = container.createDiv({ cls: 'vaultquery-write-container' });
     const queryEl = writeContainer.createDiv({ cls: 'vaultquery-write-query' });
+
     queryEl.createEl('h4', { text: 'Write query:' });
     BaseRenderer.renderSqlCodeBlock(this.app, queryEl, query);
   }
 
   private async processWriteBlockInContainer(container: HTMLElement, parsed: ParsedQuery, sourcePath?: string, ctx?: MarkdownPostProcessorContext, planNotice?: string): Promise<void> {
     const api = this.plugin.api;
+
     if (!api) return;
 
     const renderVersion = this.renderGuard.begin(container);
@@ -154,6 +157,7 @@ export class WriteCodeBlockProcessor {
         },
         onApplyPendingChange: pending => {
           applyPending = pending;
+
           if (!pending && refreshPending) {
             refreshPending = false;
             void refreshPreview();
@@ -177,6 +181,7 @@ export class WriteCodeBlockProcessor {
 
       if (planNotice) {
         const notice = writeContainer.createDiv({ cls: 'vaultquery-preview-notice', text: planNotice });
+
         notice.setAttribute('role', 'alert');
         writeContainer.prepend(notice);
       }
@@ -231,6 +236,7 @@ export class WriteCodeBlockProcessor {
     if (planId) this.plugin.api?.discardPreview(planId);
     SlickGridRenderer.cleanupContainer(container);
     container.empty();
+
     await this.processWriteBlockInContainer(container, parsed, sourcePath, ctx, notice);
   }
 
@@ -271,6 +277,7 @@ export class WriteCodeBlockProcessor {
         previewResult.multiResults.forEach(result => {
           const key = `${result.op}s on ${result.table}`;
           const rows = previewRowCount(result);
+
           operationCounts.set(key, (operationCounts.get(key) || 0) + rows);
         });
 
@@ -285,6 +292,7 @@ export class WriteCodeBlockProcessor {
 
       const header = successDiv.createDiv({ cls: 'vaultquery-message-header' });
       const icon = header.createSpan({ cls: 'vaultquery-message-icon' });
+
       setIcon(icon, 'check-circle');
       header.createEl('strong', {text: 'Changes applied successfully'});
       successDiv.createEl('p', {text: operationSummary});
@@ -323,5 +331,4 @@ export class WriteCodeBlockProcessor {
       }
     }
   }
-
 }

@@ -142,6 +142,7 @@ export class VaultDatabase {
     } else {
       try {
         const data = await fileAdapter.readBinary(actualDatabasePath);
+
         db = new sqlJs.Database(new Uint8Array(data));
       }
       catch (error) {
@@ -164,7 +165,9 @@ export class VaultDatabase {
 
   public async saveToDisk(options: { throwOnError?: boolean; lockExport?: boolean } = {}): Promise<void> {
     const save = this.diskSaveQueue.catch(() => {}).then(() => this.withTransferLock(() => this.saveToDiskNow(options)));
+
     this.diskSaveQueue = save.catch(() => {});
+
     await save;
   }
 
@@ -215,6 +218,7 @@ export class VaultDatabase {
 
   private exportWithRuntimeState(): Uint8Array {
     this.exportGeneration++;
+
     return this.db.export();
   }
 
@@ -315,6 +319,7 @@ export class VaultDatabase {
 
         for (const relation of extractSqlReferencedTables(statement)) {
           const key = relation.toLowerCase();
+
           if (visited.has(key)) continue;
           visited.add(key);
 
@@ -323,6 +328,7 @@ export class VaultDatabase {
 
             while (views.step()) {
               const definition = views.get()[0];
+
               if (typeof definition === 'string') pending.push(definition);
             }
           }
@@ -484,6 +490,7 @@ export class VaultDatabase {
       }
 
       const deleteStaleSQL = `${INDEXING_SQL.DELETE_STALE_PROPERTIES}(VALUES ${placeholders})`;
+
       this.db.run(deleteStaleSQL, params);
     }
   }
@@ -683,6 +690,7 @@ export class VaultDatabase {
     }
     catch (error) {
       this.triggerFunctions?.limitPendingActions(pendingActionsBefore);
+
       throw error;
     }
   }
@@ -893,6 +901,7 @@ export class VaultDatabase {
     if (options.rows && shouldSync) {
       for (const row of options.rows) {
         const mapped = options.mapFileRow(row);
+
         fileRows.set(mapped.lineNumber, mapped.value);
       }
     }

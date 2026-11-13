@@ -7,6 +7,7 @@ export class SerialQueue {
 
   enqueue<T>(work: () => T | Promise<T>): Promise<T> {
     const operation = this.tail.then(work);
+
     this.tail = operation.catch(() => {});
 
     return operation;
@@ -18,6 +19,7 @@ export class SerialQueue {
 
     do {
       pending = queues.map(queue => queue.tail);
+
       await Promise.all(pending);
     } while (queues.some((queue, index) => queue.tail !== pending[index]));
   }

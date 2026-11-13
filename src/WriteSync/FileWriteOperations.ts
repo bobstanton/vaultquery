@@ -21,6 +21,7 @@ export interface TextFileSource { file: TFile | null; content: string | null; fr
 
 export async function readTextFileSource(vault: Vault, path: string, frontmatterOnly = false): Promise<TextFileSource> {
   const file = vault.getAbstractFileByPath(path);
+
   if (!file) return { file: null, content: null };
   if (!(file instanceof TFile)) throw new FilePreviewStaleError(`File path is occupied by a folder: ${path}`);
 

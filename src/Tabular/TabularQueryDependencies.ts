@@ -35,6 +35,7 @@ export class CsvQueryDependencies {
         if (result.relations.every(this.knownTable)) return result;
       } else {
         const revision = await this.schemaRevision();
+
         if (revision.database === context.revision.database && revision.version === context.revision.version) return result;
       }
     }
@@ -47,6 +48,7 @@ export class CsvQueryDependencies {
 
     if (direct.every(this.knownTable)) {
       const result = { relations: direct, hasEmptyView: false };
+
       this.contexts.set(result, { sql });
 
       return result;
@@ -77,6 +79,7 @@ export class CsvQueryDependencies {
     while (queue.length) {
       const name = queue.pop()!;
       const key = sqliteIdentifierKey(name);
+
       if (visited.has(key)) continue;
       visited.add(key);
       if (this.knownTable(name)) { relations.push(name); continue; }
@@ -89,15 +92,18 @@ export class CsvQueryDependencies {
 
       if (definition === undefined) { relations.push(name); continue; }
       const references = this.references(definition);
+
       if (!references.size) hasEmptyView = true;
       queue.push(...references);
     }
 
     const after = await this.schemaRevision();
     const stable = after.database === revision.database && after.version === revision.version;
+
     if (!stable && attempt < 2) return this.resolve(sql, attempt + 1);
 
     const result = { relations, hasEmptyView };
+
     this.contexts.set(result, { sql, revision: stable ? revision : undefined });
     if (stable && this.revision === token) this.cache(this.queries, sql, result);
 

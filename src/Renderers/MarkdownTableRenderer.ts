@@ -58,6 +58,7 @@ export class MarkdownTableRenderer extends BaseRenderer {
     const { container, results, onRefresh, app, sourcePath } = context;
 
     const tempContainer = container.createDiv();
+
     tempContainer.detach();
 
     if (!results.length) {
@@ -81,6 +82,7 @@ export class MarkdownTableRenderer extends BaseRenderer {
 
     this.cleanupContainer(container);
     const renderComponent = new Component();
+
     renderComponent.load();
     renderComponents.set(container, renderComponent);
 

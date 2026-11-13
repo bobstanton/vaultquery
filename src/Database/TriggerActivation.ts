@@ -9,6 +9,7 @@ interface TriggerActivationDb {
 
 export function activateUserTrigger(db: TriggerActivationDb, triggerName: string, triggerSql: string, sourcePath?: string): void {
   const prefixedName = `${USER_TRIGGER_PREFIX}${triggerName}`;
+
   db.run(`DROP TRIGGER IF EXISTS ${quoteIdentifier(prefixedName)}`);
 
   const sqlWithPath = sourcePath

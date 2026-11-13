@@ -35,6 +35,7 @@ export function ensureExternalFolderSchema(db: Database): void {
     .map(([name, type, sql]) => [String(name).toLowerCase(), { type, sql }]));
 
   const owned = !existing.has(EXTERNAL_FOLDERS_VIEW) || existing.get(EXTERNAL_FOLDERS_VIEW)?.type === 'view';
+
   if (!owned) throw new Error(`The ${EXTERNAL_FOLDERS_VIEW} name is occupied by an unrelated object.`);
 
   if ([...definitions].every(([name, sql]) => normalizeOwnedSchemaSql(existing.get(name)?.sql) === normalizeOwnedSchemaSql(sql))) return;

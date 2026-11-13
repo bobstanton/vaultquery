@@ -18,8 +18,10 @@ export class CachedSchemaViews implements SchemaViews {
 
   public async getViewColumns(view: string): Promise<string[]> {
     const cached = this.columns.get(view);
+
     if (cached) return cached;
     const columns = await this.schema.getViewColumns(view);
+
     this.columns.set(view, columns);
 
     return columns;
@@ -152,6 +154,7 @@ export async function schemaTables(settings: VaultQuerySettings, schema: SchemaV
 
 export function disabledSchemaTables(settings: VaultQuerySettings): string[] {
   const disabledFeatures: string[] = [];
+
   if (!settings.enabledFeatures.indexFrontmatter) disabledFeatures.push('properties');
   if (!settings.enabledFeatures.indexTables) disabledFeatures.push('table_cells');
   if (!settings.enabledFeatures.indexTasks) disabledFeatures.push('tasks');

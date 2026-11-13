@@ -16,6 +16,7 @@ export function checkSqlJsDatabaseHealth(db: Database | null, baseDiagnostics: R
 
     const tableResult = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'");
     const notesTableExists = tableResult.length > 0 && tableResult[0].values.length > 0;
+
     diagnostics.notesTableExists = notesTableExists;
 
     if (!notesTableExists) {
@@ -33,12 +34,14 @@ export function checkSqlJsDatabaseHealth(db: Database | null, baseDiagnostics: R
     }
 
     const countResult = db.exec('SELECT COUNT(*) FROM notes');
+
     diagnostics.noteCount = countResult.length > 0 ? countResult[0].values[0][0] : 0;
 
     return { healthy: true, diagnostics };
   }
   catch (error) {
     const message = getErrorMessage(error);
+
     diagnostics.exceptionType = error instanceof Error ? error.constructor.name : typeof error;
     diagnostics.exceptionMessage = message;
 

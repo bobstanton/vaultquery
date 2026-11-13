@@ -32,6 +32,7 @@ export class TriggerHelpCodeBlockProcessor extends BaseHelpCodeBlockProcessor {
       for (const trigger of triggers.sort((a, b) => a.trigger_name.localeCompare(b.trigger_name))) {
         const fileName = trigger.path.split('/').pop() || trigger.path;
         const status = trigger.enabled ? 'Active' : 'Disabled';
+
         sections.push(`| \`${trigger.trigger_name}\` | ${fileName} | ${status} |`);
       }
 

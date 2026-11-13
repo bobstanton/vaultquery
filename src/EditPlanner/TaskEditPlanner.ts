@@ -49,6 +49,7 @@ export class TaskEditPlanner {
 
   public static getTaskCheckbox(status: TaskRow['status'], completed: boolean): string {
     const requested = status ? ContentLocationService.statusToCheckbox(status) : completed ? 'x' : ' ';
+
     if (requested === null) throw new Error(`Unknown task status "${status}".`);
 
     return requested === ' ' && completed ? 'x' : requested;
@@ -84,6 +85,7 @@ export class TaskEditPlanner {
     if (base.priority) {
       const priority = base.priority.toLowerCase();
       const emoji = TASK_PRIORITY_EMOJIS.find(p => p.priority === priority)?.emoji ?? '';
+
       if (emoji) parts.push(emoji);
     }
 

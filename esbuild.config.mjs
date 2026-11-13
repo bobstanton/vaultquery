@@ -83,6 +83,7 @@ if (prod) {
 			(_match, r, g, b, a) => `#${r}${r}${g}${g}${b}${b}${a}${a}`)
 		.replace(/#([0-9a-f])([0-9a-f])([0-9a-f])(?=[^0-9a-f]|$)/gi,
 			(_match, r, g, b) => `#${r}${r}${g}${g}${b}${b}`);
+
 	await writeFile(cssPath, expandedHex);
 	process.exit(0);
 } else {

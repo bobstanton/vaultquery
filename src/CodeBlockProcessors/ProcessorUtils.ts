@@ -23,6 +23,7 @@ export function createVaultQueryCodeBlockContainer(el: HTMLElement, ctx: Markdow
   cleanupRenderedOutput(el);
   el.empty();
   const container = el.createDiv({ cls: 'vaultquery-container' });
+
   trackVaultQueryBlock(container, ctx);
 
   return container;
@@ -41,6 +42,7 @@ export class RenderVersionGuard {
 
   public begin(container: HTMLElement): number {
     const version = (this.versions.get(container) ?? 0) + 1;
+
     this.versions.set(container, version);
 
     return version;

@@ -148,6 +148,7 @@ async function createNoteIntents(previewResult: PreviewResult, allowDeleteNotes:
         for (const [key, value] of Object.entries(row)) {
           if (!NOTES_CORE_COLUMNS.includes(key) && value !== null && value !== undefined) {
             const originalKey = propertyViewKey(propertyColumns, key);
+
             properties[originalKey] = parsePropertyViewValue(formatUnknownValue(value), isList?.(path, originalKey) ?? false);
           }
         }
@@ -155,6 +156,7 @@ async function createNoteIntents(previewResult: PreviewResult, allowDeleteNotes:
         if (Object.keys(properties).length > 0) {
           const frontmatterYaml = stringifyYaml(properties).trimEnd();
           const frontmatter = ["---", frontmatterYaml, "---", "", ""].join("\n");
+
           content = frontmatter + content;
         }
       }
@@ -295,6 +297,7 @@ async function createMultiStatementIntents(app: App, previewResult: PreviewResul
   }
 
   const tableCells = await buildMultiStatementTableCells(affectedTables, changedCellsByTable, deletedCellsByTable, newRowsByTable, queryDatabase, warnings);
+
   intents.push(...createTableRewriteIntentsFromCells(tableCells));
 
   return intents;
@@ -307,6 +310,7 @@ function collectTableCellStatement(previewResult: PreviewResult, changedCellsByT
       const tableKey = createTableKey(cell.path, cell.table_index);
       const cellKey = createRowColumnKey(cell.row_index, cell.column_name);
       const deletedCells = deletedCellsByTable.get(tableKey) || new Set<string>();
+
       deletedCells.add(cellKey);
       deletedCellsByTable.set(tableKey, deletedCells);
       affectedTables.add(tableKey);
@@ -319,6 +323,7 @@ function collectTableCellStatement(previewResult: PreviewResult, changedCellsByT
     const tableKey = createTableKey(cell.path, cell.table_index);
     const cellKey = createRowColumnKey(cell.row_index, cell.column_name);
     const tableCells = changedCellsByTable.get(tableKey) || new Map<string, TableCellRow>();
+
     tableCells.set(cellKey, cell);
     changedCellsByTable.set(tableKey, tableCells);
     deletedCellsByTable.get(tableKey)?.delete(cellKey);
@@ -528,9 +533,11 @@ async function createTagPatchIntents(previewResult: PreviewResult, readNoteConte
 
   for (const [index, before] of previewResult.before.entries()) {
     const after = previewResult.after[index];
+
     if (!deleting && (!after || before.tag_name === after.tag_name)) continue;
     const path = asStr(deleting ? before.path : after.path);
     const changes = changesByPath.get(path) ?? [];
+
     changes.push({ tag: asStr(before.tag_name), replacement: deleting ? '' : asStr(after.tag_name),
       lineNumber: asNum(before.line_number, null) });
     changesByPath.set(path, changes);
@@ -570,11 +577,13 @@ async function createTagInsertIntents(previewResult: PreviewResult, queryDatabas
 
     if (lineNumber !== null) {
       const tags = inlineTagsByPath.get(path) || [];
+
       tags.push({ tagName, lineNumber, insertPosition });
       inlineTagsByPath.set(path, tags);
     }
     else {
       const tags = frontmatterTagsByPath.get(path) || [];
+
       tags.push(tagName.slice(1));
       frontmatterTagsByPath.set(path, tags);
     }
@@ -774,6 +783,7 @@ async function createLinkDeleteIntents(previewResult: PreviewResult, readNoteCon
   for (const row of previewResult.before) {
     const path = asStr(row.path);
     const links = linkDeletesByPath.get(path) || [];
+
     links.push({ link: readLinkRowFields(row), replacement: '' });
     linkDeletesByPath.set(path, links);
   }
@@ -968,6 +978,7 @@ function createTableRewriteIntentsFromCells(cells: TableCellRow[]): ObsidianEdit
   for (const cell of cells) {
     const key = createTableKey(cell.path, cell.table_index);
     const tableCells = byTable.get(key) || [];
+
     tableCells.push(cell);
     byTable.set(key, tableCells);
   }
@@ -1223,6 +1234,7 @@ function toTaskRow(row: Row, warnings: string[]): TaskRow | null {
 
 function copyMissingLocationFields(row: { start_offset?: number | null; end_offset?: number | null; anchor_hash?: string | null; block_id?: string | null; }, beforeRow: Row): void {
   const beforeLocation = readLocationFields(beforeRow);
+
   row.start_offset ??= beforeLocation.start_offset;
   row.end_offset ??= beforeLocation.end_offset;
   row.anchor_hash ??= beforeLocation.anchor_hash;

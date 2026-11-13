@@ -28,12 +28,14 @@ export function capacitorFileSystem(): ExternalFileSystem | undefined {
   if (!Platform.isAndroidApp) return undefined;
   const capacitor = (window as Window & { Capacitor?: CapacitorGlobal }).Capacitor;
   const files = capacitor?.Plugins?.Filesystem;
+
   if (!capacitor || !files || typeof capacitor.convertFileSrc !== 'function') return undefined;
   const convert = capacitor.convertFileSrc.bind(capacitor);
 
   const request = async (path: string): Promise<Response> => {
     // Capacitor serves local files through its WebView; requestUrl cannot stream that transport.
     const response = await window.fetch(convert(fileUrlPath(path)));
+
     if (!response.ok) throw new Error(`This file could not be read (${response.status}): ${path}`);
 
     return response;
@@ -66,6 +68,7 @@ function confined(path: string): string {
 
 function streamHandle(response: Response, path: string): ExternalFileHandle {
   const body = response.body?.getReader();
+
   if (!body) throw new Error(`This file could not be streamed: ${path}`);
   const reader = forwardReader(body, path);
 

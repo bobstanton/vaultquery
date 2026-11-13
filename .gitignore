@@ -8,7 +8,6 @@ node_modules/
 # Build outputs
 main.js
 api.js
-api.d.ts
 *.js.map
 /styles.css
 /main.css
@@ -16,21 +15,6 @@ api.d.ts
 
 # Compiled JavaScript in src (should not be committed)
 src/**/*.js
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
 
 # Temporary files
 *.tmp

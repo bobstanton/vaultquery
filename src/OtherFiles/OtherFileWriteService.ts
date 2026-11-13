@@ -38,9 +38,11 @@ export class OtherFileWriteService {
   async preview(sql: string, params: unknown[]): Promise<PreviewResult> {
     const assertAccess = this.plans.captureAccess('other_files');
     const statements = otherFileWriteStatements(sql);
+
     await this.indexing.waitForIdle();
     const limit = this.settings.maxFileSizeKB * 1024;
     const staged = await this.database.stageOtherFileWrites(sql, params, { maxFileBytes: limit });
+
     assertAccess();
     const files: PreparedFile[] = [], operations: PreviewResult[] = [];
 
@@ -64,6 +66,7 @@ export class OtherFileWriteService {
       }
       catch (error) {
         await this.refresh([row.path]).catch(() => []);
+
         throw error;
       }
 
@@ -104,6 +107,7 @@ export class OtherFileWriteService {
         for (const file of plan.files) {
           failedPath = file.path;
           this.assertPath(file.path);
+
           await this.checkSource(file, plan.limit);
         }
 
@@ -117,6 +121,7 @@ export class OtherFileWriteService {
               assertAccess();
               this.assertPath(file.path);
               const current = await this.checkSource(file, plan.limit);
+
               assertAccess();
               metadata = this.watchMetadata(file);
               phase = 'write';
@@ -147,7 +152,9 @@ export class OtherFileWriteService {
                   throw new Error(`File contents do not match the prepared output: ${file.path}`);
                 }
               } catch (error) {
-                unknown.push(file.path); throw error;
+                unknown.push(file.path);
+
+ throw error;
               }
 
               completed.push(file.path);
@@ -173,6 +180,7 @@ export class OtherFileWriteService {
 
         try {
           const diagnostics = await this.refresh(paths);
+
           if (diagnostics.length) indexingError = new Error(diagnostics.join('\n'));
         } catch (error) {
           indexingError = error;
@@ -192,6 +200,7 @@ export class OtherFileWriteService {
         if (!attempted.length && failure instanceof FilePreviewStaleError) throw failure;
         const untouched = plan.files.map(file => file.path).filter(path => !completed.includes(path) && !unknown.includes(path));
         const message = `${getErrorMessage(failure)} Completed files: ${completed.length}. Unverified files: ${unknown.length}. Unchanged files: ${untouched.length}.`;
+
         throw new FileWriteApplyError(message, phase, completed, unknown, untouched, failedPath);
       }
 
@@ -231,6 +240,7 @@ export class OtherFileWriteService {
 
   private async checkSource(file: PreparedFile, limit: number): Promise<TFile | null> {
     const current = this.getFile(file.path);
+
     if (current && current.path !== file.path) throw new FilePreviewStaleError(`File path spelling changed: ${file.path}`);
 
     if (file.originalHash === undefined) {
@@ -252,9 +262,11 @@ export class OtherFileWriteService {
 
   private async read(file: TFile, limit: number): Promise<Uint8Array<ArrayBuffer>> {
     const { size, mtime, ctime } = file.stat, path = file.path;
+
     if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw new FilePreviewStaleError(`File exceeds the write limit: ${path}`);
     const bytes = new Uint8Array(await this.app.vault.readBinary(file));
     const current = this.getFile(path);
+
     if (!current || current !== file || current.path !== path || current.stat.size !== size || current.stat.mtime !== mtime
       || current.stat.ctime !== ctime || bytes.byteLength !== size) throw new FilePreviewStaleError(`File changed during reading: ${path}`);
 

@@ -78,6 +78,7 @@ export class IndexingStateManager {
 
   private scheduleQueueProcessing(delayMs: number = 200): void {
     if (this.disposed) return;
+
     if (this.indexingTimeout) {
       window.clearTimeout(this.indexingTimeout);
     }
@@ -92,6 +93,7 @@ export class IndexingStateManager {
 
   private async processIndexingQueue(): Promise<void> {
     if (this.disposed) return;
+
     if (this.indexingQueue.size === 0 && this.removalQueue.size === 0 && this.staleLinkTargets.size === 0) {
       this.notifyIfPipelineIdle();
 
@@ -119,9 +121,11 @@ export class IndexingStateManager {
       if (this.disposed) return;
 
       const pathsToRemove = Array.from(this.removalQueue);
+
       this.removalQueue.clear();
 
       const filesToIndex = Array.from(this.indexingQueue);
+
       this.indexingQueue.clear();
 
       const candidateFiles: TFile[] = [];
@@ -141,6 +145,7 @@ export class IndexingStateManager {
       try {
         const candidates = new Set(candidateFiles.map(file => file.path));
         const result = await this.plugin.api?.processRealtimeIndexBatch(pathsToRemove.filter(path => !candidates.has(path)), candidateFiles, true);
+
         if (this.disposed) return;
         filesIndexed = result?.filesIndexed ?? 0;
         filesRemoved = result?.filesRemoved ?? 0;
@@ -159,6 +164,7 @@ export class IndexingStateManager {
       }
       catch (error) {
         if (this.disposed) return;
+
         for (const path of filesToIndex) {
           this.indexingQueue.add(path);
         }
@@ -177,6 +183,7 @@ export class IndexingStateManager {
           error,
         });
       }
+
       if ((filesIndexed > 0 || filesRemoved > 0) && this.plugin.api) {
         this.scheduleDiskSave();
 
@@ -199,6 +206,7 @@ export class IndexingStateManager {
    */
   private scheduleDiskSave(): void {
     if (this.disposed) return;
+
     if (this.diskSaveTimeout) {
       window.clearTimeout(this.diskSaveTimeout);
     }
@@ -228,6 +236,7 @@ export class IndexingStateManager {
 
   public async waitForIndexingComplete(maxWaitMs: number = 5000): Promise<void> {
     const startedAt = Date.now();
+
     await this.waitForPipelineIdle(maxWaitMs);
 
     const remaining = maxWaitMs - (Date.now() - startedAt);
@@ -366,8 +375,10 @@ export class IndexingStateManager {
     void this.plugin.api.query(`SELECT path FROM notes WHERE path LIKE '${escaped}%' ESCAPE '\\'`)
       .then(rows => {
         if (this.disposed) return;
+
         for (const row of rows) {
           const path = stringColumn(row, 'path');
+
           if (path && !paths.has(path)) { paths.add(path); this.removeSource(path); }
         }
       })
@@ -384,6 +395,7 @@ export class IndexingStateManager {
     Vault.recurseChildren(folder, file => {
       if (!(file instanceof TFile)) return;
       const previous = oldPath + file.path.slice(folder.path.length);
+
       paths.delete(previous);
       this.handleFileRename(file, previous, false);
     });
@@ -399,6 +411,7 @@ export class IndexingStateManager {
     }
 
     const targets = new Set(this.newlyAvailableLinkTargets);
+
     this.newlyAvailableLinkTargets.clear();
     const affected = new Set<string>();
 
@@ -418,6 +431,7 @@ export class IndexingStateManager {
 
   private scheduleLinkResolutionCheck(): void {
     if (this.disposed) return;
+
     if (this.linkResolutionTimeout !== null) {
       window.clearTimeout(this.linkResolutionTimeout);
     }
@@ -445,6 +459,7 @@ export class IndexingStateManager {
     }
 
     const targets = Array.from(this.staleLinkTargets);
+
     this.staleLinkTargets.clear();
     const targetSet = new Set(targets);
     const affectedSources = new Set<string>();
@@ -456,6 +471,7 @@ export class IndexingStateManager {
 
       try {
         const rows = await this.plugin.api.query(`SELECT DISTINCT path FROM links WHERE link_target_path IN (${targetList})`);
+
         if (this.disposed) return;
 
         for (const row of rows) {
@@ -485,6 +501,7 @@ export class IndexingStateManager {
 
   public cleanup(): void {
     this.disposed = true;
+
     if (this.indexingTimeout) {
       window.clearTimeout(this.indexingTimeout);
       this.indexingTimeout = null;

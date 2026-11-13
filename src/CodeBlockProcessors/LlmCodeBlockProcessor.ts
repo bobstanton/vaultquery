@@ -57,6 +57,7 @@ function parseQuestionBlock(source: string, defaultShowSql: boolean): QuestionBl
   }
 
   const showSql = parseBooleanOption(config.showsql) ?? defaultShowSql;
+
   delete config.output;
   delete config.showsql;
 
@@ -89,10 +90,12 @@ function createCacheKey(request: QuestionBlock, provider: LlmProviderConfig, sch
 function formatGeneratedOutputConfig(generated: GeneratedVaultQuery, request: QuestionBlock): string | null {
   const { kind: outputKind, options } = resolveOutput(generated, request.requestedOutput, request.outputOptions);
   const includeOutput = outputKind !== 'table' || request.requestedOutput !== undefined;
+
   if (!includeOutput && Object.keys(options).length === 0) return null;
 
   const displayKeys = new Map(getConfigKeys(outputFenceLanguage(outputKind)).map(definition => [definition.key.toLowerCase(), definition.key]));
   const lines = ['config:'];
+
   if (includeOutput) lines.push(`output: ${outputKind}`);
 
   for (const [key, value] of Object.entries(options)) {
@@ -172,13 +175,16 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
   private async renderQuestion(container: HTMLElement, request: QuestionBlock, ctx: MarkdownPostProcessorContext, regenerate = false): Promise<void> {
     const api = this.plugin.api;
     const providerConfig = this.getDefaultProvider();
+
     if (!api || !providerConfig) return;
 
     const version = this.generationGuard.begin(container);
     const isCurrent = (): boolean => this.generationGuard.isCurrent(container, version);
     const onRegenerate = (): Promise<void> => this.renderQuestion(container, request, ctx, true);
+
     cleanupRenderedOutput(container);
     const loading = new LlmProgressIndicator(container, providerConfig, isCurrent);
+
     ctx.addChild(loading);
 
     try {
@@ -186,6 +192,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       if (!isCurrent()) return;
       loading.setStage('Reading vault structure...');
       const schema = await api.getSchemaTables();
+
       if (!isCurrent()) return;
 
       const allowWriteOperations = this.plugin.settings.llm.allowWriteOperations && this.plugin.settings.allowWriteOperations;
@@ -195,6 +202,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       if (!regenerate && !run) {
         loading.setStage('Checking saved query...');
         const cached = await this.cache.get(key);
+
         if (!isCurrent()) return;
 
         if (cached) {
@@ -226,6 +234,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       });
 
       const generated = await this.generations.settle(key, run) ?? await this.cache.get(key);
+
       if (!isCurrent()) return;
 
       if (!generated) {
@@ -236,6 +245,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       }
 
       loading.setStage('Displaying results...');
+
       await this.renderGeneratedQuery(container, generated, request, ctx, version, onRegenerate);
     }
     catch (error: unknown) {
@@ -286,6 +296,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
 
     if (request.showSql && generated.statementKind !== 'write') {
       const sqlEl = container.createDiv({ cls: 'vaultquery-nl-sql' });
+
       BaseRenderer.renderSqlCodeBlock(this.app, sqlEl, generated.sql);
 
       const outputConfig = formatGeneratedOutputConfig(generated, request);
@@ -293,11 +304,13 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
       if (outputConfig) {
         const configEl = container.createDiv({ cls: 'vaultquery-nl-config' });
         const pre = configEl.createEl('pre');
+
         pre.createEl('code', { text: outputConfig });
       }
     }
 
     const output = container.createDiv({ cls: 'vaultquery-nl-output' });
+
     this.regenerateHandlers.set(output, onRegenerate);
 
     if (generated.statementKind === 'write') {
@@ -325,6 +338,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
 
     if (error instanceof SqlGenerationError && error.sql.trim()) {
       const sqlEl = container.createDiv({ cls: 'vaultquery-nl-sql' });
+
       BaseRenderer.renderSqlCodeBlock(this.app, sqlEl, error.sql);
     }
 

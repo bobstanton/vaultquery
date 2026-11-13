@@ -24,6 +24,7 @@ export class GeneratedSqlCache {
 
   public async set(key: string, generation: GeneratedVaultQuery): Promise<void> {
     const entries = await this.load();
+
     entries.delete(key);
 
     entries.set(key, {
@@ -35,6 +36,7 @@ export class GeneratedSqlCache {
 
     while (entries.size > MAX_CACHE_ENTRIES) {
       const oldest = entries.keys().next();
+
       if (oldest.done) break;
       entries.delete(oldest.value);
     }
@@ -87,6 +89,7 @@ export class GeneratedSqlCache {
           || !READ_OUTPUT_KINDS.has(entry.outputKind)
           || (entry.statementKind !== 'read' && entry.statementKind !== 'write')) continue;
         const { key, sql, statementKind, outputKind, outputOptions } = entry;
+
         if (outputOptions !== undefined && (!outputOptions || typeof outputOptions !== 'object'
           || Array.isArray(outputOptions) || Object.values(outputOptions).some(value => typeof value !== 'string'))) continue;
         entries.set(key, { sql, statementKind, outputKind, outputOptions });
@@ -108,6 +111,7 @@ export class GeneratedSqlCache {
       }
 
       const stored: StoredGeneration[] = Array.from(entries, ([key, generation]) => ({ key, ...generation }));
+
       await adapter.write(this.path, JSON.stringify(stored));
     }
     catch (error: unknown) {

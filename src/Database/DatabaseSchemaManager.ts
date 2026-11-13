@@ -25,6 +25,7 @@ export class DatabaseSchemaManager {
       return result[0].values.map(row => row[columnIndex] as string);
     } catch (error) {
       logger.error('Database schema query failed', { sql, columnIndex }, error);
+
       throw error;
     }
   }
@@ -45,15 +46,18 @@ export class DatabaseSchemaManager {
     try {
       const propertyKeys = this.getAllPropertyKeys();
       const viewSQL = generateDynamicPropertiesView(propertyKeys);
+
       this.beforeSchemaChange();
       this.db.exec(viewSQL);
       const notePropertiesSQL = generateNotePropertiesView(propertyKeys);
+
       this.db.exec(notePropertiesSQL);
       this.onPropertiesViewRebuilt?.();
     }
 
     catch (error) {
       logger.error('Error rebuilding properties view', error);
+
       throw error;
     }
   }

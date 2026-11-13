@@ -118,6 +118,7 @@ function consumeWhile(text: string, pos: number, pattern: RegExp): number {
 function tokenizeComment(text: string, pos: number, sink: TokenSink, linePrefix: string): number | null {
   if (text.startsWith(linePrefix, pos)) {
     const end = consumeLineComment(text, pos);
+
     sink.add(pos, end, commentMark);
 
     return end;
@@ -125,6 +126,7 @@ function tokenizeComment(text: string, pos: number, sink: TokenSink, linePrefix:
 
   if (text[pos] === '/' && text[pos + 1] === '*') {
     const end = consumeBlockComment(text, pos);
+
     sink.add(pos, end, commentMark);
 
     return end;
@@ -144,6 +146,7 @@ function addJsIdentifier(text: string, start: number, end: number, sink: TokenSi
   }
   else {
     const lookAhead = skipWhitespace(text, end);
+
     sink.add(start, end, text[lookAhead] === '(' ? functionMark : propertyMark);
   }
 }
@@ -177,6 +180,7 @@ function tokenizeCharacterStream(text: string, sink: TokenSink, rules: TokenRule
     }
 
     const next = rules.reduce<number | null>((matched, rule) => matched ?? rule(text, pos, sink), null);
+
     pos = next ?? pos + 1;
   }
 }
@@ -192,6 +196,7 @@ function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => bo
     if (isNumberStart(text, pos)) {
       const start = pos;
       const end = consumeWhile(text, pos, numberPattern);
+
       sink.add(start, end, numberMark);
 
       return end;
@@ -200,6 +205,7 @@ function numberOrIdentifierRule(isNumberStart: (text: string, pos: number) => bo
     if (identifierStartPattern.test(char)) {
       const start = pos;
       const end = consumeWhile(text, pos, identifierPattern);
+
       addIdentifier(text, start, end, sink);
 
       return end;
@@ -226,6 +232,7 @@ function tokenizeSql(text: string, sink: TokenSink): void {
       case 'word': addSqlIdentifier(text, token.start, token.end, sink); break;
       case 'punctuation': {
         const next = tokens[index + 1];
+
         if (next?.start === token.end && SQL_OPERATORS.has(token.value + next.value)) {
           sink.add(token.start, next.end, operatorMark);
           index++;
@@ -253,9 +260,11 @@ function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates:
     templateRule,
     (source, pos, tokenSink) => {
       const quote = source[pos];
+
       if (quote !== "'" && quote !== '"' && quote !== '`') return null;
       const start = pos;
       const end = consumeEscapedString(source, pos, quote);
+
       tokenSink.add(start, end, stringMark);
 
       return end;
@@ -270,6 +279,7 @@ function tokenizeJavaScriptTokens(text: string, sink: TokenSink, parseTemplates:
 
       if (!/[+\-*/%=<>!&|?:.]/.test(source[pos])) return null;
       const start = pos;
+
       pos++;
       while (pos < source.length && /[+\-*/%=<>!&|?:]/.test(source[pos])) pos++;
       tokenSink.add(start, pos, operatorMark);
@@ -283,6 +293,7 @@ function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): num
   const len = text.length;
   const templateRanges: Array<{ from: number; to: number; mark: Decoration }> = [];
   let stringStart = pos;
+
   pos++;
 
   while (pos < len) {
@@ -308,6 +319,7 @@ function tokenizeTemplateString(text: string, pos: number, sink: TokenSink): num
 
       if (pos > exprStart) {
         const exprRanges: DecorationRange[] = [];
+
         tokenizeJavaScriptCollect(text.slice(exprStart, pos), exprStart, exprRanges);
         templateRanges.push(...exprRanges.map(r => ({ from: r.from, to: r.to, mark: r.mark })));
       }
@@ -360,14 +372,17 @@ interface YamlEntry {
 
 function parseYamlEntry(text: string): YamlEntry | null {
   const colonIndex = text.indexOf(':');
+
   if (colonIndex === -1) return null;
 
   let keyStart = 0;
+
   while (keyStart < colonIndex && /\s/.test(text[keyStart])) keyStart++;
   const keyEnd = colonIndex;
   const key = text.slice(keyStart, keyEnd).trim().toLowerCase();
 
   let valueStart = colonIndex + 1;
+
   while (valueStart < text.length && /\s/.test(text[valueStart])) valueStart++;
   const value = text.slice(valueStart).trim();
 
@@ -418,6 +433,7 @@ function classifyGenericYamlValue(_key: string, value: string): Decoration {
 
 function tokenizeYamlConfigLine(text: string, baseOffset: number, builder: RangeSetBuilder<Decoration>, classifyValue: YamlValueClassifier): void {
   const entry = parseYamlEntry(text);
+
   if (!entry) return;
 
   addYamlEntryScaffold(entry, baseOffset, builder);
@@ -472,8 +488,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           for (const line of currentBlock.lines) {
             const content = doc.sliceString(line.from, line.to);
             const trimmed = content.trim();
+
             while (sqlRanges[sqlRangeIndex]?.to <= line.from) sqlRangeIndex++;
             const continuesSqlToken = !inTemplate && !inConfig && sqlRanges[sqlRangeIndex]?.from < line.from;
+
             builder.add(line.from, line.from, codeBlockLineMark);
 
             if (line.from < line.to) {
@@ -487,6 +505,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
             if (!continuesSqlToken && isConfigCapableBlock && trimmed.startsWith('config:')) {
               const configStart = content.indexOf('config:');
+
               builder.add(line.from + configStart, line.from + configStart + 7, labelMark);
               inConfig = true;
               continue;
@@ -499,6 +518,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
             if (!continuesSqlToken && isQueryBlock && trimmed.startsWith('template:')) {
               const templateStart = content.indexOf('template:');
+
               builder.add(line.from + templateStart, line.from + templateStart + 9, labelMark);
 
               const afterTemplate = content.slice(templateStart + 9);
@@ -517,6 +537,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             else {
               for (let index = sqlRangeIndex; index < sqlRanges.length && sqlRanges[index].from < line.to; index++) {
                 const range = sqlRanges[index];
+
                 builder.add(Math.max(line.from, range.from), Math.min(line.to, range.to), range.mark);
               }
             }

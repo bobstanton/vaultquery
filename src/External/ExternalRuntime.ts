@@ -45,10 +45,12 @@ function nodeAccess(app: App): NodeFileSystemAccess | undefined {
 
 function nodeFileSystem(app: App): ExternalFileSystem | undefined {
   const promises = nodeAccess(app)?.fsPromises;
+
   if (!promises) return undefined;
 
   const call = <T>(name: string, ...args: unknown[]): Promise<T> => {
     const method = promises[name];
+
     if (typeof method !== 'function') throw new Error(`The file system does not provide ${name}.`);
 
     return (method as (...values: unknown[]) => Promise<T>).call(promises, ...args);
@@ -65,6 +67,7 @@ function nodeFileSystem(app: App): ExternalFileSystem | undefined {
 
 function watch(app: App): ExternalWatch | undefined {
   const watcher = nodeAccess(app)?.fs?.watch;
+
   if (typeof watcher !== 'function') return undefined;
 
   return (path, options, listener, onError) => {
@@ -76,6 +79,7 @@ function watch(app: App): ExternalWatch | undefined {
       } catch {
         /* A failed native watcher may already be closed. */
       }
+
       onError?.(error);
     });
 

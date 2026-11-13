@@ -149,10 +149,12 @@ export class ContentLocationService {
 
   public rangeFromBlockId(path: string, blockId: string): Range | null {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+
     if (!(file instanceof TFile)) return null;
 
     const cache = this.metadataCache.getFileCache(file);
     const block = cache?.blocks?.[blockId];
+
     if (!block) return null;
 
     return {
@@ -298,6 +300,7 @@ export class ContentLocationService {
         const start = lastNewline === -1 ? 0 : lastNewline + 1;
         const lineEnd = content.indexOf("\n", m.index + 1);
         const end = lineEnd === -1 ? content.length : lineEnd;
+
         best = { start, end, score };
       }
     }

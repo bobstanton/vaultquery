@@ -78,6 +78,7 @@ export class ImageIndexingService extends SnapshotIndexingService<ImageStore, Im
 
     if (cancelled()) return undefined;
     const after = this.vault.getFile(metadata.path);
+
     if (!after || this.metadata(after).revision !== metadata.revision) return undefined;
     const normalized = result.normalized ?? { facts: emptyImageFacts(), metadata: null, tagCount: 0 };
 

@@ -84,6 +84,7 @@ function queryValues(sql: string): unknown[][] {
   }
   catch (error) {
     logger.error('Worker query failed', sql, error);
+
     throw error;
   }
 }
@@ -91,6 +92,7 @@ function queryValues(sql: string): unknown[][] {
 function batchDeleteByIds(tableName: string, ids: number[]): void {
   if (!db || ids.length === 0) return;
   const activeDb = db;
+
   batchDeleteRowsByIds(tableName, ids, (sql, params) => activeDb.run(sql, params));
 }
 
@@ -200,6 +202,7 @@ function withTx<T>(fn: () => T): T {
 
   try {
     const result = fn();
+
     db.run('COMMIT');
 
     return result;
@@ -291,6 +294,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
       }
       case 'queryNext': {
         const batch = queryCursors.next(request.cursor);
+
         respond({ type: 'success', id: request.id, result: batch }, resultTransfers(batch.rows));
         break;
       }
@@ -322,6 +326,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         if (!db) throw new Error('Database not initialized');
         const read = () => queryStatementRows(getPreparedStatement(request.sql), request.params);
         const results = request.readOnly ? withReadOnlyQuery(db, request.sql, read) : read();
+
         respond({ type: 'success', id: request.id, result: results }, resultTransfers(results));
         break;
       }
@@ -438,6 +443,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
 
       case 'rebuildTableViews': {
         const rebuilt = schemaManager?.rebuildTableViews(request.enableDynamicTableViews) ?? false;
+
         respond({ type: 'success', id: request.id, result: rebuilt });
         break;
       }

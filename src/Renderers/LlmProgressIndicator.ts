@@ -28,6 +28,7 @@ export class LlmProgressIndicator extends MarkdownRenderChild {
     this.stageStartedAt = this.startedAt;
 
     const text = this.containerEl.createDiv({ cls: 'vaultquery-loading-text' });
+
     this.statusEl = text.createDiv({ attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' } });
     this.detailEl = text.createDiv({ cls: 'vaultquery-nl-progress-detail' });
     this.elapsedEl = text.createDiv({ cls: 'vaultquery-nl-progress-elapsed', attr: { 'aria-live': 'off' } });

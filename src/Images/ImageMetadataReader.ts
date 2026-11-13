@@ -49,8 +49,10 @@ export async function readImageMetadata(source: ImageReadSource, cancelled: () =
 
         if (cancelled()) throw new Error('Image indexing was canceled.');
         let parsed: ImagePrefixResult;
+
         if (processPrefix) {
           const reply = await processPrefix(buffer, source.extension, source.size);
+
           session.restoreBuffer(reply.buffer);
           parsed = reply.result;
         } else parsed = parseImagePrefix(buffer, source.extension, source.size);

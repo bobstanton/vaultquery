@@ -34,6 +34,7 @@ function findInlineMatches<T>(state: EditorState, syntax: InlineSyntax<T>, curso
   while ((match = regex.exec(text)) !== null) {
     const from = match.index;
     const to = from + match[0].length;
+
     rawMatches.push({ match, from, to });
   }
 

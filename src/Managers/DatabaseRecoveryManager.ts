@@ -68,6 +68,7 @@ export class DatabaseRecoveryManager {
 
       api.emitDatabaseLost(health.error || 'Database connection was lost after the app returned from the background.');
       new Notice('VaultQuery: Database was lost while app was in background. Reindexing...', 5000);
+
       await this.recover();
     }
     else if (!health.healthy) {

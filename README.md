@@ -326,7 +326,7 @@ The database is stored in Obsidian's [Configuration Folder](https://help.obsidia
 
 ### Troubleshooting
 
-If a grid disappears after scrolling, use its refresh button. Column widths reset when Obsidian restarts.
+If a grid disappears after scrolling, use its refresh button. Use the `Copy debug log to clipboard` command or the `Console log level` setting with developer console to see more details. 
 
 ## External folders
 

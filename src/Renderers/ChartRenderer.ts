@@ -69,6 +69,7 @@ export class ChartRenderer {
 
   static parseConfig(options?: Record<string, unknown>): ChartConfig {
     const renderer = options?.renderer ?? 'chartjs';
+
     if (typeof renderer !== 'string' || !(CHART_RENDERERS as readonly string[]).includes(renderer.trim().toLowerCase())) {
       throw new Error('Unknown chart renderer. Use renderer: chartjs or renderer: pele.');
     }
@@ -111,6 +112,7 @@ export class ChartRenderer {
     this.validateResults(results, config);
 
     const canvas = container.createEl('canvas');
+
     canvas.addClass('vaultquery-chart-canvas');
 
     const chartData = this.prepareChartData(results, config);
@@ -118,6 +120,7 @@ export class ChartRenderer {
 
     try {
       const chart = new Chart(canvas, chartConfig);
+
       this.liveCharts.add(chart);
     }
     catch (error) {

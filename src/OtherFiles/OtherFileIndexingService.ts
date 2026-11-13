@@ -62,15 +62,22 @@ export class OtherFileIndexingService extends SnapshotIndexingService<FileStore,
 
     for (let attempt = 0; attempt < 3 && !cancelled(); attempt++) {
       const current = this.vault.getFile(path);
+
       if (!current) break;
       generation = this.dirty.get(path);
       const metadata = this.metadata(current);
+
       row = { ...metadata, content: null, content_bytes: 0, content_status: 'read_error', content_error: null };
 
       try {
         if (metadata.size === null || metadata.revision === null) throw new Error('File statistics are unavailable.');
-        if (metadata.size > limit) { row.content_status = 'too_large'; throw new Error(`File contents exceed the ${limit}-byte per-file limit.`); }
+
+        if (metadata.size > limit) { row.content_status = 'too_large';
+
+ throw new Error(`File contents exceed the ${limit}-byte per-file limit.`); }
+
         const buffer = await this.vault.read(current);
+
         if (cancelled()) { row = undefined; break; }
         const after = this.vault.getFile(path);
 

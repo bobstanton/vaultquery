@@ -49,6 +49,7 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
   for (const item of items) {
     const key = keyFn(item);
     const list = map.get(key);
+
     if (list) list.push(item);
     else map.set(key, [item]);
   }
@@ -61,6 +62,7 @@ export function indexBy<T>(items: T[], keyFn: (item: T) => string): Map<string, 
 
   for (const item of items) {
     const key = keyFn(item);
+
     if (!map.has(key)) map.set(key, item);
   }
 
@@ -119,8 +121,10 @@ function matchByNaturalTextThenLine<TRow>(naturalKey: (row: TRow) => string | nu
 
     for (const row of existing) {
       const key = naturalKey(row);
+
       if (!key) continue;
       const list = byNaturalKey.get(key);
+
       if (list) list.push(row);
       else byNaturalKey.set(key, [row]);
     }

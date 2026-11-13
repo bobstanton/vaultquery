@@ -183,6 +183,7 @@ export class TableProviderService {
     if (!(builtIn ? this.remoteDataEnabled : this.thirdPartyEnabled)) {
       logger.warn(`registerTableProvider rejected because feature is disabled: provider=${provider.id}`);
       const feature = builtIn ? 'Remote CSV and JSON' : 'Provider tables';
+
       throw new Error(`${feature} are disabled in VaultQuery settings.`);
     }
 
@@ -198,6 +199,7 @@ export class TableProviderService {
       if (this.builtInProviders.has(provider.id) !== builtIn) {
         throw new Error(`Provider id is already registered: ${provider.id}`);
       }
+
       this.unregisterProvider(existing.id);
     }
 
@@ -228,6 +230,7 @@ export class TableProviderService {
 
   public unregisterProvider(providerId: string): void {
     const provider = this.providers.get(providerId);
+
     if (!provider) return;
 
     this.providers.delete(providerId);
@@ -287,6 +290,7 @@ export class TableProviderService {
         const rowCount = statusRows.reduce((sum, status) => Math.max(sum, status.rowCount), 0);
 
         const details = [`Provider: ${provider.displayName}`, `Rows: ${rowCount}`];
+
         if (latestRefresh) details.push(`Last refresh: ${new Date(latestRefresh).toLocaleString()}`);
         if (table.defaultStaleAfterMs) details.push(`TTL: ${this.formatDuration(table.defaultStaleAfterMs)}`);
         tables.push({ name: table.name, description: table.description, isView: false, notes: [],
@@ -328,6 +332,7 @@ export class TableProviderService {
 
     const needsReconciliation = this.snapshots?.needsPathReconciliation(path);
     const blocks = this.extractFencedCodeBlocks(path, content);
+
     if (hadDefinitions) this.removeRuntimeDefinitionsForPath(path);
     this.indexedBlocksByPath.set(path, blocks);
     const providerBlocks = blocks.filter(block => this.providersByLanguage.has(block.language));
@@ -353,6 +358,7 @@ export class TableProviderService {
 
     if (hadDefinitions || providerBlocks.length || needsReconciliation) await this.snapshots?.reconcile(path);
     await this.refreshIndexedDefinitions(runtimes, false);
+
     await this.rerenderProviderBlocksForPath(path);
   }
 
@@ -396,6 +402,7 @@ export class TableProviderService {
     if (!this.enabled || provider && !this.isProviderEnabled(provider.id)) {
       logger.warn(`Provider definition render skipped because feature is disabled: language=${language}, sourcePath=${ctx.sourcePath}`);
       const feature = provider && this.builtInProviders.has(provider.id) ? 'Remote CSV and JSON' : 'Provider tables';
+
       this.renderProviderBlockMessage(container, `${feature} disabled`, `${feature} are disabled in VaultQuery settings.`);
 
       return;
@@ -455,6 +462,7 @@ export class TableProviderService {
   public async refreshDefinition(providerId: string, definitionId: string): Promise<string[]> {
     if (!this.isProviderEnabled(providerId)) {
       const feature = this.builtInProviders.has(providerId) ? 'Remote CSV and JSON' : 'Provider tables';
+
       throw new Error(`${feature} are disabled in VaultQuery settings.`);
     }
 
@@ -484,6 +492,7 @@ export class TableProviderService {
 
       try {
         const changedTables = await this.snapshots.refresh(provider, runtime);
+
         runtime.error = undefined;
         await this.rerenderProviderBlocks(providerId, definitionId);
         if (changedTables.length) this.onProviderTablesChanged?.({ providerId, definitionId, tables: changedTables });
@@ -493,6 +502,7 @@ export class TableProviderService {
       catch (error) {
         runtime.error = getErrorMessage(error);
         await this.rerenderProviderBlocks(providerId, definitionId);
+
         throw error;
       }
     }
@@ -511,8 +521,10 @@ export class TableProviderService {
       const fetchMs = performance.now() - fetchStartedAt;
 
       const materializeStartedAt = performance.now();
+
       await this.materializeRefreshResult(provider, runtime, result);
       const materializeMs = performance.now() - materializeStartedAt;
+
       logger.debug(`Provider refresh phases: provider=${providerId}, definition=${definitionId}, fetchMs=${Math.round(fetchMs)}, materializeMs=${Math.round(materializeMs)}, tables=${Object.entries(result.tables).map(([tableName, tableRows]) => `${tableName}:${tableRows.rows.length}`).join(',')}`);
 
       this.recentRefreshes.set(this.definitionDuplicateKey(providerId, definitionId), {
@@ -538,6 +550,7 @@ export class TableProviderService {
     } catch (error) {
       logger.error(`Provider refresh failed: provider=${providerId}, definition=${definitionId}`, error);
       const message = getErrorMessage(error);
+
       runtime.error = message;
 
       for (const table of provider.tables) {
@@ -570,9 +583,11 @@ export class TableProviderService {
 
       for (const runtime of this.definitions.values()) {
         const provider = this.providers.get(runtime.providerId);
+
         if (!provider || !this.isProviderEnabled(provider.id) || runtime.parseError || (runtime.error && !provider.definitionTables)) continue;
 
         const duplicateKey = this.definitionDuplicateKey(runtime.providerId, runtime.definition.id);
+
         if (this.duplicateDefinitionKeys.has(duplicateKey)) continue;
 
         if (!this.shouldRefreshRuntimeDefinition(provider, runtime, now)) continue;
@@ -599,7 +614,9 @@ export class TableProviderService {
       };
 
       const workerCount = Math.min(PROVIDER_REFRESH_CONCURRENCY, refreshes.length);
+
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
       await this.finishRefreshWave(Array.from(changedTables));
     } finally {
       this.refreshingStaleDefinitions = false;
@@ -629,6 +646,7 @@ export class TableProviderService {
         } catch (error) {
           logger.warn(`Recreating incompatible provider table: provider=${provider.id}, table=${table.name}`, error);
           await this.database.run(`DROP TABLE IF EXISTS ${quoteValidatedIdentifier(table.name)}`);
+
           await this.createProviderTable(table);
         }
       } else {
@@ -644,6 +662,7 @@ export class TableProviderService {
 
         const unique = index.unique ? 'UNIQUE ' : '';
         const columns = index.columns.map(column => quoteValidatedIdentifier(column)).join(', ');
+
         await this.database.run(`CREATE ${unique}INDEX IF NOT EXISTS ${quoteValidatedIdentifier(index.name)} ON ${quoteValidatedIdentifier(table.name)} (${columns})`);
       }
 
@@ -763,6 +782,7 @@ export class TableProviderService {
 
     for (const row of rows) {
       const rowColumns = columnNames.filter(column => Object.prototype.hasOwnProperty.call(row, column));
+
       if (rowColumns.length === 0) continue;
 
       for (const pk of table.primaryKey) {
@@ -811,6 +831,7 @@ export class TableProviderService {
 
     const whereSql = whereColumns.map(column => `${quoteValidatedIdentifier(column)} = ?`).join(' AND ');
     const params = whereColumns.map(column => this.toSqlParam(where[column]));
+
     await this.database.run(`DELETE FROM ${quoteValidatedIdentifier(table.name)} WHERE ${whereSql}`, params);
   }
 
@@ -839,6 +860,7 @@ export class TableProviderService {
     }
 
     await this.refreshIndexedDefinitions(runtimes);
+
     await this.rerenderProviderBlocksForLanguage(language);
   }
 
@@ -914,6 +936,7 @@ export class TableProviderService {
 
       try {
         const refresh = this.refreshDefinition(runtime.providerId, runtime.definition.id);
+
         if (provider.definitionTables && !waitForSnapshots) {
           void refresh.catch(error => logger.error(`Provider refresh failed for ${runtime.providerId}:${runtime.definition.id}`, error));
         } else await refresh;
@@ -942,12 +965,14 @@ export class TableProviderService {
     if (blocks.length === 0) return;
 
     logger.debug(`Rerendering provider blocks: matched=${blocks.length} of ${this.renderedBlocks.size} tracked${blocks.map(([container, block]) => `; ${block.language} in ${block.sourcePath} connected=${container.isConnected}`).join('')}`);
+
     await Promise.all(blocks.map(([container, block]) => this.rerenderProviderBlock(container, block)));
   }
 
   private async rerenderProviderBlock(container: HTMLElement, block: RenderedProviderBlock): Promise<void> {
     const currentBlock = this.findCurrentIndexedBlock(block);
     const source = currentBlock?.source ?? block.source;
+
     await this.renderDefinitionBlock(block.language, source, container, block.ctx);
   }
 
@@ -955,6 +980,7 @@ export class TableProviderService {
     const key = this.statusKey(providerId, definitionId, tableName);
     const attempts = (this.refreshBackoff.get(key)?.attempts ?? 0) + 1;
     const wait = Math.min(REFRESH_BACKOFF_BASE_MS * 2 ** (attempts - 1), REFRESH_BACKOFF_MAX_MS);
+
     this.refreshBackoff.set(key, { providerId, definitionId, attempts, nextAttemptAt: Date.now() + wait });
     logger.debug(`Provider refresh backing off (${reason}): key=${key}, attempts=${attempts}, waitMs=${wait}`);
   }
@@ -972,6 +998,7 @@ export class TableProviderService {
 
     for (const tableName of requestedTables) {
       const table = tableByName.get(tableName);
+
       if (!table) continue;
 
       const key = this.statusKey(provider.id, runtime.definition.id, table.name);
@@ -1011,6 +1038,7 @@ export class TableProviderService {
   private storeRuntimeDefinition(provider: VaultQueryTableProvider, source: string, context: ProviderDefinitionBlockContext, definition: ProviderRefreshDefinition): RuntimeRefreshDefinition {
     const runtime = this.createRuntimeDefinition(provider, source, context, definition);
     const key = this.runtimeDefinitionKey(provider.id, context.path, context.blockIndex, context.blockHash);
+
     this.removeRuntimeDefinitionForBlock(provider.id, context.path, context.blockIndex, key);
     this.definitions.set(key, runtime);
 
@@ -1071,19 +1099,23 @@ export class TableProviderService {
     }
 
     const wrapper = container.createDiv({ cls: 'vaultquery-provider-definition' });
+
     container.addClass('vaultquery-provider-definition-container');
     const header = wrapper.createDiv({ cls: 'vaultquery-provider-definition-header' });
     const titleGroup = header.createDiv({ cls: 'vaultquery-provider-definition-title-group' });
+
     titleGroup.createEl('h3', { text: runtime.providerDisplayName });
     titleGroup.createDiv({ cls: 'vaultquery-provider-definition-subtitle', text: 'Provider definition indexed' });
 
     const meta = header.createDiv({ cls: 'vaultquery-provider-definition-meta' });
     const definitionItem = meta.createDiv({ cls: 'vaultquery-provider-definition-meta-item' });
+
     definitionItem.createSpan({ cls: 'vaultquery-provider-definition-meta-label', text: 'Definition' });
     definitionItem.createSpan({ cls: 'vaultquery-provider-definition-meta-value', text: runtime.definition.id });
 
     if (runtime.definition.displayName) {
       const nameItem = meta.createDiv({ cls: 'vaultquery-provider-definition-meta-item' });
+
       nameItem.createSpan({ cls: 'vaultquery-provider-definition-meta-label', text: 'Name' });
       nameItem.createSpan({ cls: 'vaultquery-provider-definition-meta-value', text: runtime.definition.displayName });
     }
@@ -1093,6 +1125,7 @@ export class TableProviderService {
 
     if (statuses.length > 0) {
       const tableWrapper = wrapper.createDiv({ cls: 'vaultquery-provider-status-table-wrapper' });
+
       this.containHorizontalTouchScroll(tableWrapper);
       const table = tableWrapper.createEl('table', { cls: 'vaultquery-table vaultquery-provider-status-table' });
       const thead = table.createEl('thead');
@@ -1108,6 +1141,7 @@ export class TableProviderService {
       for (const status of statuses) {
         const asOf = status.dataAsOf ?? status.lastRefreshAt;
         const row = tbody.createEl('tr');
+
         row.createEl('td', { text: status.tableName });
         row.createEl('td', { text: String(status.rowCount) });
         row.createEl('td', { text: asOf ? new Date(asOf).toLocaleString() : '-' });
@@ -1134,6 +1168,7 @@ export class TableProviderService {
 
     element.addEventListener('touchstart', (event) => {
       const touch = event.touches[0];
+
       if (!touch) return;
       startX = touch.clientX;
       startY = touch.clientY;
@@ -1141,6 +1176,7 @@ export class TableProviderService {
 
     element.addEventListener('touchmove', (event) => {
       const touch = event.touches[0];
+
       if (!touch) return;
 
       const deltaX = Math.abs(touch.clientX - startX);
@@ -1167,6 +1203,7 @@ export class TableProviderService {
   private addProviderRefreshButton(container: HTMLElement, onRefresh: () => Promise<void>): void {
     container.querySelector('.vaultquery-floating-buttons')?.remove();
     const buttonContainer = container.createDiv('vaultquery-floating-buttons');
+
     BaseRenderer.addRefreshButton(buttonContainer, onRefresh);
   }
 
@@ -1186,6 +1223,7 @@ export class TableProviderService {
       runtime.error = getErrorMessage(error);
       container.empty();
       this.renderRuntimeDefinition(container, runtime);
+
       throw error;
     }
   }
@@ -1197,6 +1235,7 @@ export class TableProviderService {
   private renderProviderBlockMessage(container: HTMLElement, title: string, message: string): void {
     container.addClass('vaultquery-provider-definition-container');
     const wrapper = container.createDiv({ cls: 'vaultquery-provider-definition' });
+
     wrapper.createEl('h3', { text: title });
     wrapper.createEl('p', { text: message });
   }
@@ -1206,6 +1245,7 @@ export class TableProviderService {
 
     for (const definition of this.definitions.values()) {
       const key = this.definitionDuplicateKey(definition.providerId, definition.definition.id);
+
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
@@ -1330,6 +1370,7 @@ export class TableProviderService {
     if (provider.definitionTables && ((snapshotFormat !== 'csv' && snapshotFormat !== 'json') || provider.definitionTables.readOnly !== true || provider.tables.length > 0)) {
       throw new Error('Definition snapshot providers require read-only CSV or JSON snapshots and an empty static tables list.');
     }
+
     if (!provider.definitionBlock.language.trim()) throw new Error(`Provider ${provider.id} must declare a definition block language.`);
   }
 

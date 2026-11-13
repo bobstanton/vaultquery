@@ -216,6 +216,7 @@ export class VaultQueryCompletionSource {
 
     const linePrefix = line.text.slice(0, pos - line.from).trim();
     const isConfigCandidate = Boolean(linePrefix) && 'config'.startsWith(linePrefix.toLowerCase());
+
     if (!isConfigCandidate) return null;
 
     return {
@@ -737,6 +738,7 @@ function findPhraseLeadWordStart(text: string): number | null {
 
 export function findSqlCompletionStart(text: string): number {
   const identifier = sqlIdentifierAtCursor(text);
+
   if (identifier) return identifier.start;
 
   if (text.length === 0) {
@@ -771,6 +773,7 @@ export function findSqlCompletionStart(text: string): number {
 
 export function getSqlSuggestionContext(beforeCursor: string): SqlSuggestionContext {
   const identifier = sqlIdentifierAtCursor(beforeCursor);
+
   if (identifier && /\b(from|join|update|into|table|view)\s*$/iu.test(beforeCursor.slice(0, identifier.start))) return 'relation';
 
   if (/\b(from|join|update|into|table|view)\s+["`[\w.]*$/iu.test(beforeCursor)) {

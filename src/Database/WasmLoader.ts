@@ -20,18 +20,22 @@ export async function loadWasmBinary(adapter: VaultFileAdapter | null, pluginDir
     if (localPath && adapter && await adapter.exists(localPath)) {
       return { wasmBinary: await adapter.readBinary(localPath), fromCdn: false };
     }
+
     if (source === 'local') {
       throw new Error(`WASM source is set to 'local' but file not found at: ${localPath || '(no path configured)'}`);
     }
   }
 
   const response = await requestUrl({ url: CDN_URL });
+
   if (response.status < 200 || response.status >= 300) throw new Error(`Failed to fetch WASM from ${CDN_URL}: HTTP ${response.status}`);
+
   return { wasmBinary: response.arrayBuffer, fromCdn: true };
 }
 
 export async function cacheWasmBinaryIfNeeded(result: WasmLoadResult, adapter: VaultFileAdapter | null, pluginDir: string | undefined, wasmSettings: WasmSettings | undefined): Promise<void> {
   if (!result.fromCdn || !wasmSettings?.cacheLocally || !adapter || !pluginDir) return;
+
   try {
     await adapter.writeBinary(`${pluginDir}/${WASM_CACHE_FILENAME}`, result.wasmBinary);
   } catch (error) {

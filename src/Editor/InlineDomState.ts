@@ -3,6 +3,7 @@ import { getErrorMessage } from '../utils/ErrorMessages';
 
 export function createInlineSpan(owner: Document, className: string, dataSql: string): HTMLElement {
   const span = owner.body.createSpan();
+
   span.detach();
   span.className = `${className} ${className}-loading`;
   span.textContent = '...';

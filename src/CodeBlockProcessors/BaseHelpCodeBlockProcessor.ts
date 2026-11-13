@@ -19,6 +19,7 @@ export class BaseHelpCodeBlockProcessor {
   public process(_source: string, el: HTMLElement, _ctx: MarkdownPostProcessorContext): void {
     el.empty();
     const container = el.createDiv({ cls: this.containerClassName });
+
     this.helpPage.render(container, this.createRenderContext());
   }
 

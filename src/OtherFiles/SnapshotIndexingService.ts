@@ -141,6 +141,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
   private countSource(source: string, delta: number): void {
     const count = (this.counts.get(source) ?? 0) + delta;
+
     if (count) this.counts.set(source, count);
     else this.counts.delete(source);
   }
@@ -162,6 +163,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
   private async process(removals: readonly string[], paths: readonly string[] | undefined, full: boolean, force: boolean): Promise<RealtimeIndexBatchResult> {
     const result: RealtimeIndexBatchResult = { filesIndexed: 0, filesRemoved: 0, failedPaths: [], failedRemovalPaths: [], unavailablePaths: [] };
     const database = this.options.database();
+
     if (!database || this.disposed) return result;
     const revision = this.settingsRevision;
     const cancelled = () => this.disposed || database !== this.options.database() || revision !== this.settingsRevision;
@@ -197,7 +199,9 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
         await this.options.publish({ rows, removed });
       }
       catch (error) {
-        this.error = error instanceof Error ? error.message : String(error); throw error;
+        this.error = error instanceof Error ? error.message : String(error);
+
+ throw error;
       }
       finally {
         timing.publicationMs += performance.now() - start;
@@ -211,12 +215,15 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
     const publish = async () => {
       if (!publication.length) return;
       const rows = publication;
+
       publication = []; publicationBytes = 0; lastPublish = performance.now();
+
       await publishRows(rows, []);
     };
 
     const stage = async (row: Row) => {
       const bytes = this.bytes(row);
+
       if (publication.length && publicationBytes + bytes > PUBLICATION_BYTES) await publish();
       publication.push(row); publicationBytes += bytes;
       if (publicationBytes >= PUBLICATION_BYTES || publication.length >= PUBLICATION_ROWS) await publish();
@@ -225,6 +232,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
     try {
       if (this.initialized !== database) {
         const stored = await withIndex(operations => operations.list());
+
         this.rows.clear();
         this.counts.clear();
         this.retries.clear();
@@ -256,6 +264,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
         for (const path of removed) {
           const old = this.rows.get(path);
+
           if (old) { this.rows.delete(path); this.countSource(old.source, -1); result.filesRemoved++; }
           this.retries.delete(path);
           if (!candidates.has(path)) this.dirty.delete(path);
@@ -275,7 +284,9 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
       const flush = async () => {
         if (!batch.length) return;
-        const entries = batch; batch = []; batchBytes = 0;
+        const entries = batch;
+
+ batch = []; batchBytes = 0;
         growth = Math.min(growth * 2, this.options.batchGrowth);
 
         const committed = await withIndex(operations => {
@@ -320,9 +331,11 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
       const readOne = async (path: string): Promise<PendingRead<Row>> => {
         const file = this.vault.getFile(path);
+
         if (!file || !this.selected(path)) return {};
         const old = this.rows.get(path);
         const metadata = this.metadata(file);
+
         if (!force && !this.dirty.has(path) && !this.retries.has(path) && old && old.revision === metadata.revision
           && old.source === metadata.source && !this.error && this.current(old)) return {};
 
@@ -337,6 +350,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
         if (read.timing) {
           const file = read.timing;
+
           timing.filesRead++;
           timing.bytesRead += file.bytesRead;
           timing.prefixReads += file.prefixReads;
@@ -349,8 +363,10 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
 
         if (read.failed) { result.failedPaths.push(path); this.retries.add(path); continue; }
         const row = read.row;
+
         if (!row) continue;
         const bytes = this.bytes(row);
+
         if (batch.length && batchBytes + bytes > BATCH_BYTES * growth) await flush();
         batch.push({ row, generation: read.generation }); batchBytes += bytes;
         if (batch.length >= BATCH_ROWS * growth || batchBytes >= BATCH_BYTES * growth) await flush();
@@ -360,6 +376,7 @@ export abstract class SnapshotIndexingService<Store, State extends OtherFileMeta
       this.error = undefined;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
+
       throw error;
     }
     finally {

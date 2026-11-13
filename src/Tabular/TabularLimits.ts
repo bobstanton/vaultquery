@@ -3,6 +3,7 @@ import { DataFileError } from './TabularTypes';
 import type { TabularParseLimits } from './TabularTypes';
 
 const DEFAULT_MAX_FILE_SIZE_MIB = 50;
+
 export const dataFileDefaultSizeMiB = DEFAULT_MAX_FILE_SIZE_MIB;
 const MIB = 1024 * 1024;
 

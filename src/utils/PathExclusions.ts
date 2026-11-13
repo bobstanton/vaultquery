@@ -5,6 +5,7 @@ export class PathExclusions {
   public matches(path: string, patterns: readonly string[]): boolean {
     if (patterns.length !== this.patterns.length || patterns.some((pattern, index) => pattern !== this.patterns[index])) {
       const compiled = patterns.map(pattern => new RegExp(pattern));
+
       this.patterns = [...patterns];
       this.compiled = compiled;
     }

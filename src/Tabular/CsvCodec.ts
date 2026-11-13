@@ -14,6 +14,7 @@ export function validateCsvHeaders(headers: readonly string[], path: string): vo
 
     for (let index = 0; index < header.length; index++) {
       const code = header.charCodeAt(index);
+
       if (code < 32 || (code >= 127 && code <= 159)) { hasControl = true; break; }
     }
 
@@ -55,6 +56,7 @@ function inspectRecords(input: string, path: string, limits: TabularParseLimits)
 
   for (let index = 0; index < input.length; index++) {
     const char = input[index];
+
     if (char === '\0') throw new DataFileError(path, 'format', 'NUL characters are not supported in CSV fields.');
 
     if (quoted) {
@@ -111,6 +113,7 @@ function inspectRecords(input: string, path: string, limits: TabularParseLimits)
 
 export function parseCsv(source: string, path: string, limits: TabularParseLimits = dataFileParseLimits()): TabularDocument {
   const sourceBytes = dataFileUtf8ByteLength(source, path);
+
   checkDataFileSize(path, sourceBytes, limits);
   const bom = source.startsWith('\ufeff');
   const input = bom ? source.slice(1) : source;
@@ -142,8 +145,10 @@ export function parseCsv(source: string, path: string, limits: TabularParseLimit
 
 export function serializeCsv(document: TabularDocument, rows: TabularRows, limits: TabularParseLimits = dataFileParseLimits()): string {
   const { path, format } = document;
+
   if (format.kind !== 'csv') throw new DataFileError(path, 'format', 'This document was not read from a CSV file.');
   const headers = columnNames(document.columns);
+
   validateCsvHeaders(headers, path);
 
   if (headers.length > limits.maxColumns) {
