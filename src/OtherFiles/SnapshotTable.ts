@@ -123,6 +123,7 @@ export class SnapshotTable<State, Row> {
 
     for (let offset = 0; offset < publication.removed.length; offset += 100) {
       const paths = publication.removed.slice(offset, offset + 100);
+
       statements.push({ sql: `DELETE FROM ${this.spec.name} WHERE path IN (${paths.map(() => '?').join(', ')})`, params: paths });
     }
 

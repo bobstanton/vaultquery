@@ -47,11 +47,13 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       }
 
       const needsRecreation = await this.shouldCreateOrRecreateView(viewName, sql);
+
       logger.debug(`view="${viewName}" needsRecreation=${needsRecreation} source="${ctx.sourcePath}"`);
 
       if (needsRecreation) {
         logger.debug(`dropping and recreating view "${viewName}"`);
         const api = this.requireApi();
+
         await api.execute(`DROP VIEW IF EXISTS ${quoteIdentifier(viewName)}`);
 
         if (!this.isCurrentRender(container, renderVersion)) {
@@ -97,6 +99,7 @@ export class ViewCodeBlockProcessor extends BaseUserDefinedProcessor {
       }
 
       const successDiv = container.createDiv({ cls: 'vaultquery-success' });
+
       successDiv.createEl('strong', { text: `View "${viewName}" created` });
 
       if (limit === 0) {

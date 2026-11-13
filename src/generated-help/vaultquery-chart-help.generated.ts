@@ -551,7 +551,7 @@ export function render(container: HTMLElement, _ctx: RenderContext): void {
   token28.createSpan({ cls: "token string", text: " Tasks" });
   codeBlock7.createSpan({ cls: 'vaultquery-help-fence cm-formatting', text: "\n```" });
   const para2 = container.createEl('p', { cls: 'vaultquery-help-paragraph' });
-  para2.appendText("Pele renders SVG charts using Obsidian's diagram renderer, theme colors, fonts, and native sizing and zoom behavior. Pele uses its native theme palette. It does not support scatter charts, hover tooltips, custom color options or columns, or multiple pie/doughnut datasets.");
+  para2.appendText("Pele renders charts using Obsidian's diagram renderer, theme colors, fonts, and native sizing and zoom behavior. ");
   container.createEl('h2', { cls: 'vaultquery-help-heading vaultquery-help-h2', text: "Chart result columns" });
   const tableWrapper = container.createDiv({ cls: 'vaultquery-help-table-wrapper' });
   const table = tableWrapper.createEl('table', { cls: 'vaultquery-help-table' });

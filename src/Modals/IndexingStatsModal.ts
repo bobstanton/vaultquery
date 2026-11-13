@@ -11,6 +11,7 @@ export class IndexingStatsModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
+
         contentEl.empty();
 
         contentEl.createEl('h2', { text: 'Indexing statistics' });
@@ -25,6 +26,7 @@ export class IndexingStatsModal extends Modal {
         }
 
         const generalSection = contentEl.createDiv('performance-stats-section');
+
         generalSection.createEl('h3', { text: 'Overview' });
 
         const overviewContainer = generalSection.createDiv('performance-stats-grid');
@@ -37,6 +39,7 @@ export class IndexingStatsModal extends Modal {
 
         if (this.stats.slowFiles.length > 0) {
             const slowFilesSection = contentEl.createDiv('performance-stats-section');
+
             slowFilesSection.createEl('h3', { text: `Slowest files (${this.stats.slowFiles.length})` });
 
             slowFilesSection.createEl('p', {
@@ -46,6 +49,7 @@ export class IndexingStatsModal extends Modal {
 
             const slowFilesTable = slowFilesSection.createEl('table', { cls: 'vaultquery-table performance-stats-table' });
             const headerRow = slowFilesTable.createEl('tr');
+
             headerRow.createEl('th', { text: 'File' });
             headerRow.createEl('th', { text: 'Size (kb)' });
             headerRow.createEl('th', { text: 'Time (ms)' });
@@ -88,6 +92,7 @@ export class IndexingStatsModal extends Modal {
         }
         else {
             const slowFilesSection = contentEl.createDiv('performance-stats-section');
+
             slowFilesSection.createEl('h3', { text: 'Performance status' });
 
             slowFilesSection.createEl('p', {
@@ -99,12 +104,14 @@ export class IndexingStatsModal extends Modal {
 
     private createStatItem(container: HTMLElement, label: string, value: string) {
         const item = container.createDiv('performance-stat-item');
+
         item.createDiv('performance-stat-label').textContent = label;
         item.createDiv('performance-stat-value').textContent = value;
     }
 
     onClose() {
         const { contentEl } = this;
+
         contentEl.empty();
     }
 }

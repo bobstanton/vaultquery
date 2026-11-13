@@ -10,6 +10,7 @@ export function generateFileLink(app: App, target: string, sourcePath = '', subp
   }
 
   const file = app.vault.getAbstractFileByPath(target) ?? app.metadataCache.getFirstLinkpathDest(target, sourcePath);
+
   if (file instanceof TFile) return app.fileManager.generateMarkdownLink(file, sourcePath, subpath, alias);
 
   return formatWikiLink(target + subpath, alias);

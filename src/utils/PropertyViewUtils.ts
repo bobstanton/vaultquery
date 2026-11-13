@@ -9,6 +9,7 @@ export function getPropertyColumns(propertyKeys: string[]): PropertyColumn[] {
   for (const key of propertyKeys) {
     const columnName = key.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase() || 'property';
     const existing = columns.get(columnName);
+
     if (existing) existing.keys.push(key);
     else columns.set(columnName, { columnName, keys: [key] });
   }
@@ -30,6 +31,7 @@ export const LIST_PROPERTY_KEYS = new Set(['tags', 'aliases', 'cssclasses']);
 
 export function parsePropertyViewValue(value: string, isList: boolean): string | unknown[] {
   const list = parseJsonList(value);
+
   if (list) return list;
 
   return isList ? value.split(',').map(part => part.trim()).filter(part => part.length > 0) : value;

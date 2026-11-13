@@ -105,8 +105,10 @@ export class ProviderSnapshotOperations {
     }
 
     const existing = this.find(owner.table);
+
     if (existing && !sameSnapshotOwner(existing, owner)) throw new DataFileError(owner.table, 'ownership', 'This table name belongs to another provider definition.');
     const relations = readRows(this.database, 'SELECT type FROM sqlite_schema WHERE name = ? COLLATE NOCASE', [owner.table]);
+
     if (relations.length && (!existing || relations[0][0] !== 'table')) throw new DataFileError(owner.table, 'ownership', 'This table name is already owned by another database object.');
     if (existing) this.validateStored(existing);
   }
@@ -114,6 +116,7 @@ export class ProviderSnapshotOperations {
   public validateStored(record: StoredProviderSnapshot): void {
     const sql = readRows(this.database, "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ? COLLATE BINARY", [record.table])[0]?.[0];
     const expected = tabularTableSql({ path: record.table, columns: record.columns, format: record.format }).replace('CREATE TABLE main.', 'CREATE TABLE ');
+
     if (sql !== expected) throw new DataFileError(record.table, 'ownership', 'The stored provider table schema does not match its snapshot.');
     const actualGuards = readRows(this.database, "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ?", [record.table]).map(row => String(row[0]));
     const expectedGuards = providerSnapshotGuards(record.table);
@@ -123,6 +126,7 @@ export class ProviderSnapshotOperations {
     }
 
     const count = Number(readRows(this.database, `SELECT count(*) FROM main.${quoteIdentifier(record.table)}`)[0][0]);
+
     if (count !== record.rowCount) throw new DataFileError(record.table, 'ownership', 'The stored provider row count does not match its snapshot.');
   }
 
@@ -158,6 +162,7 @@ export class ProviderSnapshotOperations {
 
     this.validateStored(existing);
     const record = { ...existing, asOf: existing.asOf, validatedAt: metadata.validatedAt ?? Date.now(), expiresAt: metadata.expiresAt, etag: metadata.etag, lastModified: metadata.lastModified };
+
     this.transaction(() => this.writeMetadata(record));
 
     return record;
@@ -176,6 +181,7 @@ export class ProviderSnapshotOperations {
 
     this.validateStored(existing);
     const record = { ...existing, sourcePath: current.sourcePath };
+
     this.transaction(() => this.writeMetadata(record));
 
     return record;
@@ -188,6 +194,7 @@ export class ProviderSnapshotOperations {
 
   public remove(owner: ProviderSnapshotOwner): boolean {
     const existing = this.find(owner.table);
+
     if (!existing) return false;
     if (!sameSnapshotOwner(existing, owner)) throw new DataFileError(owner.table, 'ownership', 'Cannot remove a snapshot owned by another definition.');
     this.validateStored(existing);

@@ -150,6 +150,7 @@ export class ExternalRootService {
 
     for (const failure of failures) {
       const root = rootForExternalFile(this.resolved, failure.path) ?? this.resolved.find(candidate => isWithin(candidate.path, failure.path));
+
       if (!root) continue;
       this.scan(root.path).failures.set(failure.path, failure.reason);
       recorded = true;
@@ -162,11 +163,13 @@ export class ExternalRootService {
   private filesByRoot(): Map<string, number> {
     const states = this.resolved.map(root => root.state).join();
     const counted = this.counted;
+
     if (counted && counted.revision === this.entriesRevision && counted.roots === this.resolved && counted.states === states) return counted.files;
     const files = new Map<string, number>();
 
     for (const file of this.entries.values()) {
       const source = this.sourceFor(file.path);
+
       if (source) files.set(comparablePath(source), (files.get(comparablePath(source)) ?? 0) + 1);
     }
 
@@ -178,6 +181,7 @@ export class ExternalRootService {
   private scan(root: string): ScanRecord {
     const key = comparablePath(root);
     let record = this.scans.get(key);
+
     if (!record) this.scans.set(key, record = { scanning: false, lastScanStarted: null, lastScanCompleted: null, failures: new Map() });
 
     return record;
@@ -185,6 +189,7 @@ export class ExternalRootService {
 
   private startScan(root: string, directory: string): ScanRecord {
     const record = this.scan(root);
+
     record.scanning = true;
     record.lastScanStarted = this.lastStatusAt = Date.now();
 
@@ -225,6 +230,7 @@ export class ExternalRootService {
 
   public selects(path: string): boolean {
     const root = rootForExternalFile(this.resolved, path);
+
     if (!root) return false;
     const relative = path.slice(root.path.length).replace(/^\//, '');
 
@@ -233,6 +239,7 @@ export class ExternalRootService {
 
   public retains(path: string): boolean {
     const root = rootForExternalFile(this.resolved, path, true);
+
     if (!root || this.exclusions.matches(path.slice(root.path.length).replace(/^\//, ''), this.settings.excludePatterns)) return false;
 
     return retainsRows(root.state) || this.unreadable(path);
@@ -289,10 +296,12 @@ export class ExternalRootService {
   public async refresh(scope?: ExternalRefreshScope): Promise<ExternalScanDiff> {
     this.updateRoots();
     const target = scope ? this.scanTarget(scope) : undefined;
+
     if (scope && !target) return { added: [], changed: [], removed: [] };
     const found = new Map<string, IndexableExternalFile>();
     const fs = this.runtime.fileSystem();
     const file = scope?.file && normalizeRootPath(scope.file);
+
     if (fs && !this.disposed && target?.root.state === 'ready' && file && isWithin(target.root.path, file) && this.entries.has(file)) {
       return this.refreshFile(fs, target.root, file);
     }
@@ -300,11 +309,13 @@ export class ExternalRootService {
     if (fs && !this.disposed) {
       if (!target) this.realRoots.clear();
       const targets = target ? [target] : this.resolved.filter(root => this.walkable(root)).map(root => ({ root, directory: root.path }));
+
       await this.scanDirectories(fs, targets, found);
     }
 
     if (this.disposed) return { added: [], changed: [], removed: [] };
     const diff = this.entries.replace(found, target?.directory, path => this.retains(path));
+
     // A file that only changed is the same file: what a count over these entries
     // answers moves when one arrives or leaves, not when one is rewritten.
     if (diff.added.length || diff.removed.length) this.entriesRevision++;
@@ -319,6 +330,7 @@ export class ExternalRootService {
 
   private scanTarget(scope: ExternalRefreshScope): { root: ResolvedExternalRoot; directory: string } | undefined {
     const root = this.resolved.find(candidate => comparablePath(candidate.path) === comparablePath(scope.root));
+
     if (!root || !this.walkable(root)) return undefined;
     const directory = root.state === 'ready' && scope.directory ? normalizeRootPath(scope.directory) : root.path;
 
@@ -340,8 +352,10 @@ export class ExternalRootService {
       if (root.state === 'ready' && this.selects(path)) {
         try {
           const { linked } = await this.confirm(path);
+
           if (!linked) {
             const stat = await fs.stat(path);
+
             if (stat.isFile()) file = indexedFile(path, stat);
             else return await this.refresh(this.watchScope(root.path, path, 'rename'));
           }
@@ -352,6 +366,7 @@ export class ExternalRootService {
 
       if (this.disposed) return { added: [], changed: [], removed: [] };
       const diff = this.entries.replaceFile(path, file, candidate => this.retains(candidate));
+
       // A native change notification can precede a distinguishable timestamp or size.
       if (file && !diff.changed.length) diff.changed.push(path);
       if (diff.added.length || diff.removed.length) this.entriesRevision++;
@@ -370,8 +385,10 @@ export class ExternalRootService {
       // Resolve every root before walking so nested roots have their current selection state.
       for (const { root } of targets) {
         if (this.disposed) return;
+
         try {
           const real = normalizeRootPath(await fs.realpath(root.path));
+
           this.realRoots.set(comparablePath(root.path), real);
           root.state = 'ready';
           root.error = null;
@@ -383,6 +400,7 @@ export class ExternalRootService {
       for (const { root, directory } of targets.sort((left, right) => left.directory.length - right.directory.length)) {
         if (this.disposed) return;
         if (root.state !== 'ready') continue;
+
         try {
           await this.walk(fs, directory, found, visited);
         }
@@ -406,18 +424,22 @@ export class ExternalRootService {
 
   private async walk(fs: ExternalFileSystem, directory: string, found: Map<string, IndexableExternalFile>, visited: Set<string>): Promise<void> {
     const key = comparablePath(directory);
+
     if (this.disposed || visited.has(key)) return;
     const dirents = await fs.readdir(directory, { withFileTypes: true });
+
     visited.add(key);
 
     const visible = dirents.filter(entry => !entry.isSymbolicLink() && !isHiddenSegment(entry.name));
 
     for await (const { value: file } of mapConcurrent(visible.filter(entry => entry.isFile()), STAT_CONCURRENCY, async entry => {
       const path = joinRootPath(directory, entry.name);
+
       if (!this.selects(path)) return;
 
       try {
         const stat = entry.stat ?? await fs.stat(path);
+
         if (!stat.isFile()) return;
 
         return indexedFile(path, stat);
@@ -446,20 +468,27 @@ export class ExternalRootService {
     if (!isMissing(error)) this.unreadablePaths.add(path);
     logger.debug(message, { path, error: error instanceof Error ? error.message : String(error) });
     const root = this.resolved.find(candidate => isWithin(candidate.path, path));
+
     if (root) this.scan(root.path).failures.set(path, error instanceof Error ? error.message : String(error));
   }
 
   public startWatching(): void {
     const watch = this.runtime.watch?.();
-    if (!watch || this.disposed) { this.stopWatching(); return; }
+
+    if (!watch || this.disposed) { this.stopWatching();
+
+ return; }
+
     const wanted = new Set<string>();
     const covered: string[] = [];
 
     for (const root of [...this.resolved].sort((left, right) => left.path.length - right.path.length)) {
       if (!this.walkable(root) || root.refresh !== 'watch' || covered.some(path => isWithin(path, root.path))) continue;
       const key = comparablePath(root.path);
+
       wanted.add(key);
       let entry = this.watchers.get(key);
+
       if (!entry) this.watchers.set(key, entry = { path: root.path, failures: 0, generation: 0 });
       if (root.state !== 'ready') {
         if (entry.handle) this.closeWatcher(entry);
@@ -490,6 +519,7 @@ export class ExternalRootService {
       const handle = watch(entry.path, { recursive: true }, (event, filename) => {
         if (current()) this.onChange(this.watchScope(entry.path, filename, event));
       }, failed);
+
       if (current()) { entry.handle = handle; entry.failures = 0; }
       else handle.close();
     } catch (error) {
@@ -500,6 +530,7 @@ export class ExternalRootService {
   private retryWatcher(entry: RootWatcher): void {
     if (this.disposed || entry.timer !== undefined) return;
     const delay = Math.min(WATCH_RETRY_MAX_MS, WATCH_RETRY_MIN_MS * 2 ** Math.min(entry.failures++, 6));
+
     entry.timer = window.setTimeout(() => {
       entry.timer = undefined;
       if (this.disposed || this.watchers.get(comparablePath(entry.path)) !== entry) return;
@@ -512,19 +543,23 @@ export class ExternalRootService {
     entry.generation++;
     if (entry.timer !== undefined) window.clearTimeout(entry.timer);
     entry.timer = undefined;
+
     try {
       entry.handle?.close();
     } catch {
       /* The native error handler may have closed this handle already. */
     }
+
     entry.handle = undefined;
   }
 
   private watchScope(root: string, filename: string | null, event: string): ExternalRefreshScope {
     if (!filename) return { root };
     const relative = filename.replace(/\\/g, '/');
+
     if (relative.split('/').some(part => part === '.' || part === '..')) return { root };
     const absolute = relative.startsWith('/') ? normalizeRootPath(relative) : normalizeRootPath(joinRootPath(root, relative));
+
     if (!isWithin(root, absolute)) return { root };
     if (event === 'change' && this.entries.has(absolute)) return { root, file: absolute };
     const cut = absolute.lastIndexOf('/');
@@ -536,6 +571,7 @@ export class ExternalRootService {
     for (const entry of this.watchers.values()) {
       this.closeWatcher(entry);
     }
+
     this.watchers.clear();
   }
 
@@ -558,10 +594,13 @@ export class ExternalRootService {
 
   private async confirm(path: string): Promise<{ fs: ExternalFileSystem; linked: boolean }> {
     const fs = this.runtime.fileSystem();
+
     if (!fs) throw new Error(UNSUPPORTED_PLATFORM);
     const root = rootForExternalFile(this.resolved, path);
+
     if (!root || !this.selects(path)) throw new Error(`Path is not inside a configured external folder: ${path}`);
     const real = this.realRoots.get(comparablePath(root.path)) ?? normalizeRootPath(await fs.realpath(root.path));
+
     this.realRoots.set(comparablePath(root.path), real);
     const resolvedPath = normalizeRootPath(await fs.realpath(path));
 

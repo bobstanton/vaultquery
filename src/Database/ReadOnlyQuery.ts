@@ -9,6 +9,7 @@ export function enterReadOnlyQuery(db: Database, sql: string): () => void {
 
 export function enterReadOnlyScope(db: Database): () => void {
   const wasReadOnly = db.exec('PRAGMA query_only')[0]?.values[0]?.[0] === 1;
+
   if (!wasReadOnly) db.run('PRAGMA query_only = ON');
   let released = false;
 

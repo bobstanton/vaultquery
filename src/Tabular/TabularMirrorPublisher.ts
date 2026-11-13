@@ -29,6 +29,7 @@ export async function publishCsvToMirror(database: DataFileMirrorDatabase, publi
     }
 
     const path = csvPublicationPath(publication);
+
     validateDataFilePath(path);
     await dropOwnedTable(database, path, publication.kind === 'ready');
     await database.run('DELETE FROM main._vq_data_files WHERE path = ?', [path]);
@@ -44,8 +45,10 @@ export async function publishCsvToMirror(database: DataFileMirrorDatabase, publi
     }
 
     const { document, revision, mtime } = publication;
+
     await database.run(tabularTableSql(document));
     const prefix = `INSERT INTO main.${quoteIdentifier(path)} (${columnNames(document.columns).map(quoteIdentifier).join(', ')}) VALUES `;
+
     await insertRowsChunked(database, placeholders => prefix + placeholders, document.rows, document.columns.length);
 
     for (const sql of dataFileWriteGuardSql(path)) {
@@ -59,5 +62,6 @@ export async function publishCsvToMirror(database: DataFileMirrorDatabase, publi
 async function dropOwnedTable(database: DataFileMirrorDatabase, path: string, replacing = false): Promise<void> {
   const row = (await database.all(CSV_TABLE_OWNERSHIP_SQL, [path]))[0];
   const sql = csvDropOwnedTableSql(path, [row.relation_name, row.owner, row.type], replacing);
+
   if (sql) await database.run(sql);
 }

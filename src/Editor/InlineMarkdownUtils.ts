@@ -15,9 +15,11 @@ export function processReadingViewInlineCode(element: HTMLElement, createReplace
     if (isCodeElementInsidePre(codeEl)) continue;
 
     const text = codeEl.textContent?.trim();
+
     if (!text) continue;
 
     const replacement = createReplacement(text);
+
     if (!replacement) continue;
 
     codeEl.replaceWith(replacement);

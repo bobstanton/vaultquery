@@ -16,6 +16,7 @@ export const SQL_FUNCTION_TOKENS = new Set([
   'count', 'sum', 'avg', 'min', 'max', 'coalesce', 'nullif', 'cast',
   'substr', 'substring', 'length', 'upper', 'lower', 'trim', 'ltrim', 'rtrim',
   'replace', 'instr', 'printf', 'typeof', 'abs', 'round', 'random',
+  'ln', 'log2', 'mod', 'trunc', 'pow', 'ceiling',
   'date', 'time', 'datetime', 'julianday', 'strftime',
   'ifnull', 'iif', 'glob', 'hex', 'quote', 'zeroblob',
   'total', 'group_concat', 'json', 'json_extract', 'json_array', 'json_object',
@@ -27,6 +28,18 @@ export const SQL_TYPE_TOKENS = new Set([
   'integer', 'int', 'real', 'text', 'blob', 'numeric', 'boolean', 'varchar',
   'char', 'float', 'double', 'decimal', 'date', 'datetime', 'timestamp',
 ]);
+
+export interface SqlSyntax {
+  readonly keywords: ReadonlySet<string>;
+  readonly functions: ReadonlySet<string>;
+  readonly types: ReadonlySet<string>;
+}
+
+export const SQL_SYNTAX: SqlSyntax = {
+  keywords: SQL_KEYWORD_TOKENS,
+  functions: SQL_FUNCTION_TOKENS,
+  types: SQL_TYPE_TOKENS,
+};
 
 export const SQL_COMPLETION_KEYWORD_PHRASES = [
   'SELECT', 'FROM', 'WHERE', 'ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET',

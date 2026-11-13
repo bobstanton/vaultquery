@@ -12,6 +12,7 @@ function parseMeasurement(input: unknown): Measurement | null {
 
   if (typeof input !== 'string') return null;
   const match = MEASUREMENT.exec(input.trim());
+
   if (!match) return null;
   const value = Number(match[1].replace(/,/g, ''));
 
@@ -39,9 +40,11 @@ function unitScale(unit: unknown): number | undefined {
 
 export function convertDistance(input: unknown, targetUnit: unknown, bareUnit?: unknown): number | null {
   const measurement = parseMeasurement(input);
+
   if (!measurement) return null;
   const source = unitScale(measurement.unit || bareUnit);
   const target = unitScale(targetUnit);
+
   if (source === undefined || target === undefined) return null;
   const result = measurement.value * source / target;
 

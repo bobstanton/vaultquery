@@ -39,6 +39,7 @@ export function csvWriteTarget(sql: string): string | null {
   const statements = splitSqlStatements(sql);
   const targets = statements.map(extractDmlTargetTable);
   const target = targets.find((path): path is string => path !== null && isDataFilePath(path));
+
   if (!target) return null;
 
   if (targets.some(path => path === null || sqliteIdentifierKey(path) !== sqliteIdentifierKey(target))) {
@@ -47,8 +48,10 @@ export function csvWriteTarget(sql: string): string | null {
 
   for (const statement of statements) {
     const schema = extractDmlTargetSchema(statement);
+
     if (schema && schema.toLowerCase() !== 'main') throw new DataFileError(target, 'ownership', 'Data file writes must target the main database.');
     const columns = csvInsertColumns(statement);
+
     if (columns === null) throw new DataFileError(target, 'format', 'INSERT requires an explicit field list or DEFAULT VALUES.');
 
     if (columns.some(column => /^_vq_/i.test(column) || /^(rowid|_rowid_|oid)$/i.test(column))) {
@@ -71,18 +74,22 @@ export class CsvWriteService {
 
   public preview(path: string, sql: string, params: unknown[]): Promise<PreviewResult> {
     const assertAccess = this.plans.captureAccess('data-file');
+
     assertVaultDataFilePath(path);
 
     return this.indexing.exclusive(async refresh => {
       assertAccess();
       this.indexing.assertReady(path);
       let captured: Awaited<ReturnType<typeof readDataFile>> | undefined;
+
       await refresh(path, source => { captured = source; });
       this.indexing.assertReady(path);
       if (!captured) throw new FilePreviewStaleError('The source was not captured. Generate a fresh preview.');
       const source = this.indexing.getSources().find(source => sqliteIdentifierKey(source.path) === sqliteIdentifierKey(path))!;
+
       path = source.path;
       const { document, mtime, revision } = captured;
+
       assertAccess();
 
       if (revision !== source.revision || JSON.stringify(columnNames(document.columns)) !== JSON.stringify(columnNames(source.columns)) || mtime !== source.mtime) {
@@ -90,10 +97,12 @@ export class CsvWriteService {
       }
 
       const staged = await this.database.stageCsvWrites(path, sql, params);
+
       assertAccess();
       const origins = stagedRowOrigins(staged.preview, document.rows.length, staged.rows.length);
       const output = serializeDataFile(document, staged.rows, dataFileParseLimits(this.settings.dataFileMaxSizeMiB), origins);
       const outputRevision = output === document.source ? revision : await this.revision(output);
+
       assertAccess();
 
       const id = this.plans.add('data-file', [path], { path, revision, headers: JSON.stringify(columnNames(document.columns)),
@@ -135,6 +144,7 @@ export class CsvWriteService {
           }
 
           const { revision } = await readDataFileBytes(vaultDataFileSource(this.app.vault.adapter, plan.path, assertAccess), dataFileParseLimits(this.settings.dataFileMaxSizeMiB));
+
           if (revision !== plan.revision) throw new FilePreviewStaleError('The file changed after the preview. Generate a fresh preview.');
           assertAccess();
 
@@ -145,12 +155,14 @@ export class CsvWriteService {
           }
 
           const file = this.app.vault.getAbstractFileByPath(plan.path);
+
           if (!(file instanceof TFile)) throw new FilePreviewStaleError('The file no longer exists.');
 
           await this.plans.withPath(plan.path, async () => {
             assertAccess();
             let writeError: unknown;
             let rejected = false;
+
             state.phase = 'write';
 
             try {
@@ -159,19 +171,25 @@ export class CsvWriteService {
                   assertAccess();
                 }
                 catch (error) {
-                  rejected = true; throw error;
+                  rejected = true;
+
+ throw error;
                 }
 
                 attempted = true;
               });
             } catch (error) {
-              if (rejected || error instanceof FilePreviewStaleError) { attempted = false; throw error; }
+              if (rejected || error instanceof FilePreviewStaleError) { attempted = false;
+
+ throw error; }
+
               attempted = true;
               writeError = error;
             }
 
             state.phase = 'verify';
             const verified = await readDataFileBytes(vaultDataFileSource(this.app.vault.adapter, plan.path, assertAccess), dataFileParseLimits(this.settings.dataFileMaxSizeMiB));
+
             if (verified.revision !== plan.outputRevision) throw new Error('The file was edited again after applying. Generate a fresh preview.');
             completed = true;
             if (writeError) logger.warn(`Data file write reported an error after the expected change: ${plan.path}`, writeError);
@@ -197,6 +215,7 @@ export class CsvWriteService {
       if (attempted) {
         if (diagnostics.length || indexed?.status !== 'ready') {
           const message = `Indexing failed: ${diagnostics.join('\n') || indexed?.error || 'source changed again'}. Transient failures are retried automatically; reindex if the source remains unavailable.`;
+
           if (!failure) state.phase = 'index';
           failure = new Error(failure ? `${getErrorMessage(failure)}\n${message}` : message);
         } else if (indexed.revision !== plan.outputRevision) {
@@ -222,6 +241,7 @@ export class CsvWriteService {
 
       if (failure) {
         if (!attempted && failure instanceof FilePreviewStaleError) throw failure;
+
         throw new FileWriteApplyError(getErrorMessage(failure), state.phase, completed ? [plan.path] : [],
           attempted && !completed ? [plan.path] : [], attempted ? [] : [plan.path], plan.path);
       }

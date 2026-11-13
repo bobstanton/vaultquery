@@ -14,6 +14,7 @@ import type { ObsidianEditIntent } from './ObsidianEditIntent';
 import type { ReplaceRangeEdit, TableCellRow } from '../EditPlanner';
 
 const logger = rootLogger.scope('WriteSync');
+
 type QueryListItemsByListIndex = (path: string, listIndex: number) => Promise<Array<{ line_number: number | null; item_index: number }>>;
 type TaskIntent = Extract<ObsidianEditIntent, { type: 'replaceTask' | 'deleteTask' | 'insertTask' }>;
 type HeadingIntent = Extract<ObsidianEditIntent, { type: 'replaceHeading' | 'deleteHeading' | 'insertHeading' }>;
@@ -58,6 +59,7 @@ export class ObsidianEditApplier {
 
   public constructor(private readonly app: App, private readonly queryListItemsByListIndex?: QueryListItemsByListIndex) {
     const contentLocationService = new ContentLocationService(this.app, this.app.metadataCache);
+
     this.taskPlanner = new TaskEditPlanner(contentLocationService);
     this.headingPlanner = new HeadingEditPlanner(contentLocationService);
     this.listItemPlanner = new ListItemEditPlanner(contentLocationService);
@@ -78,6 +80,7 @@ export class ObsidianEditApplier {
       for (const intent of intents) {
         if (intent.type === 'createNote' || intent.type === 'deleteNote') {
           const path = normalizePath(intent.path);
+
           await this.checkSource(path, context);
           context.writing = true;
 
@@ -104,6 +107,7 @@ export class ObsidianEditApplier {
       const unknown = path && (context.changed.has(path) || context.writing && !(error instanceof FilePreviewStaleError)) ? [path] : [];
       const completed = [...context.completed].filter(item => !unknown.includes(item));
       const untouched = [...sources.keys()].filter(item => !completed.includes(item) && !unknown.includes(item));
+
       throw new FileWriteApplyError(getErrorMessage(error), context.writing ? 'write' : 'preflight', completed, unknown, untouched, path);
     }
   }
@@ -113,6 +117,7 @@ export class ObsidianEditApplier {
     context.writing = false;
     context.assertAccess();
     const expected = context.sources.get(path);
+
     if (!expected) throw new FilePreviewStaleError(`File is missing from the prepared preview: ${path}`);
     assertTextFileSource(path, expected, await readTextFileSource(this.app.vault, path, expected.frontmatterOnly));
     context.assertAccess();
@@ -157,6 +162,7 @@ export class ObsidianEditApplier {
 
     for (const intent of intents) {
       const path = this.intentPath(intent);
+
       context.currentPath = path;
       if (!sources.has(path)) throw new FilePreviewStaleError(`File is missing from the prepared preview: ${path}`);
 
@@ -195,10 +201,12 @@ export class ObsidianEditApplier {
       context.currentPath = path;
       context.assertAccess();
       const source = sources.get(path)!;
+
       if (source.content === null) throw new FilePreviewStaleError(`File is unavailable for the prepared edits: ${path}`);
       const snapshot = source.frontmatterOnly ? '' : source.content;
       let planned = this.applyWholeNoteIntents(snapshot, group.ordered);
       const rangeEdits = await this.planRangeEdits(path, planned, group, warnings);
+
       if (rangeEdits.length) planned = this.applyRangeEdits(planned, rangeEdits);
 
       const frontmatter: unknown = group.properties.length
@@ -222,6 +230,7 @@ export class ObsidianEditApplier {
       context.assertAccess();
       const file = this.getFile(path);
       const source = context.sources.get(path)!;
+
       if (source.file !== file) throw new FilePreviewStaleError(`File changed since preview: ${path}`);
       const snapshot = source.frontmatterOnly ? '' : source.content!;
       const planned = edits.content;
@@ -337,6 +346,7 @@ export class ObsidianEditApplier {
     for (const edit of sorted) {
       if (edit.range.start > edit.range.end || edit.range.start < 0) {
         const warning = `${edit.path}: skipped edit with invalid range [${edit.range.start}, ${edit.range.end})${edit.reason ? ` (${edit.reason})` : ''}`;
+
         logger.warn(warning);
         warnings.push(warning);
         continue;
@@ -344,6 +354,7 @@ export class ObsidianEditApplier {
 
       if (edit.range.end > previousStart) {
         const warning = `${edit.path}: skipped edit with overlapping range [${edit.range.start}, ${edit.range.end})${edit.reason ? ` (${edit.reason})` : ''}`;
+
         logger.warn(warning);
         warnings.push(warning);
         continue;

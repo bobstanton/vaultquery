@@ -28,6 +28,7 @@ export function fileContentBytes(content: string | Uint8Array): Uint8Array<Array
 
 export function stageOtherFileWrites(db: Database, sql: string, params: unknown[], guards: readonly { name: string; sql: string }[], limits: OtherFileStageLimits): StagedOtherFile[] {
   const statements = otherFileWriteStatements(sql);
+
   if (sql.includes('\0')) throw new Error('File write SQL cannot contain NUL.');
 
   for (const value of params) {

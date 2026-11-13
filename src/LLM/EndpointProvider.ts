@@ -30,6 +30,7 @@ function buildChatCompletionsUrl(baseUrl: string): string {
 
 function bodySnippet(response: RequestUrlResponse): string {
   const text = (response.text || '').trim();
+
   if (text.length === 0) return '(empty response body)';
 
   return text.length > BODY_SNIPPET_LIMIT ? `${text.slice(0, BODY_SNIPPET_LIMIT)}...` : text;
@@ -97,6 +98,7 @@ export class EndpointProvider implements LlmProvider {
 
     if (payload.error) {
       const message = typeof payload.error === 'string' ? payload.error : payload.error.message;
+
       throw new Error(`The model server reported an error: ${message ?? bodySnippet(response)}`);
     }
 

@@ -8,6 +8,7 @@ export function batchDeleteRowsByIds(tableName: string, ids: number[], run: Dele
   for (let i = 0; i < ids.length; i += BATCH_DELETE_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + BATCH_DELETE_CHUNK_SIZE);
     const placeholders = chunk.map(() => '?').join(',');
+
     run(`DELETE FROM ${tableName} WHERE id IN (${placeholders})`, chunk);
   }
 }

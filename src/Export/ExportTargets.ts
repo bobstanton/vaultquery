@@ -71,6 +71,7 @@ export function buildCapped(chunks: Iterable<string>, limitBytes: number): strin
     if (!chunk.length) continue;
     bytes += utf8ByteLength(chunk);
     const first = chunk.charCodeAt(0), last = chunk.charCodeAt(chunk.length - 1);
+
     // Joining two surrogate halves replaces two three-byte replacements with one four-byte character.
     if (trailingHighSurrogate && first >= 0xdc00 && first <= 0xdfff) bytes -= 2;
     trailingHighSurrogate = last >= 0xd800 && last <= 0xdbff;
@@ -99,6 +100,7 @@ export async function saveExport(app: App, file: ExportFile, target: ExportTarge
 
 async function saveThroughDialog(file: ExportFile): Promise<SavedExport> {
   const picker = savePicker();
+
   if (!picker) throw new Error('This device has no save dialog.');
   const extension = file.name.split('.').pop() ?? 'txt';
   const handle = await picker({ suggestedName: file.name, types: [{ description: file.mime, accept: { [file.mime]: [`.${extension}`] } }] });
@@ -118,6 +120,7 @@ async function saveThroughDialog(file: ExportFile): Promise<SavedExport> {
 
 async function saveToDownloads(app: App, file: ExportFile, folder: string): Promise<SavedExport> {
   const files = capacitorFiles();
+
   if (!files) return saveToVault(app, file, folder);
   const path = `${ANDROID_DOWNLOADS}/${file.name}`;
   let started = false;
@@ -146,6 +149,7 @@ async function saveToDownloads(app: App, file: ExportFile, folder: string): Prom
 
 async function saveToVault(app: App, file: ExportFile, folder: string): Promise<SavedExport> {
   const directory = normalizePath(folder).replace(/^\/+/, '');
+
   if (directory && directory !== '.' && !await app.vault.adapter.exists(directory)) await app.vault.adapter.mkdir(directory);
   const path = normalizePath(directory && directory !== '.' ? `${directory}/${file.name}` : file.name);
   let first = true;

@@ -14,6 +14,7 @@ export function forwardReader(reader: ReadableStreamDefaultReader<Uint8Array>, p
     while (written < length) {
       if (!chunk.length) {
         const next = await reader.read();
+
         if (next.done) break;
         chunk = next.value;
         continue;
@@ -28,6 +29,7 @@ export function forwardReader(reader: ReadableStreamDefaultReader<Uint8Array>, p
       }
 
       const take = Math.min(chunk.length, length - written);
+
       buffer.set(chunk.subarray(0, take), offset + written);
       chunk = chunk.subarray(take);
       consumed += take;

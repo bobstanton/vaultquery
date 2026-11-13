@@ -31,6 +31,7 @@ export class LlmProviderModal extends Modal {
 
   private renderForm(): void {
     const { contentEl } = this;
+
     contentEl.empty();
 
     new Setting(contentEl)
@@ -83,6 +84,7 @@ export class LlmProviderModal extends Modal {
       });
 
     const errorEl = contentEl.createDiv({ cls: 'mod-warning' });
+
     errorEl.hide();
 
     new Setting(contentEl)
@@ -146,6 +148,7 @@ export class LlmProviderModal extends Modal {
 
     provider.model = (this.draft.model ?? '').trim();
     const apiKey = (this.draft.apiKey ?? '').trim();
+
     if (apiKey) provider.apiKey = apiKey;
 
     return provider;

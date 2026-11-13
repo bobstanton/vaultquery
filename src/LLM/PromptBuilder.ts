@@ -247,6 +247,7 @@ function selectExamples(input: PromptBuilderInput): FewShotExample[] {
     if (example.language === 'vaultquery-write' && !input.allowWriteOperations) return false;
     const relations = extractSqlReferencedTables(example.sql);
     const target = extractSqlMutationTarget(example.sql);
+
     if (target) relations.add(target);
     if ([...relations].some(name => !names.has(sqliteIdentifierKey(name)))) return false;
 
@@ -264,8 +265,10 @@ function selectExamples(input: PromptBuilderInput): FewShotExample[] {
 
 function renderSchemaSection(input: PromptBuilderInput): string {
   const tables = input.schema;
+
   if (!tables.length) return '(no schema information available)';
   const compact = renderCompactSchema(withPropertyKeys(tables, input.propertyKeys));
+
   logger.debug('Schema context', { tables: tables.length, characters: compact.length });
 
   return compact;

@@ -6,6 +6,7 @@ import { logger as rootLogger } from '../utils/logger';
 import type { TableCellRow } from '../Services/ContentLocationService';
 
 const logger = rootLogger.scope('WriteSync');
+
 type Row = Record<string, unknown>;
 type CellsByTable = Map<string, TableCellRow[]>;
 type TableLineNumbers = Map<string, number | null>;
@@ -17,6 +18,7 @@ function parseRowJson(row: Row, context: string): Row {
   try {
     if (typeof raw === 'string') {
       const parsed: unknown = JSON.parse(raw);
+
       if (isRow(parsed)) return parsed;
       logger.warn(`${context}: row_json must be an object`, raw);
 
@@ -40,6 +42,7 @@ function extractRowTableKey(r: Row, affectedTables: Set<string>, tableLineNumber
   const path = asStr(r.path);
   const table_index = asNum(r.table_index, 0);
   const tableKey = createTableKey(path, table_index);
+
   affectedTables.add(tableKey);
   const tableLineNumber = asNum(r.table_line_number, null);
 
@@ -97,6 +100,7 @@ export async function appendCellsFromTableRows(rows: Row[], affectedTables: Set<
     const baseRowIndex = maxRowByTable.get(tableKey) ?? 0;
     const rowOffset = rowCountByTable.get(tableKey) ?? 0;
     const rowIndex = asNum(row.row_index, baseRowIndex + rowOffset);
+
     rowCountByTable.set(tableKey, rowOffset + 1);
 
     appendCellsFromObject(cellsByTable, tableKey, path, table_index, rowIndex, parseRowJson(row, context), tableLineNumbers);

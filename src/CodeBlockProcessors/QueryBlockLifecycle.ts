@@ -14,6 +14,7 @@ interface QueryBlockLifecycle<T> {
 
 export async function processQueryBlock<T>(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext, options: QueryBlockLifecycle<T>): Promise<void> {
   const container = createVaultQueryCodeBlockContainer(el, ctx);
+
   if (!container) return;
 
   const renderError = (error: unknown): void => {
@@ -24,6 +25,7 @@ export async function processQueryBlock<T>(source: string, el: HTMLElement, ctx:
 
   try {
     const parsed = options.prepare(container);
+
     if (parsed === undefined) return;
 
     if (options.plugin.api?.isIndexReady()) {

@@ -42,6 +42,7 @@ function formatCoordinate(value: number): string {
 
 export function normalizeHeaderDimensions(header: HeaderDimensions): NormalizedImage {
   const facts = emptyImageFacts();
+
   facts.width = header.width;
   facts.height = header.height;
   facts.oriented_width = header.width;
@@ -59,6 +60,7 @@ export function normalizeImageTags(tags: ExpandedTags): NormalizedImage {
   const gps = sections.gps as unknown as { Latitude?: number; Longitude?: number; Altitude?: number } | undefined;
 
   const fileType = text(sections.file?.FileType);
+
   facts.format = fileType ? fileType.toLowerCase() : null;
   facts.mime_type = facts.format ? MIME_TYPES[facts.format] ?? null : null;
 
@@ -71,16 +73,19 @@ export function normalizeImageTags(tags: ExpandedTags): NormalizedImage {
   facts.orientation = number(exif?.Orientation);
 
   const rotated = facts.orientation !== null && facts.orientation >= 5 && facts.orientation <= 8;
+
   facts.oriented_width = rotated ? facts.height : facts.width;
   facts.oriented_height = rotated ? facts.width : facts.height;
 
   facts.bit_depth = first(number(sections.file?.['Bits Per Sample']), number(sections.pngFile?.['Bit Depth']), number(sections.gif?.['Bits Per Pixel']));
   facts.color_space = first(text(exif?.ColorSpace), text(icc?.['Color Space']), text(sections.pngFile?.['Color Type']));
   const colorType = text(sections.pngFile?.['Color Type']);
+
   facts.has_alpha = colorType === null ? null : /alpha/i.test(colorType) ? 1 : 0;
   facts.icc_profile = text(icc?.['ICC Description']);
 
   const captured = readCapturedTime(exif, xmp);
+
   facts.captured = captured.epoch;
   facts.captured_local = captured.local;
   facts.captured_offset = captured.offset;
@@ -100,6 +105,7 @@ export function normalizeImageTags(tags: ExpandedTags): NormalizedImage {
   facts.metering_mode = text(exif?.MeteringMode);
   facts.white_balance = text(exif?.WhiteBalance);
   const flash = rawNumber(exif?.Flash);
+
   facts.flash_fired = flash === null ? null : flash & 1;
 
   facts.latitude = finite(gps?.Latitude);
@@ -117,6 +123,7 @@ export function normalizeImageTags(tags: ExpandedTags): NormalizedImage {
   facts.copyright = trimmed(first(text(xmp?.rights), text(exif?.Copyright), text(iptc?.['Copyright Notice'])));
   facts.credit = trimmed(text(iptc?.Credit));
   const percent = number(xmp?.RatingPercent);
+
   // RatingPercent runs 0 to 100 where Rating runs 0 to 5.
   facts.rating = first(number(xmp?.Rating), percent === null ? null : Math.round(percent / 20));
   facts.label = trimmed(text(xmp?.Label));
@@ -142,6 +149,7 @@ function collectTags(sections: Record<string, Section | undefined>): { json: str
     for (const [tag, value] of Object.entries(section)) {
       if (SKIPPED_TAGS.has(tag)) continue;
       const scalar = scalarOf(value);
+
       if (scalar === null) continue;
       group[tag] = scalar; count++;
     }
@@ -157,15 +165,19 @@ function scalarOf(tag: TagValue): string | number | null {
   if (!tag || typeof tag !== 'object') return null;
   const record = tag as { value?: unknown; description?: unknown };
   const description = record.description;
+
   if (typeof description === 'string' || typeof description === 'number') return clamp(description);
   const value = record.value;
+
   if (typeof value === 'string' || typeof value === 'number') return clamp(value);
 
   if (Array.isArray(value) && value.length === 2) {
     const numerator: unknown = value[0];
     const denominator: unknown = value[1];
+
     if (typeof numerator === 'number' && typeof denominator === 'number') return `${numerator}/${denominator}`;
   }
+
   if (Array.isArray(value) && value.length && value.every(part => typeof part === 'string')) return clamp(value.join(', '));
 
   return null;
@@ -181,13 +193,16 @@ function readKeywords(xmp: Section | undefined, iptc: Section | undefined): stri
     if (typeof value === 'string' && value.trim()) collected.push(value.trim());
     else if (Array.isArray(value)) for (const entry of value) {
       const scalar = scalarOf(entry);
+
       if (typeof scalar === 'string' && scalar.trim()) collected.push(scalar.trim());
     }
   };
 
   const subject = xmp?.subject as { value?: unknown; description?: unknown } | undefined;
+
   if (subject) { add(subject.value); if (!collected.length) add(subject.description); }
   const keywords = iptc?.Keywords as { value?: unknown; description?: unknown } | undefined;
+
   if (keywords) { add(keywords.value); if (!collected.length) add(keywords.description); }
   const unique = [...new Set(collected)];
 
@@ -196,8 +211,10 @@ function readKeywords(xmp: Section | undefined, iptc: Section | undefined): stri
 
 function readCapturedTime(exif: Section | undefined, xmp: Section | undefined): { epoch: number | null; local: string | null; offset: string | null } {
   const raw = first(text(exif?.DateTimeOriginal), text(xmp?.DateTimeOriginal), text(exif?.DateTimeDigitized), text(exif?.DateTime), text(xmp?.CreateDate));
+
   if (raw === null) return { epoch: null, local: null, offset: null };
   const match = /^(\d{4})[:-](\d{2})[:-](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(raw.trim());
+
   if (!match) return { epoch: null, local: null, offset: null };
   const [, year, month, day, hour, minute, second] = match;
   const local = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
@@ -212,6 +229,7 @@ function readCapturedTime(exif: Section | undefined, xmp: Section | undefined): 
 
 function offsetMinutes(offset: string): number {
   const match = /^([+-])(\d{2}):(\d{2})$/.exec(offset.trim());
+
   if (!match) return 0;
 
   return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]));
@@ -220,8 +238,10 @@ function offsetMinutes(offset: string): number {
 function readGpsTime(exif: Section | undefined): number | null {
   const stamp = firstArrayValue(exif?.GPSDateStamp) ?? text(exif?.GPSDateStamp);
   const time = exif?.GPSTimeStamp as { value?: unknown; description?: unknown } | undefined;
+
   if (!stamp) return null;
   const date = /^(\d{4})[:-](\d{2})[:-](\d{2})/.exec(stamp.trim());
+
   if (!date) return null;
   const parts = readTimeParts(time);
   const utc = Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3]), parts[0], parts[1], parts[2]);
@@ -231,11 +251,13 @@ function readGpsTime(exif: Section | undefined): number | null {
 
 function readTimeParts(time: { value?: unknown; description?: unknown } | undefined): [number, number, number] {
   const description = typeof time?.description === 'string' ? /(\d{1,2}):(\d{2}):(\d{2})/.exec(time.description) : null;
+
   if (description) return [Number(description[1]), Number(description[2]), Number(description[3])];
   const value = time?.value;
 
   if (Array.isArray(value) && value.length === 3) {
     const parts = value.map(part => Array.isArray(part) && part.length === 2 && part[1] ? Number(part[0]) / Number(part[1]) : Number(part));
+
     if (parts.every(part => Number.isFinite(part))) return [Math.trunc(parts[0]), Math.trunc(parts[1]), Math.trunc(parts[2])];
   }
 
@@ -258,8 +280,10 @@ function text(tag: TagValue): string | null {
 
 function number(tag: TagValue): number | null {
   const raw = rawNumber(tag);
+
   if (raw !== null) return raw;
   const scalar = scalarOf(tag);
+
   if (scalar === null) return null;
   const parsed = typeof scalar === 'number' ? scalar : Number(String(scalar).replace(/^[^0-9.+-]*/, '').replace(/[^0-9.eE+-].*$/, ''));
 
@@ -270,6 +294,7 @@ function rawNumber(tag: TagValue): number | null {
   if (typeof tag === 'number') return tag;
   if (!tag || typeof tag !== 'object') return null;
   const value = (tag as { value?: unknown }).value;
+
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
 
   if (Array.isArray(value) && value.length === 2 && value.every(part => typeof part === 'number')) {
@@ -283,6 +308,7 @@ function rawNumber(tag: TagValue): number | null {
 
 function firstArrayValue(tag: TagValue): string | null {
   const value = (tag as { value?: unknown } | undefined)?.value;
+
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
 

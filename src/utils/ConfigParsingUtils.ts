@@ -11,14 +11,17 @@ const DEFAULT_DIMENSION_UNITS = ['px', 'rem', 'em', 'vh', 'vw', 'vmin', 'vmax', 
 
 export function parseKeyValueLines(text: string | null): Record<string, string> {
   const config: Record<string, string> = {};
+
   if (!text) return config;
 
   for (const line of text.split('\n')) {
     const colonIndex = line.indexOf(':');
+
     if (colonIndex === -1) continue;
 
     const key = line.slice(0, colonIndex).trim().toLowerCase();
     const value = line.slice(colonIndex + 1).trim();
+
     if (key && value) config[key] = value;
   }
 

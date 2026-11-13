@@ -115,6 +115,7 @@ export function markdownRowLine(row: Record<string, unknown>, columns: readonly 
 
   const cells = columns.map(column => {
     const value = row[column];
+
     if (value == null) return '';
 
     const str = options.formatValues === true

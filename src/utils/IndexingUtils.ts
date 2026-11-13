@@ -29,10 +29,12 @@ export function renderIndexingProgress(loadingDiv: HTMLElement, progress?: Index
   }
   else {
     const progressText = textContainer.createDiv({ cls: 'vaultquery-progress-count' });
+
     progressText.textContent = "Indexing: " + progress.current + "/" + progress.total + " files";
 
     if (progress.currentFile && progress.currentFile !== 'Starting...' && progress.currentFile !== 'Complete') {
       const currentFile = textContainer.createDiv({ cls: 'vaultquery-progress-file' });
+
       currentFile.textContent = progress.currentFile;
     }
   }

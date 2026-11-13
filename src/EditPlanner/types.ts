@@ -114,11 +114,13 @@ export function planLineEntityEdits<T extends { line_number?: number | null; sta
     const minLineNumber = validateLineNumberBatch(rowsWithLineNumber, options.entityName, warnings);
     const insertionPoint = ContentLocationService.findInsertionPointAtLine(ctx.content, minLineNumber);
     const combinedText = rowsWithLineNumber.map(row => options.emit(row)).join('\n');
+
     pushInsertionEdit(edits, ctx, insertionPoint, combinedText, options.insertAtLineReason);
   }
 
   if (newRows.length > 0) {
     const newText = newRows.map(row => options.emit(row)).join('\n');
+
     pushInsertionEdit(edits, ctx, options.findNewInsertionPoint(), newText, options.insertNewReason);
   }
 

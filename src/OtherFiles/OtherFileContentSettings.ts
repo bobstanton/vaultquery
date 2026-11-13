@@ -42,6 +42,7 @@ export function classifyFileContents(bytes: Uint8Array): string | Uint8Array {
 
     for (let index = 0; index < text.length; index++) {
       const code = text.charCodeAt(index);
+
       if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || (code >= 127 && code <= 159)) return bytes;
     }
 

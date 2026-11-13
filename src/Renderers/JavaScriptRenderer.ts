@@ -35,6 +35,7 @@ function renderWikilinks(text: string): string {
     const target = match[1];
     const displayText = match[2] || target;
     const escapedPath = target.replace(/"/g, '&quot;');
+
     result.push(`<a href="${escapedPath}" class="internal-link" data-path="${escapedPath}">${escapeHTML(displayText)}</a>`);
 
     lastIndex = wikilinkRegex.lastIndex;

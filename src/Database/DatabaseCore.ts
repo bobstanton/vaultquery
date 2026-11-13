@@ -55,6 +55,7 @@ export class DatabaseLock {
     let releaseLock: () => void;
     const lockPromise = new Promise<void>(resolve => { releaseLock = resolve; });
     const previousLock = this.tail;
+
     this.tail = lockPromise;
     await previousLock;
 

@@ -139,11 +139,13 @@ export class CalendarRenderer {
     }));
 
     const aspectRatio = this.parseNumberOption(options?.aspectratio);
+
     if (aspectRatio !== null && aspectRatio > 0) set('aspectRatio', aspectRatio);
 
     set('expandRows', parseBooleanOptionOrNull(options?.expandrows));
 
     const firstDay = this.parseBoundedOption(options?.firstday, 'firstDay');
+
     if (firstDay !== null) set('firstDay', firstDay as CalendarConfig['firstDay']);
 
     set('weekNumbers', parseBooleanOptionOrNull(options?.weeknumbers));
@@ -197,6 +199,7 @@ export class CalendarRenderer {
     const calendarRef: CalendarReference = {};
     const { options, responsiveConfig } = this.createCalendarOptions(normalized, config, openFile, root, calendarRef);
     const calendar = new Calendar(root, options);
+
     calendarRef.current = calendar;
     calendar.render();
 
@@ -517,6 +520,7 @@ export class CalendarRenderer {
     };
 
     const rafId = win.requestAnimationFrame(update);
+
     instance.animationFrames.push(rafId);
   }
 
@@ -812,9 +816,11 @@ export class CalendarRenderer {
   private static showTooltip(anchor: HTMLElement, text: string): void {
     const doc = anchor.ownerDocument;
     const existing = doc.querySelector<HTMLElement>('.vaultquery-calendar-tooltip');
+
     existing?.remove();
 
     const tooltip = doc.body.createDiv();
+
     tooltip.className = 'vaultquery-calendar-tooltip';
     tooltip.textContent = text;
     tooltip.setAttribute('role', 'tooltip');
@@ -987,6 +993,7 @@ export class CalendarRenderer {
 
   private static addDays(value: string, days: number): string {
     const date = new Date(`${value}T00:00:00`);
+
     date.setDate(date.getDate() + days);
 
     return this.formatDate(date);

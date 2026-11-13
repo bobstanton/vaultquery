@@ -171,6 +171,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
     while (this.columnWidthCache.size > this.COLUMN_WIDTH_CACHE_LIMIT) {
       const oldestKey = this.columnWidthCache.keys().next().value;
+
       if (oldestKey === undefined) break;
       this.columnWidthCache.delete(oldestKey);
     }
@@ -203,12 +204,14 @@ export class SlickGridRenderer extends BaseRenderer {
     if (existingRecord?.grid && existingRecord.markdownColumns === markdownColumnsKey) {
       registerQueryRefresh(context, true);
       const prepareStartedAt = performance.now();
+
       existingRecord.data = this.prepareData(results);
       existingRecord.openFile = context.openFile;
       context.readResults = () => existingRecord.data;
       context.readColumns = () => existingRecord.columns.map(column => String(column.field));
       const prepareMs = performance.now() - prepareStartedAt;
       const updateStartedAt = performance.now();
+
       existingRecord.grid.setData(existingRecord.data, false);
       existingRecord.grid.updateRowCount();
       const activeSort = existingRecord.grid.getSortColumns();
@@ -234,13 +237,16 @@ export class SlickGridRenderer extends BaseRenderer {
     registerQueryRefresh(context, true);
 
     const gridContainer: HTMLElement = container.createDiv({ cls: 'vaultquery-data-grid' });
+
     this.applyHeightConfig(gridContainer, this.parseHeightConfig(context.parsed.output?.options));
     const gridId = generateUniqueId('data-grid');
+
     gridContainer.id = gridId;
     gridContainer.tabIndex = -1;
 
     const prepareStartedAt = performance.now();
     const markdownComponent = new Component();
+
     markdownComponent.load();
     const columns = this.createColumns(results[0], context, markdownColumns, markdownComponent, queryHash);
     const data = this.prepareData(results);
@@ -398,11 +404,13 @@ export class SlickGridRenderer extends BaseRenderer {
       }
 
       const grid = new SlickGrid(record.container, record.data, record.columns, record.options);
+
       record.grid = grid;
 
       if (record.queryHash) {
         grid.onColumnsResized.subscribe(() => {
           const currentColumns = grid.getColumns();
+
           this.saveColumnWidths(record.queryHash!, currentColumns);
         });
       }
@@ -537,6 +545,7 @@ export class SlickGridRenderer extends BaseRenderer {
     this.cancelActiveColumnResize(record);
 
     const grid = record.grid;
+
     record.grid = undefined;
 
     try {
@@ -601,6 +610,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
   private static getCandidateDocuments(primaryDocument: Document): Set<Document> {
     const documents = new Set<Document>();
+
     documents.add(primaryDocument);
     documents.add(activeWindow.document);
 
@@ -706,6 +716,7 @@ export class SlickGridRenderer extends BaseRenderer {
     const config: Partial<Column> = {};
 
     const width = this.getColumnWidth(key);
+
     config.width = width;
     config.minWidth = 50;
     // No maxWidth - allow columns to be resized as large as needed
@@ -798,9 +809,11 @@ export class SlickGridRenderer extends BaseRenderer {
   private static createMarkdownCellPostRenderer(context: RenderContext, component: Component) {
     return (domCellNode: HTMLElement, _row: number, dataContext: Record<string, unknown>, columnDef: Column) => {
       const { app, pluginContext } = context;
+
       if (!pluginContext) return;
 
       const sanitizedContent = markdownCellSource(dataContext[columnDef.field]);
+
       if (!sanitizedContent) return;
 
       domCellNode.empty();
@@ -1016,6 +1029,7 @@ export class SlickGridRenderer extends BaseRenderer {
 
   private static setupMobileResizeHandlers(grid: SlickGrid): void {
     const container = grid.getContainerNode();
+
     if (!container) return;
 
     const resizeHandles = Array.from(container.querySelectorAll('.slick-resizable-handle'));

@@ -20,6 +20,7 @@ export class StatementCache {
     }
 
     const stmt = db.prepare(sql);
+
     this.statements.set(sql, stmt);
 
     if (this.statements.size > this.limit) {

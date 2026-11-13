@@ -53,6 +53,7 @@ function validateValue(path: string, column: TabularColumn, value: TabularValue,
 
 function validateDocument(document: TabularDocument): void {
   const { path, columns, rows } = document;
+
   if (document.format.kind === 'csv') validateCsvHeaders(columns.map(column => column.name), path);
 
   for (const row of rows) {

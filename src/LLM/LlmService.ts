@@ -105,9 +105,11 @@ export async function generateAndRun(question: string, deps: GenerateAndRunDeps)
 
     reportProgress('waiting-for-model');
     const response = await deps.provider.complete(prompt, { temperature: attempt === 1 ? 0 : RETRY_TEMPERATURE });
+
     reportProgress('validating-query');
     const generated = extractGeneratedVaultQuery(response);
     const sql = repairPropertyKeys(generated.sql, deps.propertyKeys);
+
     lastSql = sql;
 
     logger.debug('Generated SQL', sql);

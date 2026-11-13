@@ -40,6 +40,7 @@ function release(state: FloatingButtonsState): void {
 export function releaseFloatingButtons(container: HTMLElement): void {
   for (const element of [container, ...Array.from(container.querySelectorAll<HTMLElement>('[data-vaultquery-chrome]'))]) {
     const state = floatingControls.get(element);
+
     if (!state) continue;
     release(state);
     floatingControls.delete(element);

@@ -33,6 +33,7 @@ export class CustomSQLFunctions extends SharedSQLFunctions {
 
   private static resolveLink(app: App, wikilink: string, sourcePath: string): string | null {
     const linkText = this.normalizeWikilink(wikilink);
+
     if (!linkText) return null;
 
     const resolved = app.metadataCache.getFirstLinkpathDest(linkText, sourcePath || '');

@@ -67,6 +67,7 @@ export class TriggerService {
     this.reindexFile = deps.reindexFile;
 
     const contentLocationService = new ContentLocationService(this.app, this.app.metadataCache);
+
     this.headingPlanner = new HeadingEditPlanner(contentLocationService);
     this.listItemPlanner = new ListItemEditPlanner(contentLocationService);
     this.tablePlanner = new TableEditPlanner();
@@ -98,6 +99,7 @@ export class TriggerService {
     const shown = this.runIssues.slice(0, MAX_ISSUES_IN_NOTICE);
     const extra = this.runIssues.length - shown.length;
     const suffix = extra > 0 ? `\n…and ${extra} more (see console)` : '';
+
     new Notice(`VaultQuery: ${this.runIssues.length} trigger action(s) did not apply:\n${shown.join('\n')}${suffix}`);
     this.runIssues = [];
   }
@@ -154,6 +156,7 @@ export class TriggerService {
       while (this.triggerFunctions.hasPendingActions() && cascadeDepth < MAX_CASCADE_DEPTH) {
         cascadeDepth++;
         const actions = this.triggerFunctions.getPendingActions();
+
         if (actions.length === 0) break;
 
         const affectedPaths = new Set<string>();
@@ -317,17 +320,20 @@ export class TriggerService {
 
   private async setProperty({ path, key, value }: SetPropertyParams): Promise<void> {
     const file = this.getFile(path, 'set_property');
+
     if (!file) return;
 
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
       this.deps.assertAccess();
       const type = Array.isArray(fm[key]) ? 'list' : typeof fm[key];
+
       fm[key] = parseFrontmatterValue(value, type);
     });
   }
 
   private async removeProperty({ path, key }: RemovePropertyParams): Promise<void> {
     const file = this.getFile(path, 'remove_property');
+
     if (!file) return;
 
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
@@ -338,6 +344,7 @@ export class TriggerService {
 
   private async renameNote({ path, newName }: RenameNoteParams): Promise<string | null> {
     const file = this.getFile(path, 'rename_note');
+
     if (!file) return null;
     const folder = file.parent?.path || '';
     const extension = file.extension;
@@ -358,6 +365,7 @@ export class TriggerService {
 
   private async setContent({ path, content }: SetContentParams): Promise<void> {
     const file = this.getFile(path, 'set_content');
+
     if (!file) return;
 
     await this.transformFile(file, (currentContent) => {
@@ -372,6 +380,7 @@ export class TriggerService {
 
   private async replaceContent({ path, search, replacement }: ReplaceContentParams): Promise<void> {
     const file = this.getFile(path, 'replace_content');
+
     if (!file) return;
 
     await this.transformFile(file, (noteContent) => {
@@ -397,13 +406,16 @@ export class TriggerService {
 
   private async rewriteLine(path: string, lineNumber: number, action: string, rewrite: (line: string) => string | null): Promise<void> {
     const file = this.getFile(path, action);
+
     if (!file) return;
 
     await this.transformFile(file, (content) => {
       const located = this.locateLine(content, lineNumber, action);
+
       if (!located) return null;
 
       const next = rewrite(located.line);
+
       if (next === null || next === located.line) return null;
 
       return content.slice(0, located.range.start) + next + content.slice(located.range.end);
@@ -412,10 +424,12 @@ export class TriggerService {
 
   private async deleteEntityLine(path: string, lineNumber: number, action: string, isEntity: (line: string) => boolean, entityName: string): Promise<void> {
     const file = this.getFile(path, action);
+
     if (!file) return;
 
     await this.transformFile(file, (content) => {
       const located = this.locateLine(content, lineNumber, action);
+
       if (!located) return null;
 
       if (!isEntity(located.line)) {
@@ -432,6 +446,7 @@ export class TriggerService {
 
   private async insertLineAfter(path: string, action: string, afterLine: number, text: string): Promise<void> {
     const file = this.getFile(path, action);
+
     if (!file) return;
 
     await this.transformFile(file, (content) => {
@@ -509,6 +524,7 @@ export class TriggerService {
 
   private async addHeading({ path, level, text, afterLine }: AddHeadingParams): Promise<void> {
     const line = this.headingPlanner.emitHeadingLine({ path, level: clampHeadingLevel(level), heading_text: text });
+
     await this.insertLineAfter(path, 'add_heading', afterLine, line);
   }
 
@@ -542,6 +558,7 @@ export class TriggerService {
 
   private async transformMarkdownTable(path: string, tableIndex: number, action: string, buildRows: (header: string[], rows: string[][]) => string[][] | null): Promise<void> {
     const file = this.getFile(path, action);
+
     if (!file) return;
 
     await this.transformFile(file, (content) => {
@@ -562,6 +579,7 @@ export class TriggerService {
       }
 
       const nextRows = buildRows(parsed.header, parsed.rows);
+
       if (nextRows === null) return null;
 
       const records = nextRows.map(cells => Object.fromEntries(parsed.header.map((column, index) => [column, cells[index] ?? ''])));
@@ -592,6 +610,7 @@ export class TriggerService {
       }
 
       const next = rows.map(row => [...row]);
+
       next[rowIndex][columnIndex] = value;
 
       return next;

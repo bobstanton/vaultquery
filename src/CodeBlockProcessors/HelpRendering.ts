@@ -26,6 +26,7 @@ export async function renderHelpSchema(app: App, plugin: VaultQueryPluginContext
 
   try {
     const schema = await api.getSchemaInfo();
+
     await MarkdownRenderer.render(app, schema, container, '', component);
   }
   catch (error: unknown) {

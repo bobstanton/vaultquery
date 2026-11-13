@@ -60,6 +60,7 @@ export abstract class BaseRenderer {
 
     const errorDiv = container.createDiv({ cls: classes.join(' ') });
     const titleText = options.icon ? `${options.icon} ${options.title}` : options.title;
+
     errorDiv.createEl('h3', { text: titleText });
 
     if (options.message) {
@@ -72,6 +73,7 @@ export abstract class BaseRenderer {
   static renderSqlCodeBlock(app: App, container: HTMLElement, code: string, component?: Component): void {
     const codeBlockMarkdown = '```sql\n' + code.trim() + '\n```';
     const comp = component || new Component();
+
     if (!component) comp.load();
     void MarkdownRenderer.render(app, codeBlockMarkdown, container, '', comp);
   }
@@ -93,6 +95,7 @@ export abstract class BaseRenderer {
 
   private static createFloatingButton(container: HTMLElement, config: FloatingButtonConfig): HTMLElement {
     const button = container.createDiv('vaultquery-floating-button');
+
     button.setAttribute('aria-label', config.ariaLabel);
     setIcon(button, config.icon);
 
@@ -100,6 +103,7 @@ export abstract class BaseRenderer {
 
     const beginRefreshProgress = (): (() => void) => {
       const host = container.parentElement;
+
       if (!host) return () => undefined;
       host.addClass('vaultquery-refresh-progress-host');
       const bar = host.createDiv('vaultquery-refresh-progress');
@@ -228,6 +232,7 @@ export abstract class BaseRenderer {
 
     try {
       const sections = splitQuerySections(querySource);
+
       sqlQuery = sections.sqlQuery;
       templateConfigText = sections.templateConfigText;
       configSectionText = sections.configSection;
@@ -242,20 +247,25 @@ export abstract class BaseRenderer {
     });
 
     const queryEl = errorContainer.createDiv({ cls: 'vaultquery-error-query' });
+
     queryEl.createEl('h4', { text: 'Query:' });
     this.renderSqlCodeBlock(app, queryEl, sqlQuery, component);
 
     if (templateConfigText) {
       const templateEl = errorContainer.createDiv({ cls: 'vaultquery-error-template' });
+
       templateEl.createEl('h4', { text: 'JavaScript rendering code:' });
       const pre = templateEl.createEl('pre', { cls: 'vaultquery-error-help' });
+
       pre.createEl('code', { text: templateConfigText.trim() });
     }
 
     if (configSectionText) {
       const configEl = errorContainer.createDiv({ cls: 'vaultquery-error-template' });
+
       configEl.createEl('h4', { text: 'Output configuration:' });
       const pre = configEl.createEl('pre', { cls: 'vaultquery-error-help' });
+
       pre.createEl('code', { text: configSectionText.trim() });
     }
   }

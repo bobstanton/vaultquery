@@ -101,6 +101,7 @@ function* jsonChunks(results: Record<string, unknown>[], rowsPerChunk: number): 
 
   for (let index = 0; index < results.length; index++) {
     const body = JSON.stringify(results[index], null, 2).split('\n').map(part => `  ${part}`).join('\n');
+
     pending.push(index === results.length - 1 ? body : `${body},`);
 
     if (pending.length >= rowsPerChunk) {

@@ -26,6 +26,7 @@ export interface ResolvedExternalRoot extends ExternalRoot {
 export function normalizeRootPath(path: string): string {
   const trimmed = path.trim().replace(/\\/g, '/');
   const forward = trimmed.replace(/\/+$/, '');
+
   if (/^[A-Za-z]:$/.test(forward) && trimmed.length > forward.length) return `${forward}/`;
 
   return forward.length || !trimmed.length ? forward : '/';
@@ -70,8 +71,10 @@ export function normalizeExternalRoots(value: unknown): ExternalRoot[] {
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as Partial<ExternalRoot>;
+
     if (typeof record.path !== 'string') continue;
     const path = normalizeRootPath(record.path);
+
     if (path && seen.has(comparablePath(path))) continue;
     if (path) seen.add(comparablePath(path));
 
@@ -94,6 +97,7 @@ export function comparablePath(path: string): string {
 
 export function isWithin(root: string, candidate: string): boolean {
   const base = comparablePath(root), target = comparablePath(candidate);
+
   if (!base || !target) return false;
 
   return target === base || target.startsWith(base.endsWith('/') ? base : `${base}/`);
@@ -114,6 +118,7 @@ export function rootStateFor(root: ExternalRoot, vaultPath: string | null, reada
 export function rootForExternalFile(roots: readonly ResolvedExternalRoot[], path: string, includeUnavailable = false): ResolvedExternalRoot | undefined {
   if (!isAbsoluteRootPath(path)) return undefined;
   const extension = pathExtension(path).toLowerCase();
+
   if (!extension) return undefined;
 
   let selected: ResolvedExternalRoot | undefined;

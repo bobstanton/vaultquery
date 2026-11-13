@@ -41,6 +41,7 @@ export class QueryRenderer {
 
       const readMermaid = chartContext.config.renderer === 'pele' && context.results.length > 0
         ? () => PeleChartRenderer.getSource(container) : undefined;
+
       this.addOutputButtons(context, readMermaid);
 
       return;
@@ -109,5 +110,4 @@ export class QueryRenderer {
     SlickGridRenderer.cleanupContainer(context.container);
     registerQueryRefresh(context, false);
   }
-
 }

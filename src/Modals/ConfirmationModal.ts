@@ -12,6 +12,7 @@ export class ConfirmationModal extends Modal {
 
   public onOpen(): void {
     const { contentEl } = this;
+
     contentEl.empty();
     contentEl.addClass('vaultquery-confirmation-modal');
 
@@ -50,6 +51,7 @@ export class ConfirmationModal extends Modal {
 
   public onClose(): void {
     const { contentEl } = this;
+
     contentEl.empty();
 
     this.resolve(false);

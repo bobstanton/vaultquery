@@ -7,6 +7,7 @@ export function readRows(db: Database, sql: string, params: SqlValue[] = []): Sq
 
 export function withSavepoint<T>(db: Database, name: string, work: () => T, rollback = false): T {
   const identifier = quoteIdentifier(name);
+
   db.run(`SAVEPOINT ${identifier}`);
   let result: T;
 

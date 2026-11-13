@@ -43,9 +43,11 @@ export async function readDataFileBytes(file: DataFileSource, limits: TabularPar
   };
 
   const before = await read(() => file.stat());
+
   if (!before) throw new DataFileError(file.path, 'source-changed', 'The source no longer exists.');
   checkDataFileSize(file.path, before.size, limits);
   const bytes = await read(() => file.readBinary());
+
   checkDataFileSize(file.path, bytes.byteLength, limits);
   const after = await read(() => file.stat());
 

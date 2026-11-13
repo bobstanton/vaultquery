@@ -136,6 +136,7 @@ export function replaceEntityCore<TInput, TRow extends Record<string, SqlParam>>
 
   for (const { id, old, new: row } of changes.updated) {
     const plan = entityUpdatePlan(entity, old, row);
+
     adapter.run(plan.sql, [...plan.params, id]);
   }
 
@@ -254,6 +255,7 @@ function replaceTablesCore(adapter: IndexingDbAdapter, path: string, tables: Ind
 
   if (deleteIndices.length > 0) {
     const placeholders = deleteIndices.map(() => '?').join(',');
+
     adapter.run(`${TABLES_SQL.DELETE_BY_INDEX_IN}(${placeholders})`, [path, ...deleteIndices]);
   }
 
@@ -412,6 +414,7 @@ function replaceUserViewsCore(adapter: IndexingDbAdapter, path: string, userView
     reinsert: (views) => {
       for (const view of views) {
         const sqlHash = hashString(view.sql);
+
         adapter.runPrepared(INDEXING_SQL.INSERT_USER_VIEW, userViewToParams(path, view, sqlHash));
       }
 
@@ -436,6 +439,7 @@ export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: strin
     reinsert: (functions) => {
       for (const func of functions) {
         const sourceHash = hashString(func.source);
+
         adapter.runPrepared(INDEXING_SQL.INSERT_USER_FUNCTION, userFunctionToParams(path, func, sourceHash));
       }
 
@@ -463,6 +467,7 @@ export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string
     reinsert: (triggers) => {
       for (const trigger of triggers) {
         const sqlHash = hashString(trigger.trigger_sql);
+
         adapter.runPrepared(INDEXING_SQL.INSERT_USER_TRIGGER, userTriggerToParams(path, trigger, sqlHash));
 
         if (activateTrigger) {

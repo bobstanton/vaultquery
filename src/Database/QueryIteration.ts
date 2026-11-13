@@ -97,6 +97,7 @@ export class QueryBatchCursors {
   open(sql: string, params: SqlParameter[]): number {
     const db = this.database();
     const release = enterReadOnlyQuery(db, sql);
+
     this.releaseReadOnly ??= release;
 
     try {
@@ -105,21 +106,25 @@ export class QueryBatchCursors {
       try {
         statement.bind(params);
         const id = this.nextId++;
+
         this.cursors.set(id, { statement, columns: statement.getColumnNames(), version: this.version(db), lastActivity: Date.now() });
 
         return id;
       } catch (error) {
         statement.free();
+
         throw error;
       }
     } catch (error) {
       this.releaseIfIdle();
+
       throw error;
     }
   }
 
   next(id: number): QueryBatch {
     const cursor = this.cursors.get(id);
+
     if (!cursor) throw new QueryIterationInvalidatedError();
     cursor.reading = true;
     cursor.lastActivity = Date.now();
@@ -127,6 +132,7 @@ export class QueryBatchCursors {
 
     try {
       const db = this.database();
+
       if (!this.releaseReadOnly) this.releaseReadOnly = enterReadOnlyScope(db);
       if (cursor.version !== this.version(db)) throw new QueryIterationInvalidatedError();
       const rows: Record<string, unknown>[] = [];
@@ -159,6 +165,7 @@ export class QueryBatchCursors {
     } catch (error) {
       this.close(id);
       if (/abort due to ROLLBACK/i.test(getErrorMessage(error))) throw new QueryIterationInvalidatedError();
+
       throw error;
     } finally {
       cursor.reading = false;
@@ -170,6 +177,7 @@ export class QueryBatchCursors {
 
   close(id: number): void {
     const cursor = this.cursors.get(id);
+
     if (!cursor) return;
     this.cursors.delete(id);
     cursor.closed = true;
@@ -192,9 +200,12 @@ export class QueryBatchCursors {
 
     while (Date.now() < deadline) {
       const active = [...this.cursors.values()];
+
       if (!active.length) return;
       const idleFor = Date.now() - Math.max(...active.map(cursor => cursor.lastActivity));
+
       if (idleFor >= idleMs) return;
+
       await new Promise<void>(resolve => timers.setTimeout(resolve, SETTLE_POLL_MS));
     }
   }
@@ -202,6 +213,7 @@ export class QueryBatchCursors {
   private releaseIfIdle(): void {
     if (this.cursors.size || this.activeReads) return;
     const release = this.releaseReadOnly;
+
     this.releaseReadOnly = undefined;
     release?.();
   }
@@ -259,6 +271,7 @@ export async function* iterateQueryCursor(
     while (true) {
       throwIfQueryAborted(signal);
       const batch = await awaitQueryOperation(source.next(id!), signal);
+
       throwIfQueryAborted(signal);
       if (batch.done) await close();
       if (batch.rows.length) yield batch.rows;
@@ -266,6 +279,7 @@ export async function* iterateQueryCursor(
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
+
     await close();
   }
 }

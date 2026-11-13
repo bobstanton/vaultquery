@@ -29,6 +29,7 @@ export function execSchemaBundle(db: Database, sql: string): void {
     db.run('COMMIT');
   } catch (e) {
     db.run('ROLLBACK');
+
     throw e;
   }
 }
@@ -82,6 +83,7 @@ export class MatRefreshSqlCache {
     if (this.cache === undefined) {
       const pragma = db.exec(`PRAGMA table_info(${PROPERTIES_MAT_TABLE})`);
       const columns = (pragma[0]?.values ?? []).map(row => String(row[1]));
+
       this.cache = columns.length === 0 ? null : generatePropertiesMatRefreshSql(getAllPropertyKeys(), columns);
     }
 

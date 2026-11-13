@@ -189,6 +189,7 @@ export async function registerVaultQueryTableProviders(app: VaultQueryAppLike, o
   }
 
   const manager = new VaultQueryTableProviderRegistrationManager(app, options);
+
   await manager.start();
 
   return manager;
@@ -261,6 +262,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
     this.clearRetryTimer();
 
     const api = getVaultQueryAPI(this.app) ?? this.currentApi;
+
     this.unsubscribeDatabaseLost();
 
     if (api) {
@@ -272,6 +274,7 @@ class VaultQueryTableProviderRegistrationManager implements ManagedVaultQueryTab
 
   private async attemptRegistration(): Promise<VaultQueryProviderRegistrationState> {
     const waitOptions = { ...DEFAULT_PROVIDER_WAIT_OPTIONS, ...this.options.wait };
+
     this.logger.info(`[VaultQuery] ${this.options.pluginId}: waiting for VaultQuery table provider API`);
     const api = await waitForVaultQueryAPI(this.app, waitOptions);
 

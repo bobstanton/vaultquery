@@ -260,6 +260,7 @@ export default class VaultQueryPlugin extends Plugin {
       this.registerEditorExtension(createInlineQueryExtension(this));
       registerVaultQueryCliHandlers(this);
       const completion = createVaultQueryCompletionExtension(this);
+
       this.invalidateCompletionSchemaCache = completion.invalidateSchemaCache;
       this.registerEditorExtension(completion.extension);
 
@@ -269,6 +270,7 @@ export default class VaultQueryPlugin extends Plugin {
         callback: async () => {
           try {
             const entryCount = await rootLogger.copyToClipboard();
+
             new Notice(`VaultQuery: Debug log copied (${entryCount} entries)`, 3000);
           }
           catch (error) {
@@ -312,6 +314,7 @@ export default class VaultQueryPlugin extends Plugin {
     catch (error) {
       logger.lifecycle.error('Failed to load VaultQuery plugin', error);
       new Notice('VaultQuery failed to load — see console', 8000);
+
       throw error;
     }
   }
@@ -510,6 +513,7 @@ export default class VaultQueryPlugin extends Plugin {
     this.setupSettingsStatusUpdates();
 
     const pendingBlocks = this.pendingProviderDefinitionBlocks;
+
     this.pendingProviderDefinitionBlocks = [];
 
     for (const block of pendingBlocks) {

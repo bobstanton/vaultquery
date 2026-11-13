@@ -51,6 +51,7 @@ export class ImageReadSession {
 
   private async extend(length: number): Promise<ArrayBuffer> {
     const next = new Uint8Array(length);
+
     next.set(new Uint8Array(this.buffer));
     let offset = this.buffer.byteLength;
 
@@ -58,6 +59,7 @@ export class ImageReadSession {
       if (this.cancelled()) throw new Error('Image indexing was canceled.');
       this.readCalls++;
       const read = await this.reader!.read(next, offset, length - offset, offset);
+
       if (!Number.isInteger(read) || read < 0 || read > length - offset) throw new Error('The image reader returned an invalid byte count.');
       this.bytesRead += read;
       offset += read;
@@ -71,7 +73,9 @@ export class ImageReadSession {
 
   public async close(): Promise<void> {
     const reader = this.reader;
+
     this.reader = undefined;
+
     await reader?.cancel();
   }
 
@@ -84,7 +88,13 @@ export class ImageReadSession {
 function responseReader(url: string, path: string, size: number): ForwardReader {
   let reader: ForwardReader | undefined;
   let start = 0, end = 0;
-  const cancel = async () => { const current = reader; reader = undefined; await current?.cancel(); };
+  const cancel = async () => {
+    const current = reader;
+
+    reader = undefined;
+
+    await current?.cancel();
+  };
 
   return {
     cancel,
@@ -96,7 +106,12 @@ function responseReader(url: string, path: string, size: number): ForwardReader 
         const response = await window.fetch(url, position === 0 && length >= size ? undefined
           : { headers: { range: `bytes=${position}-${position + length - 1}` } });
 
-        if (!response.ok) { await response.body?.cancel(); throw new Error(`This image could not be read (${response.status}): ${path}`); }
+        if (!response.ok) {
+          await response.body?.cancel();
+
+          throw new Error(`This image could not be read (${response.status}): ${path}`);
+        }
+
         start = response.status === 206 ? position : 0;
         end = response.status === 206 ? position + length : size;
         const contentRange = response.headers?.get('content-range');
@@ -107,6 +122,7 @@ function responseReader(url: string, path: string, size: number): ForwardReader 
           if (!match || Number(match[1]) !== position || Number(match[2]) < position || Number(match[2]) >= size
             || (match[3] !== '*' && Number(match[3]) !== size)) {
             await response.body?.cancel();
+
             throw new Error('The image server returned an unexpected range.');
           }
 
@@ -123,6 +139,7 @@ function responseReader(url: string, path: string, size: number): ForwardReader 
           reader = {
             read: async (target, targetOffset, wanted, from) => {
               const part = bytes.subarray(from, from + wanted);
+
               target.set(part, targetOffset);
 
               return part.byteLength;

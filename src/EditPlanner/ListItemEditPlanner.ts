@@ -42,6 +42,7 @@ export class ListItemEditPlanner {
         );
 
         const newItemText = items.map(item => this.emitListItemLine(item)).join('\n');
+
         pushInsertionEdit(edits, ctx, insertionPoint, newItemText, `insert new list items into list ${listIndex}`);
       }
     }

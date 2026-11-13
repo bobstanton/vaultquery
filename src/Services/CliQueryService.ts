@@ -93,6 +93,7 @@ async function runCliQuery(plugin: VaultQueryPluginContext, params: CliData): Pr
     }
 
     const preview = await api.previewQuery(sql, [], path);
+
     await plugin.indexingStateManager.waitForIndexingComplete();
     const affectedPaths = await api.applyPreview(preview);
 

@@ -4,6 +4,7 @@ import { logger as rootLogger } from '../utils/logger';
 
 const logger = rootLogger.scope('Images');
 const TIMEOUT_MS = 30_000;
+
 type Reply = { buffer: ArrayBuffer; result: ImagePrefixResult };
 
 async function createWorker(): Promise<Worker> {
@@ -66,6 +67,7 @@ export class ImageMetadataWorker {
 
     await new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => reject(new Error('Image parser startup timed out.')), TIMEOUT_MS);
+
       this.cancelStartup = error => { window.clearTimeout(timer); reject(error); };
       worker.onerror = event => this.fail(new Error(event.message || 'Image parser worker failed.'));
       worker.onmessageerror = () => this.fail(new Error('Image parser returned an unreadable message.'));
@@ -81,6 +83,7 @@ export class ImageMetadataWorker {
         }
 
         const pending = this.pending.get(reply.id);
+
         if (!pending) return;
         this.pending.delete(reply.id);
         if (reply.error) pending.reject(new Error(reply.error));

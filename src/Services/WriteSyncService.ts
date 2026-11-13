@@ -67,6 +67,7 @@ export class WriteSyncService {
 
       if (!sources.has(path)) {
         const source = await readTextFileSource(this.app.vault, path, frontmatterOnly);
+
         sources.set(path, source);
       }
 
@@ -83,6 +84,7 @@ export class WriteSyncService {
 
     for (const intent of result.intents) {
       const path = normalizePath('location' in intent ? intent.location.path : intent.path);
+
       await capture(path, !bodyPaths.has(path));
 
       if (intent.type === 'createNote' ? sources.get(path)!.file !== null : sources.get(path)!.file === null
@@ -114,6 +116,7 @@ export class WriteSyncService {
     } catch (error: unknown) {
       if (error instanceof FilePreviewStaleError || error instanceof FileWriteApplyError) throw error;
       const message = getErrorMessage(error);
+
       logger.error('WriteSyncService error', message);
 
       const contextualError = error instanceof WriteOperationError
@@ -126,8 +129,10 @@ export class WriteSyncService {
         );
 
       const noticeMessage = INFO_MESSAGES.SYNC_FAILED(contextualError.message);
+
       logger.error('Write sync notice', noticeMessage);
       new Notice(noticeMessage, 8000);
+
       throw contextualError;
     }
   }

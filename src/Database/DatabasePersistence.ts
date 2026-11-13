@@ -34,6 +34,7 @@ export async function persistDatabase(options: PersistenceOptions): Promise<void
     : data;
 
   const writeStartedAt = performance.now();
+
   await fileAdapter.writeBinary(options.databasePath, buffer);
 
   options.debug('Database persistence phases', {

@@ -20,6 +20,7 @@ export function isProviderTableArriving(status: TableProviderStatus | undefined,
 export function renderProviderWaiting(container: HTMLElement, status: TableProviderStatus, startedAt: number): ProviderWaitingHandle {
   container.empty();
   const waiting = container.createDiv({ cls: 'vaultquery-loading vaultquery-provider-waiting' });
+
   waiting.createDiv({ cls: 'vaultquery-loading-spinner' });
   const action = WAITING_LABELS[status.snapshotState ?? 'pending'] ?? 'Loading';
 
@@ -31,6 +32,7 @@ export function renderProviderWaiting(container: HTMLElement, status: TableProvi
 
   const tick = () => {
     const seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+
     elapsed.setText(seconds < 1 ? '' : `${seconds}s`);
   };
 
@@ -42,20 +44,24 @@ export function renderProviderWaiting(container: HTMLElement, status: TableProvi
 
 export function renderProviderFreshness(container: HTMLElement, statuses: readonly TableProviderStatus[]): void {
   const dated = statuses.filter(status => status.snapshotState === 'stale' || status.snapshotState === 'refreshing');
+
   if (!dated.length) return;
   const refreshing = dated.some(status => status.snapshotState === 'refreshing');
   const times = dated.flatMap(status => status.dataAsOf ?? []);
   const oldest = times.length ? Math.min(...times) : undefined;
 
   const parts = [oldest === undefined ? 'Showing stored data' : `Data from ${formatDataAge(oldest)}`];
+
   if (refreshing) parts.push('refreshing...');
   const notice = container.createDiv({ cls: 'vaultquery-provider-freshness' });
+
   notice.setText(parts.join('; '));
   notice.setAttr('title', dated.map(status => `${status.tableName}: ${status.snapshotState}`).join('\n'));
 }
 
 function formatDataAge(dataAsOf: number): string {
   const date = new Date(dataAsOf);
+
   if (Number.isNaN(date.getTime())) return 'an earlier refresh';
   const sameDay = new Date().toDateString() === date.toDateString();
 

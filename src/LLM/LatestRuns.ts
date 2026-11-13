@@ -19,6 +19,7 @@ export class LatestRuns<T> {
 
   public start(key: string, execute: () => Promise<T>): KeyedRun<T> {
     const token = (this.tokens.get(key) ?? 0) + 1;
+
     this.tokens.set(key, token);
 
     const promise = (async () => {
@@ -32,8 +33,10 @@ export class LatestRuns<T> {
     })();
 
     const run = { token, promise };
+
     this.inFlight.set(key, run);
     const release = (): void => { if (this.inFlight.get(key) === run) this.inFlight.delete(key); };
+
     promise.then(release, release);
 
     return run;
@@ -45,6 +48,7 @@ export class LatestRuns<T> {
     while (current) {
       try {
         const value = await current.promise;
+
         if (this.isLatest(key, current.token)) return value;
       }
       catch (error: unknown) {
@@ -52,6 +56,7 @@ export class LatestRuns<T> {
       }
 
       const newer = this.inFlight.get(key);
+
       current = newer !== current ? newer : undefined;
     }
 

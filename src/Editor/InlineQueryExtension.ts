@@ -44,6 +44,7 @@ function createInlineQueryElement(owner: Document, plugin: VaultQueryPluginConte
   void (async () => {
     try {
       const value = await resolveInlineQuery(plugin, sql, sourcePath);
+
       setInlineSpanValue(span, INLINE_QUERY_CLASS, value);
     }
     catch (error) {

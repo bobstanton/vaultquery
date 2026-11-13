@@ -51,6 +51,7 @@ export function processEscapeSequences(text: string): string {
 export function generateUniqueId(prefix = ''): string {
   const timestamp = Date.now();
   const array = new Uint32Array(2);
+
   crypto.getRandomValues(array);
   const random = array[0].toString(36) + array[1].toString(36);
 

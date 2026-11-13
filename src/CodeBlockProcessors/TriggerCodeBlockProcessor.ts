@@ -47,14 +47,17 @@ export class TriggerCodeBlockProcessor extends BaseUserDefinedProcessor {
 
   private renderDisabled(container: HTMLElement): void {
     const header = container.createDiv({ cls: 'vaultquery-sql-preview-section vaultquery-disabled' });
+
     header.createSpan({ text: 'Triggers are disabled. Enable them in ' });
     const settingsPath = ['Settings', 'VaultQuery', 'Changes and automation', 'Scripts and triggers', 'Enable triggers'].join(' > ');
+
     header.createEl('strong', { text: settingsPath });
     header.createSpan({ text: '.' });
   }
 
   private renderSuccess(container: HTMLElement, triggerName: string): void {
     const header = container.createDiv({ cls: 'vaultquery-sql-preview-section' });
+
     header.createEl('code', { text: `Trigger "${triggerName}"` });
     header.appendText(' registered');
   }

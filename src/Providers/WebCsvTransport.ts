@@ -44,6 +44,7 @@ function normalizedHeaders(headers: Record<string, string | string[] | undefined
 
 function checkLength(headers: Record<string, string>, maxBytes: number): void {
   const length = headers['content-length'];
+
   if (length && /^\d+$/.test(length) && Number(length) > maxBytes) throw new Error(`Remote source exceeds the ${maxBytes}-byte download limit.`);
 }
 
@@ -86,12 +87,15 @@ export class NativeWebCsvTransport implements WebCsvTransport {
 
     const operation = (async (): Promise<WebCsvResponse> => {
       const headers = { Accept: ACCEPT[options.format ?? 'csv'], 'Accept-Encoding': 'identity', ...options.headers };
+
       if (abandoned) throw new Error('Remote source download canceled.');
       const head = await this.request({ url: options.url, method: 'HEAD', headers, throw: false });
+
       if (abandoned) throw new Error('Remote source download canceled.');
       if (head.status === 304) return { status: 304, headers: normalizedHeaders(head.headers), bytes: new Uint8Array() };
       if (head.status === 200) checkLength(normalizedHeaders(head.headers), options.maxBytes);
       const result = await this.request({ url: options.url, method: 'GET', headers, throw: false });
+
       if (abandoned) throw new Error('Remote source download canceled.');
       if (result.status !== 200 && result.status !== 304) throw new Error(`Remote source request returned HTTP ${result.status}.`);
       if (result.arrayBuffer.byteLength > options.maxBytes) throw new Error(`Remote source exceeds the ${options.maxBytes}-byte download limit after download.`);
@@ -100,6 +104,7 @@ export class NativeWebCsvTransport implements WebCsvTransport {
     })();
 
     const settled = operation.then(() => {}, () => {}).finally(() => { if (this.slot.active === settled) this.slot.active = undefined; });
+
     this.slot.active = settled;
 
     return Promise.race([operation, deadline]).finally(() => {

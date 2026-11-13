@@ -8,6 +8,7 @@ export function queryStatementValues(stmt: Statement, params: StatementParam[] =
   try {
     stmt.bind(params);
     const values: QueryExecResult['values'] = [];
+
     while (stmt.step()) values.push(stmt.get());
 
     return values.length ? [{ columns: stmt.getColumnNames(), values }] : [];
@@ -22,6 +23,7 @@ export function collectStatementRows(stmt: Statement): StatementRow[] {
 
   while (stmt.step()) {
     const values = stmt.get();
+
     results.push(rowFromStatementValues(columnNames, values));
   }
 
@@ -43,12 +45,14 @@ function withPreparedStatement<T>(stmt: Statement, params: StatementParam[], wor
     }
 
     const results = work();
+
     stmt.reset();
 
     return results;
   }
   catch (error) {
     resetStatement(stmt, onResetError);
+
     throw error;
   }
 }
@@ -63,6 +67,7 @@ function getCachedMultiRowInsertSql(cache: Map<string, string>, baseSQL: string,
 
   const placeholder = `(${Array(columnsCount).fill('?').join(', ')})`;
   const sql = baseSQL + Array(rowCount).fill(placeholder).join(', ');
+
   cache.set(cacheKey, sql);
 
   return sql;
@@ -75,6 +80,7 @@ export function runMultiRowInsertBatches(cache: Map<string, string>, baseSQL: st
     const batch = rows.slice(i, i + maxRowsPerBatch);
     const sql = getCachedMultiRowInsertSql(cache, baseSQL, columnsCount, batch.length);
     const params = batch.flat();
+
     run(sql, params);
   }
 }
