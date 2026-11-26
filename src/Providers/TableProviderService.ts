@@ -1,3 +1,4 @@
+import { hasPlaceholders } from 'placeholder-resolver/core';
 import type { SchemaTable } from '../Database/SchemaDocumentation';
 import { sqliteIdentifierKey } from '../utils/SqlIdentifierUtils';
 import { MarkdownPostProcessorContext } from 'obsidian';
@@ -13,7 +14,9 @@ import type { VaultDatabase } from '../Database/DatabaseService';
 import type { WorkerDatabase } from '../Database/WorkerDatabaseService';
 import type { ProviderSnapshotCoordinator } from './ProviderSnapshotCoordinator';
 import { snapshotSchemaTables } from '../Tabular/TabularSchema';
-import type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderTableDefinition, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './TableProviderTypes';
+import { noteTextResolver } from '../Services/NoteText';
+import type { ContextProvider } from 'placeholder-resolver/core';
+import type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderLoadMode, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderTableDefinition, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './TableProviderTypes';
 
 const logger = rootLogger.scope('ProviderTables');
 const RECENT_REFRESH_SKIP_MS = 5000;
@@ -47,6 +50,26 @@ interface RenderedProviderBlock {
   definitionId?: string;
 }
 
+interface ParsedProviderDefinition {
+  definition: ProviderRefreshDefinition;
+  context: ProviderDefinitionBlockContext;
+}
+
+function assertLoadMode(value: unknown): asserts value is ProviderLoadMode | undefined {
+  if (value !== undefined && value !== 'eager' && value !== 'lazy') throw new Error('Provider loadMode must be eager or lazy.');
+}
+
+function providerStatusLabel(status: TableProviderStatus | undefined, lazy: boolean, loading: boolean): string {
+  const state = status?.snapshotState;
+  const label = state ? state.charAt(0).toUpperCase() + state.slice(1) : 'OK';
+
+  if (status?.lastError) return `${state ? label : 'Error'}: ${status.lastError}`;
+  if (!status && loading) return 'Loading';
+  if (lazy && (!status || state === 'pending')) return 'Deferred';
+
+  return label;
+}
+
 export class TableProviderService {
   private providers = new Map<string, VaultQueryTableProvider>();
   private builtInProviders = new Set<string>();
@@ -57,21 +80,37 @@ export class TableProviderService {
   private duplicateDefinitionKeys = new Set<string>();
   private tableStatus = new Map<string, RuntimeTableStatus>();
   private recentRefreshes = new Map<string, { refreshedAt: number; blockHash: string }>();
+  private pendingLazyLoads = new Map<string, Promise<string[]>>();
   private refreshBackoff = new Map<string, { providerId: string; definitionId: string; attempts: number; nextAttemptAt: number }>();
   private renderedBlocks = new Map<HTMLElement, RenderedProviderBlock>();
   private registerBlockLanguage?: (language: string) => void;
   private refreshingStaleDefinitions = false;
   private refreshDeferred = false;
   private onAllQueriesRefresh?: () => Promise<void>;
-  private onRefreshWaveComplete?: (tables: string[]) => Promise<void>;
+  private onRefreshWaveComplete?: (tables: string[], loadMode: ProviderLoadMode) => Promise<void>;
   private onProviderTablesChanged?: (event: ProviderTablesChangedEvent) => void;
 
   public constructor(
     private database: ProviderDatabase, private thirdPartyEnabled = true, public readonly snapshots?: ProviderSnapshotCoordinator,
-    private readonly sourceExists: (path: string) => boolean = () => false, private remoteDataEnabled = false
+    private readonly sourceExists: (path: string) => boolean = () => false, private remoteDataEnabled = false,
+    private readonly noteContext?: (path: string) => ContextProvider
   ) {}
 
   private get enabled(): boolean { return this.thirdPartyEnabled || this.remoteDataEnabled; }
+
+  private isLazy(provider: VaultQueryTableProvider, definition: ProviderRefreshDefinition): boolean {
+    return (definition.loadMode ?? provider.loadMode) === 'lazy';
+  }
+
+  private isEagerlyRefreshable(provider: VaultQueryTableProvider | undefined, runtime: RuntimeRefreshDefinition): provider is VaultQueryTableProvider {
+    if (!provider || !this.isProviderEnabled(provider.id) || this.isLazy(provider, runtime.definition)) return false;
+
+    return !runtime.parseError && !(runtime.error && !provider.definitionTables);
+  }
+
+  private definitionTableNames(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition): string[] {
+    return runtime.definition.requestedTables ?? provider.tables.map(table => table.name);
+  }
 
   private isProviderEnabled(providerId: string): boolean {
     return this.builtInProviders.has(providerId) ? this.remoteDataEnabled : this.thirdPartyEnabled;
@@ -109,7 +148,7 @@ export class TableProviderService {
     this.onAllQueriesRefresh = callback;
   }
 
-  public setOnRefreshWaveComplete(callback: (tables: string[]) => Promise<void>): void {
+  public setOnRefreshWaveComplete(callback: (tables: string[], loadMode: ProviderLoadMode) => Promise<void>): void {
     this.onRefreshWaveComplete = callback;
   }
 
@@ -146,9 +185,9 @@ export class TableProviderService {
     logger.info('Provider block language registrar attached');
     this.registerBlockLanguage = registerBlockLanguage;
 
-    for (const provider of this.providers.values()) {
-      logger.info(`Registering existing provider block language after registrar attach: ${provider.definitionBlock.language}`);
-      registerBlockLanguage(provider.definitionBlock.language);
+    for (const language of this.providersByLanguage.keys()) {
+      logger.info(`Registering existing provider block language after registrar attach: ${language}`);
+      registerBlockLanguage(language);
     }
   }
 
@@ -156,9 +195,7 @@ export class TableProviderService {
     return this.enabled;
   }
 
-  public async discoverMissingDefinitionBlocks<T extends { path: string }>(
-    files: readonly T[], read: (file: T) => Promise<string>, mayContainDefinitions: (file: T) => boolean = () => true
-  ): Promise<void> {
+  public async discoverMissingDefinitionBlocks<T extends { path: string }>(files: readonly T[], read: (file: T) => Promise<string>, mayContainDefinitions: (file: T) => boolean = () => true): Promise<void> {
     if (!this.enabled) return;
     const paths = new Set(files.map(file => file.path));
 
@@ -179,7 +216,7 @@ export class TableProviderService {
     }
   }
 
-  public async registerProvider(provider: VaultQueryTableProvider, builtIn = false): Promise<TableProviderRegistration> {
+  public async registerProvider(provider: VaultQueryTableProvider, { builtIn = false, aliases = [] }: { builtIn?: boolean; aliases?: readonly string[] } = {}): Promise<TableProviderRegistration> {
     if (!(builtIn ? this.remoteDataEnabled : this.thirdPartyEnabled)) {
       logger.warn(`registerTableProvider rejected because feature is disabled: provider=${provider.id}`);
       const feature = builtIn ? 'Remote CSV and JSON' : 'Provider tables';
@@ -193,6 +230,14 @@ export class TableProviderService {
       if (this.snapshots?.owns(table.name)) throw new Error(`Table name is reserved by a definition snapshot: ${table.name}.`);
     }
 
+    const languages = [provider.definitionBlock.language, ...aliases];
+
+    for (const language of languages) {
+      const owner = this.providersByLanguage.get(language);
+
+      if (owner && owner.id !== provider.id) throw new Error(`Provider definition block language is already registered: ${language}`);
+    }
+
     const existing = this.providers.get(provider.id);
 
     if (existing) {
@@ -203,23 +248,20 @@ export class TableProviderService {
       this.unregisterProvider(existing.id);
     }
 
-    const language = provider.definitionBlock.language;
-    const languageOwner = this.providersByLanguage.get(language);
-
-    if (languageOwner && languageOwner.id !== provider.id) {
-      throw new Error(`Provider definition block language is already registered: ${language}`);
-    }
-
     await this.createProviderTables(provider);
 
     this.providers.set(provider.id, provider);
     if (builtIn) this.builtInProviders.add(provider.id);
     this.registeredTableKeys = undefined;
-    this.providersByLanguage.set(language, provider);
-    logger.info(`Provider registered: provider=${provider.id}, language=${language}, tables=${provider.tables.map(table => table.name).join(',')}`);
-    this.registerBlockLanguage?.(language);
 
-    await this.reprocessIndexedBlocksForLanguage(language);
+    for (const language of languages) {
+      this.providersByLanguage.set(language, provider);
+      this.registerBlockLanguage?.(language);
+    }
+
+    logger.info(`Provider registered: provider=${provider.id}, languages=${languages.join(',')}, tables=${provider.tables.map(table => table.name).join(',')}`);
+
+    await this.reprocessIndexedBlocksForLanguages(languages);
 
     return {
       providerId: provider.id,
@@ -236,7 +278,11 @@ export class TableProviderService {
     this.providers.delete(providerId);
     this.builtInProviders.delete(providerId);
     this.registeredTableKeys = undefined;
-    this.providersByLanguage.delete(provider.definitionBlock.language);
+
+    for (const [language, owner] of this.providersByLanguage) {
+      if (owner === provider) this.providersByLanguage.delete(language);
+    }
+
     this.updateSnapshotDefinitions();
     this.pruneRefreshBackoff();
 
@@ -424,10 +470,10 @@ export class TableProviderService {
       blockHash,
     };
 
-    let definition: ProviderRefreshDefinition;
+    let parsed: ParsedProviderDefinition;
 
     try {
-      definition = await provider.definitionBlock.parse(source, context);
+      parsed = await this.parseDefinition(provider, source, context);
     } catch (error) {
       logger.error(`Provider definition parse failed: provider=${provider.id}, language=${language}, sourcePath=${ctx.sourcePath}`, error);
 
@@ -439,8 +485,8 @@ export class TableProviderService {
     }
 
     const runtime = blockIndex !== null
-      ? this.storeRuntimeDefinition(provider, source, context, definition)
-      : this.createRuntimeDefinition(provider, source, context, definition);
+      ? this.storeRuntimeDefinition(provider, source, parsed.context, parsed.definition)
+      : this.createRuntimeDefinition(provider, source, parsed.context, parsed.definition);
 
     this.renderedBlocks.set(container, {
       language,
@@ -485,8 +531,6 @@ export class TableProviderService {
       throw new Error(`Duplicate refresh definition id: ${definitionId}`);
     }
 
-    const existingStatus = this.getStatus(providerId);
-
     if (provider.definitionTables) {
       if (!this.snapshots) throw new Error('Definition snapshots are unavailable in this database.');
 
@@ -507,6 +551,32 @@ export class TableProviderService {
       }
     }
 
+    const key = this.runtimeKey(runtime);
+
+    if (!this.isLazy(provider, runtime.definition)) return this.refreshStaticDefinition(provider, runtime, key, 'eager');
+    const pending = this.pendingLazyLoads.get(key);
+
+    if (pending) return pending;
+    const load = this.refreshStaticDefinition(provider, runtime, key, 'lazy');
+
+    this.pendingLazyLoads.set(key, load);
+
+    try {
+      return await load;
+    } finally {
+      if (this.pendingLazyLoads.get(key) === load) this.pendingLazyLoads.delete(key);
+    }
+  }
+
+  private async refreshStaticDefinition(provider: VaultQueryTableProvider, runtime: RuntimeRefreshDefinition, key: string, loadMode: ProviderLoadMode): Promise<string[]> {
+    const providerId = provider.id;
+    const definitionId = runtime.definition.id;
+    const lazy = loadMode === 'lazy';
+    const replaceable = lazy || Boolean(provider.definitionBlock.noteParameters);
+
+    const superseded = (): boolean => replaceable && !(this.providers.get(providerId) === provider && this.isProviderEnabled(providerId)
+      && this.definitions.get(key)?.definition.id === definitionId && !this.isDuplicateRuntimeDefinition(runtime));
+
     try {
       const fetchStartedAt = performance.now();
 
@@ -515,13 +585,14 @@ export class TableProviderService {
         definitionId,
         requestedTables: runtime.definition.requestedTables,
         request: runtime.definition.request,
-        existingStatus,
+        existingStatus: this.getStatus(providerId),
       });
 
       const fetchMs = performance.now() - fetchStartedAt;
 
       const materializeStartedAt = performance.now();
 
+      if (superseded()) throw new Error(`Provider definition changed while loading: ${definitionId}`);
       await this.materializeRefreshResult(provider, runtime, result);
       const materializeMs = performance.now() - materializeStartedAt;
 
@@ -542,12 +613,13 @@ export class TableProviderService {
         tables: changedTables,
       });
 
-      if (!this.refreshingStaleDefinitions) {
-        await this.finishRefreshWave(changedTables);
+      if (lazy || !this.refreshingStaleDefinitions) {
+        await this.finishRefreshWave(changedTables, loadMode);
       }
 
       return changedTables;
     } catch (error) {
+      if (superseded()) throw error;
       logger.error(`Provider refresh failed: provider=${providerId}, definition=${definitionId}`, error);
       const message = getErrorMessage(error);
 
@@ -584,7 +656,7 @@ export class TableProviderService {
       for (const runtime of this.definitions.values()) {
         const provider = this.providers.get(runtime.providerId);
 
-        if (!provider || !this.isProviderEnabled(provider.id) || runtime.parseError || (runtime.error && !provider.definitionTables)) continue;
+        if (!this.isEagerlyRefreshable(provider, runtime)) continue;
 
         const duplicateKey = this.definitionDuplicateKey(runtime.providerId, runtime.definition.id);
 
@@ -623,12 +695,12 @@ export class TableProviderService {
     }
   }
 
-  private async finishRefreshWave(tables: string[]): Promise<void> {
+  private async finishRefreshWave(tables: string[], loadMode: ProviderLoadMode = 'eager'): Promise<void> {
     tables = tables.filter(table => !this.snapshots?.owns(table));
     if (tables.length === 0) return;
 
     if (this.onRefreshWaveComplete) {
-      await this.onRefreshWaveComplete(tables);
+      await this.onRefreshWaveComplete(tables, loadMode);
 
       return;
     }
@@ -835,13 +907,13 @@ export class TableProviderService {
     await this.database.run(`DELETE FROM ${quoteValidatedIdentifier(table.name)} WHERE ${whereSql}`, params);
   }
 
-  private async reprocessIndexedBlocksForLanguage(language: string): Promise<void> {
+  private async reprocessIndexedBlocksForLanguages(languages: string[]): Promise<void> {
     const runtimes: RuntimeRefreshDefinition[] = [];
     let scanned = 0;
 
     for (const blocks of this.indexedBlocksByPath.values()) {
       for (const block of blocks) {
-        if (block.language === language) {
+        if (languages.includes(block.language)) {
           scanned++;
           const runtime = await this.processIndexedBlock(block);
 
@@ -852,7 +924,7 @@ export class TableProviderService {
       }
     }
 
-    logger.debug(`Reprocessed indexed provider definition blocks: language=${language}, scanned=${scanned}, runtimes=${runtimes.length}`);
+    logger.debug(`Reprocessed indexed provider definition blocks: languages=${languages.join(',')}, scanned=${scanned}, runtimes=${runtimes.length}`);
     this.recomputeDuplicateDefinitions();
 
     for (const path of new Set(runtimes.map(runtime => runtime.sourcePath))) {
@@ -861,7 +933,29 @@ export class TableProviderService {
 
     await this.refreshIndexedDefinitions(runtimes);
 
-    await this.rerenderProviderBlocksForLanguage(language);
+    await this.rerenderProviderBlocksWhere(block => languages.includes(block.language));
+  }
+
+  private async parseDefinition(provider: VaultQueryTableProvider, source: string, context: ProviderDefinitionBlockContext): Promise<ParsedProviderDefinition> {
+    const block = provider.definitionBlock;
+
+    if (!block.noteParameters || !hasPlaceholders(source)) return { definition: await block.parse(source, context), context };
+
+    const resolve = noteTextResolver(this.noteContext?.(context.path));
+    const inputs: string[] = [];
+
+    const definition = await block.parse(source, {
+      ...context,
+      async resolveNoteText(text, format, render) {
+        const value = await resolve(text, format, render);
+
+        if (hasPlaceholders(text) && !provider.definitionTables) inputs.push(value);
+
+        return value;
+      },
+    });
+
+    return { definition, context: inputs.length ? { ...context, blockHash: hashString(JSON.stringify([context.blockHash, inputs])) } : context };
   }
 
   private async processIndexedBlock(block: IndexedProviderDefinitionBlock): Promise<RuntimeRefreshDefinition | null> {
@@ -872,15 +966,13 @@ export class TableProviderService {
     }
 
     try {
-      const context: ProviderDefinitionBlockContext = {
+      const parsed = await this.parseDefinition(provider, block.source, {
         path: block.path,
         blockIndex: block.blockIndex,
         blockHash: block.blockHash,
-      };
+      });
 
-      const definition = await provider.definitionBlock.parse(block.source, context);
-
-      return this.storeRuntimeDefinition(provider, block.source, context, definition);
+      return this.storeRuntimeDefinition(provider, block.source, parsed.context, parsed.definition);
     } catch (error) {
       logger.error(`Indexed provider definition parse failed: provider=${provider.id}, language=${block.language}, path=${block.path}, blockIndex=${block.blockIndex}`, error);
       const key = this.runtimeDefinitionKey(provider.id, block.path, block.blockIndex, block.blockHash);
@@ -920,9 +1012,7 @@ export class TableProviderService {
     for (const runtime of runtimes) {
       const provider = this.providers.get(runtime.providerId);
 
-      if (!provider || !this.isProviderEnabled(provider.id) || runtime.parseError || (runtime.error && !provider.definitionTables)) {
-        continue;
-      }
+      if (!this.isEagerlyRefreshable(provider, runtime)) continue;
 
       const duplicateKey = this.definitionDuplicateKey(runtime.providerId, runtime.definition.id);
 
@@ -952,10 +1042,6 @@ export class TableProviderService {
 
   public async rerenderProviderBlocksForPath(path: string): Promise<void> {
     await this.rerenderProviderBlocksWhere(block => block.sourcePath === path);
-  }
-
-  private async rerenderProviderBlocksForLanguage(language: string): Promise<void> {
-    await this.rerenderProviderBlocksWhere(block => block.language === language);
   }
 
   private async rerenderProviderBlocksWhere(predicate: (block: RenderedProviderBlock) => boolean): Promise<void> {
@@ -993,7 +1079,7 @@ export class TableProviderService {
       return false;
     }
 
-    const requestedTables = runtime.definition.requestedTables ?? provider.tables.map(table => table.name);
+    const requestedTables = this.definitionTableNames(provider, runtime);
     const tableByName = new Map(provider.tables.map(table => [table.name, table]));
 
     for (const tableName of requestedTables) {
@@ -1059,6 +1145,8 @@ export class TableProviderService {
   }
 
   private createRuntimeDefinition(provider: VaultQueryTableProvider, source: string, context: ProviderDefinitionBlockContext, definition: ProviderRefreshDefinition): RuntimeRefreshDefinition {
+    assertLoadMode(definition.loadMode);
+
     if (!definition.id?.trim()) {
       throw new Error('Provider refresh definition must include an id.');
     }
@@ -1123,14 +1211,24 @@ export class TableProviderService {
     const statuses = this.getStatus(runtime.providerId)
       .filter(status => status.definitionId === runtime.definition.id);
 
-    if (statuses.length > 0) {
+    const provider = this.providers.get(runtime.providerId);
+    const lazy = provider && this.isLazy(provider, runtime.definition);
+    const rows = new Map<string, TableProviderStatus | undefined>(statuses.map(status => [status.tableName, status]));
+
+    if (lazy) {
+      for (const name of this.definitionTableNames(provider, runtime)) {
+        if (!rows.has(name)) rows.set(name, undefined);
+      }
+    }
+
+    if (rows.size > 0) {
       const tableWrapper = wrapper.createDiv({ cls: 'vaultquery-provider-status-table-wrapper' });
 
       this.containHorizontalTouchScroll(tableWrapper);
       const table = tableWrapper.createEl('table', { cls: 'vaultquery-table vaultquery-provider-status-table' });
       const thead = table.createEl('thead');
       const headerRow = thead.createEl('tr');
-      const hasSnapshots = statuses.some(status => status.snapshotState !== undefined);
+      const hasSnapshots = Boolean(provider?.definitionTables);
 
       for (const heading of ['Table', 'Rows', 'As of', ...(hasSnapshots ? ['Validated'] : []), 'Expires At', 'Status']) {
         headerRow.createEl('th', { text: heading });
@@ -1138,21 +1236,21 @@ export class TableProviderService {
 
       const tbody = table.createEl('tbody');
 
-      for (const status of statuses) {
-        const asOf = status.dataAsOf ?? status.lastRefreshAt;
+      const loading = this.pendingLazyLoads.has(this.runtimeKey(runtime));
+
+      for (const [name, status] of rows) {
+        const asOf = status?.dataAsOf ?? status?.lastRefreshAt;
         const row = tbody.createEl('tr');
 
-        row.createEl('td', { text: status.tableName });
-        row.createEl('td', { text: String(status.rowCount) });
+        row.createEl('td', { text: name });
+        row.createEl('td', { text: status ? String(status.rowCount) : '-' });
         row.createEl('td', { text: asOf ? new Date(asOf).toLocaleString() : '-' });
-        if (hasSnapshots) row.createEl('td', { text: status.lastValidatedAt ? new Date(status.lastValidatedAt).toLocaleString() : '-' });
-        row.createEl('td', { text: status.expiresAt ? new Date(status.expiresAt).toLocaleString() : '-' });
-        const statusCell = row.createEl('td');
+        if (hasSnapshots) row.createEl('td', { text: status?.lastValidatedAt ? new Date(status.lastValidatedAt).toLocaleString() : '-' });
+        row.createEl('td', { text: status?.expiresAt ? new Date(status.expiresAt).toLocaleString() : '-' });
 
-        statusCell.createSpan({
-          cls: status.lastError ? 'vaultquery-provider-status-badge is-error' : 'vaultquery-provider-status-badge is-ok',
-          text: status.snapshotState ? `${status.snapshotState.charAt(0).toUpperCase()}${status.snapshotState.slice(1)}${status.lastError ? ': ' + status.lastError : ''}`
-            : status.lastError ? "Error: " + status.lastError : 'OK',
+        row.createEl('td').createSpan({
+          cls: status?.lastError ? 'vaultquery-provider-status-badge is-error' : 'vaultquery-provider-status-badge is-ok',
+          text: providerStatusLabel(status, Boolean(lazy), loading),
         });
       }
     }
@@ -1274,10 +1372,47 @@ export class TableProviderService {
       this.isProviderEnabled(runtime.providerId) && this.providers.get(runtime.providerId)?.definitionTables && !runtime.parseError));
   }
 
-  public refreshSnapshotsAfterRead(names: readonly string[]): void {
+  public async prepareLazyTablesForRead(names: readonly string[]): Promise<boolean> {
+    if (!this.enabled || !names.some(name => this.hasRegisteredTable(name))) return false;
+    const referenced = new Set(names.map(sqliteIdentifierKey));
+    let waited = false;
+
+    for (const [key, runtime] of Array.from(this.definitions)) {
+      const provider = this.providers.get(runtime.providerId);
+
+      if (!provider || !this.isProviderEnabled(provider.id) || !this.definitions.has(key) || runtime.parseError
+        || !this.isLazy(provider, runtime.definition)) continue;
+      const matches = this.definitionTableNames(provider, runtime).filter(table => referenced.has(sqliteIdentifierKey(table)));
+
+      if (!matches.length) continue;
+      if (this.isDuplicateRuntimeDefinition(runtime)) throw new Error(`Duplicate refresh definition id: ${runtime.definition.id}`);
+      if (provider.definitionTables && matches.every(table => this.snapshots?.ready(table))) continue;
+
+      const pending = this.pendingLazyLoads.get(key);
+
+      if (pending || this.shouldRefreshRuntimeDefinition(provider, runtime, Date.now())) {
+        waited = true;
+
+        await (pending ?? this.refreshDefinition(provider.id, runtime.definition.id));
+      } else if (!provider.definitionTables) {
+        for (const table of matches) {
+          const status = this.tableStatus.get(this.statusKey(provider.id, runtime.definition.id, table));
+
+          if (status?.lastError) throw new Error(status.lastError);
+        }
+      }
+    }
+
+    return waited;
+  }
+
+  public refreshStaleSnapshots(names: readonly string[], trigger: 'read' | 'index'): void {
     if (this.refreshDeferred || !this.enabled) return;
 
     for (const runtime of this.snapshots?.staleReaders(names) ?? []) {
+      const provider = this.providers.get(runtime.providerId);
+
+      if (!provider || (trigger === 'index' && this.isLazy(provider, runtime.definition))) continue;
       void this.refreshDefinition(runtime.providerId, runtime.definition.id)
         .catch(error => logger.debug('Background provider snapshot refresh failed', error));
     }
@@ -1362,6 +1497,7 @@ export class TableProviderService {
   }
 
   private validateProvider(provider: VaultQueryTableProvider): void {
+    assertLoadMode(provider.loadMode);
     if (!provider.id.trim()) throw new Error('Provider id is required.');
     if (!provider.displayName.trim()) throw new Error('Provider displayName is required.');
     if (!provider.tables.length && !provider.definitionTables) throw new Error(`Provider ${provider.id} must declare at least one table.`);
@@ -1406,6 +1542,10 @@ export class TableProviderService {
 
   private runtimeDefinitionKey(providerId: string, path: string, blockIndex: number, blockHash: string): string {
     return `${providerId}:${path}:${blockIndex}:${blockHash}`;
+  }
+
+  private runtimeKey(runtime: RuntimeRefreshDefinition): string {
+    return this.runtimeDefinitionKey(runtime.providerId, runtime.sourcePath, runtime.blockIndex, runtime.blockHash);
   }
 
   private definitionDuplicateKey(providerId: string, definitionId: string): string {

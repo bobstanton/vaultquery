@@ -241,10 +241,7 @@ export class DataFileIndexingService {
     await this.publish({ kind: 'remove', path });
   }
 
-  private async process(
-    removals: readonly string[], candidates: readonly string[], files?: readonly { path: string }[],
-    capture?: (source: Awaited<ReturnType<typeof readDataFile>>) => void
-  ): Promise<CsvBatchResult> {
+  private async process(removals: readonly string[], candidates: readonly string[], files?: readonly { path: string }[], capture?: (source: Awaited<ReturnType<typeof readDataFile>>) => void): Promise<CsvBatchResult> {
     const result: CsvBatchResult = { filesIndexed: 0, filesRemoved: 0, failedPaths: [], failedRemovalPaths: [] };
 
     for (const path of new Set(removals)) {

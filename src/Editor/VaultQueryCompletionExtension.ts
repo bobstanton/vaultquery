@@ -9,11 +9,14 @@ import { CONFIG_CAPABLE_LANGUAGES, NATURAL_LANGUAGE_CONFIG_LANGUAGES, PROVIDER_D
 import { SQL_COMPLETION_KEYWORD_PHRASES, SQL_FUNCTION_TOKENS, SQL_PHRASE_LEAD_WORDS, VAULTQUERY_FUNCTION_SIGNATURES } from '../Constants/SqlCatalog';
 import { getConfigKeys, getConfigValues } from '../Constants/BlockConfigCatalog';
 import { logger as rootLogger } from '../utils/logger';
+import { ObsidianContextProvider } from 'placeholder-resolver/obsidian';
 import { extractSqlAliasMap, sqlIdentifierAtCursor } from '../utils/SQLParsingUtils';
 import { quoteIdentifier } from '../utils/SqlIdentifierUtils';
 import { skipWhitespace } from '../utils/StringUtils';
+import { closesFence, parseFenceLine } from '../utils/MarkdownFenceUtils';
 import type { ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem } from '../Providers/TableProviderTypes';
 import type { AutocompleteSchemaColumnInfo } from '../utils/AutocompleteSchemaUtils';
+import type { SqlCompletionItem, SqlCompletionProvider, SqlCompletionRequest, SqlCompletionResult } from './SqlCompletionTypes';
 
 const logger = rootLogger.scope('Completion');
 
@@ -68,27 +71,29 @@ const SQL_FUNCTIONS: SuggestionItem[] = Array.from(SQL_FUNCTION_TOKENS)
     cursorOffset: name.length + 1,
   }));
 
-const PLACEHOLDER_VALUES: SuggestionItem[] = [
-  ['{this.path}', 'Vault-relative path, including the extension'],
-  ['{this.folder}', 'Vault-relative folder with trailing /; empty at the vault root'],
-  ['{this.title}', 'Filename without extension'],
-  ['{this.name}', 'Filename including its suffix'],
-  ['{this.extension}', 'Filename extension without the dot'],
-  ['{this.content}', 'Full note text, including frontmatter'],
-  ['{this.created}', 'Creation time as a Unix timestamp in milliseconds'],
-  ['{this.modified}', 'Modification time as a Unix timestamp in milliseconds'],
-  ['{this.size}', 'Bytes'],
-  ['{this.vault}', 'Vault name'],
-  ['{this.today}', 'Current UTC date (YYYY-MM-DD)'],
-  ['{this.now}', 'Current UTC date and time (ISO 8601)'],
-  ['{this.year}', 'Current year in local time'],
-  ['{this.month}', 'Current month in local time (1-12)'],
-  ['{this.day}', 'Current day of month in local time (1-31)'],
-  ['{this.outgoingLinks}', 'Unique resolved target paths as a SQL list'],
-  ['{this.tags}', 'Frontmatter tags without #, as a SQL list'],
-  ['{this.bodyTags}', 'Body tags without #, as a SQL list'],
-  ['{this.headings}', 'Heading text as a SQL list'],
-].map(([label, detail]) => ({ label, apply: label, detail, type: 'variable', boost: 1 }));
+const PLACEHOLDER_DETAILS: Partial<Record<string, string>> = {
+  path: 'Vault-relative path, including the extension',
+  folder: 'Vault-relative folder with trailing /; empty at the vault root',
+  title: 'Filename without extension',
+  name: 'Filename including its suffix',
+  extension: 'Filename extension without the dot',
+  content: 'Full note text, including frontmatter',
+  created: 'Creation time as a Unix timestamp in milliseconds',
+  modified: 'Modification time as a Unix timestamp in milliseconds',
+  size: 'Bytes',
+  vault: 'Vault name',
+  today: 'Current UTC date (YYYY-MM-DD)',
+  now: 'Current UTC date and time (ISO 8601)',
+  year: 'Current year in local time',
+  month: 'Current month in local time (1-12)',
+  day: 'Current day of month in local time (1-31)',
+  outgoingLinks: 'Unique resolved target paths as a SQL list',
+  tags: 'Frontmatter tags without #, as a SQL list',
+  bodyTags: 'Body tags without #, as a SQL list',
+  headings: 'Heading text as a SQL list',
+};
+
+const PLACEHOLDER_VALUES: SuggestionItem[] = ObsidianContextProvider.builtInProperties.map(name => ({ label: `{this.${name}}`, apply: `{this.${name}}`, detail: PLACEHOLDER_DETAILS[name], type: 'variable', boost: 1 }));
 
 PLACEHOLDER_VALUES.push({
   label: '{this.<key>}',
@@ -239,7 +244,7 @@ export class VaultQueryCompletionSource {
       return getYamlCompletionContext(state, fence, pos, explicit, this);
     }
 
-    const placeholder = getPlaceholderCompletionContext(state, fence, pos);
+    const placeholder = toCompletionContext(state, fence, pos, getPlaceholderLineContext(lineBeforeCursor(state, pos)));
 
     if (placeholder) {
       return placeholder;
@@ -318,9 +323,29 @@ export class VaultQueryCompletionSource {
     return dedupeItems([...PLACEHOLDER_VALUES, ...schema.propertyPlaceholders]);
   }
 
-  private async getSqlSuggestions(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
-    const sqlSource = collectFenceSql(state, context.fence);
-    const beforeCursor = getSqlPrefixForCursor(state, context.fence, context.to);
+  public async completeSql(request: SqlCompletionRequest): Promise<SqlCompletionResult | null> {
+    const cursor = Math.max(0, Math.min(request.cursor, request.sql.length));
+    const lineStart = cursor === 0 ? 0 : request.sql.lastIndexOf('\n', cursor - 1) + 1;
+    const context = getSqlLineContext(request.sql.slice(lineStart, cursor), request.explicit ?? false);
+
+    if (!context) {
+      return null;
+    }
+
+    const suggestions = context.mode === 'placeholder'
+      ? await this.getPlaceholderSuggestions()
+      : await this.getSqlSuggestionsForText(request.sql, request.sql.slice(0, cursor), request.scope === 'trigger' ? 'vaultquery-trigger' : 'vaultquery');
+
+    const items = this.filterItems(suggestions, context.query).map(({ relation: _relation, ...item }): SqlCompletionItem => item);
+
+    return items.length > 0 ? { from: lineStart + context.start, to: cursor, items } : null;
+  }
+
+  private getSqlSuggestions(state: EditorState, context: VaultQueryCompletionContext): Promise<SuggestionItem[]> {
+    return this.getSqlSuggestionsForText(collectFenceSql(state, context.fence), getSqlPrefixForCursor(state, context.fence, context.to), context.fence.language);
+  }
+
+  private async getSqlSuggestionsForText(sqlSource: string, beforeCursor: string, language: string): Promise<SuggestionItem[]> {
     const sqlContext = getSqlSuggestionContext(beforeCursor);
     const schema = await this.getSchemaCache();
     const aliasMap = extractSqlAliasMap(sqlSource);
@@ -330,7 +355,7 @@ export class VaultQueryCompletionSource {
       ? qualifiedColumns
       : getPrimaryColumnsForContext(aliasMap, schema);
 
-    const functions = dedupeItems([...getVaultQueryFunctionItems(context.fence.language), ...schema.functions]);
+    const functions = dedupeItems([...getVaultQueryFunctionItems(language), ...schema.functions]);
 
     switch (sqlContext) {
       case 'relation':
@@ -508,10 +533,9 @@ export function getActiveFence(state: EditorState, pos: number): ActiveFence | n
   const line = state.doc.lineAt(pos);
 
   for (let lineNumber = line.number; lineNumber >= 1; lineNumber--) {
-    const text = state.doc.line(lineNumber).text.trim();
-    const match = text.match(/^```(\S+)/u);
+    const opening = parseFenceLine(state.doc.line(lineNumber).text);
 
-    if (!match) {
+    if (!opening?.language) {
       continue;
     }
 
@@ -519,10 +543,10 @@ export function getActiveFence(state: EditorState, pos: number): ActiveFence | n
       return null;
     }
 
-    const language = match[1];
+    const language = opening.language;
 
     for (let endLine = lineNumber + 1; endLine <= state.doc.lines; endLine++) {
-      if (state.doc.line(endLine).text.trim().startsWith('```')) {
+      if (closesFence(opening, state.doc.line(endLine).text)) {
         return endLine >= line.number ? { language, startLine: lineNumber, endLine } : null;
       }
     }
@@ -660,34 +684,43 @@ function getEnclosingYamlKey(state: EditorState, fence: ActiveFence, lineNumber:
   return null;
 }
 
-function getPlaceholderCompletionContext(state: EditorState, fence: ActiveFence, pos: number): VaultQueryCompletionContext | null {
-  const line = state.doc.lineAt(pos);
-  const cursorCh = pos - line.from;
-  const beforeCursor = line.text.slice(0, cursorCh);
+interface SqlLineContext {
+  mode: 'sql' | 'placeholder';
+  start: number;
+  query: string;
+}
+
+function getPlaceholderLineContext(beforeCursor: string): SqlLineContext | null {
   const braceIndex = beforeCursor.lastIndexOf('{');
 
   if (braceIndex === -1 || beforeCursor.lastIndexOf('}') > braceIndex || /\s/u.test(beforeCursor.slice(braceIndex))) {
     return null;
   }
 
-  return {
-    mode: 'placeholder',
-    fence,
-    from: line.from + braceIndex,
-    to: pos,
-    query: beforeCursor.slice(braceIndex).trim(),
-  };
+  return { mode: 'placeholder', start: braceIndex, query: beforeCursor.slice(braceIndex).trim() };
+}
+
+function toCompletionContext(state: EditorState, fence: ActiveFence, pos: number, context: SqlLineContext | null): VaultQueryCompletionContext | null {
+  return context && { mode: context.mode, fence, from: state.doc.lineAt(pos).from + context.start, to: pos, query: context.query };
+}
+
+function lineBeforeCursor(state: EditorState, pos: number): string {
+  const line = state.doc.lineAt(pos);
+
+  return line.text.slice(0, pos - line.from);
 }
 
 function getSqlCompletionContext(state: EditorState, fence: ActiveFence, pos: number, explicit: boolean): VaultQueryCompletionContext | null {
-  const placeholder = getPlaceholderCompletionContext(state, fence, pos);
+  return toCompletionContext(state, fence, pos, getSqlLineContext(lineBeforeCursor(state, pos), explicit));
+}
+
+function getSqlLineContext(beforeCursor: string, explicit: boolean): SqlLineContext | null {
+  const placeholder = getPlaceholderLineContext(beforeCursor);
 
   if (placeholder) {
     return placeholder;
   }
 
-  const line = state.doc.lineAt(pos);
-  const beforeCursor = line.text.slice(0, pos - line.from);
   const identifier = sqlIdentifierAtCursor(beforeCursor);
 
   if (isInsideQuotedString(beforeCursor) && !identifier) {
@@ -705,13 +738,7 @@ function getSqlCompletionContext(state: EditorState, fence: ActiveFence, pos: nu
     }
   }
 
-  return {
-    mode: 'sql',
-    fence,
-    from: line.from + tokenStart,
-    to: pos,
-    query,
-  };
+  return { mode: 'sql', start: tokenStart, query };
 }
 
 function getSqlPrefixForCursor(state: EditorState, fence: ActiveFence, pos: number): string {
@@ -1067,7 +1094,7 @@ function completionStarter(provider: VaultQueryCompletionSource): Extension {
   });
 }
 
-export function createVaultQueryCompletionExtension(plugin: VaultQueryPluginContext): { extension: Extension; invalidateSchemaCache: () => void } {
+export function createVaultQueryCompletionExtension(plugin: VaultQueryPluginContext): { extension: Extension; invalidateSchemaCache: () => void; completeSql: SqlCompletionProvider } {
   const provider = new VaultQueryCompletionSource(plugin);
   const source = (context: CompletionContext): Promise<CompletionResult | null> => provider.source(context);
 
@@ -1078,5 +1105,6 @@ export function createVaultQueryCompletionExtension(plugin: VaultQueryPluginCont
       Prec.lowest(completionStarter(provider)),
     ],
     invalidateSchemaCache: () => provider.invalidateSchemaCache(),
+    completeSql: (request) => provider.completeSql(request),
   };
 }

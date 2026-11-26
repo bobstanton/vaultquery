@@ -273,10 +273,7 @@ export class LlmCodeBlockProcessor extends BaseReadQueryCodeBlockProcessor {
     }
   }
 
-  private async renderGeneratedQuery(
-    container: HTMLElement, generated: GeneratedVaultQuery, request: QuestionBlock,
-    ctx: MarkdownPostProcessorContext, version: number, onRegenerate: () => Promise<void>
-  ): Promise<void> {
+  private async renderGeneratedQuery(container: HTMLElement, generated: GeneratedVaultQuery, request: QuestionBlock, ctx: MarkdownPostProcessorContext, version: number, onRegenerate: () => Promise<void>): Promise<void> {
     if (!this.generationGuard.isCurrent(container, version)) {
       return;
     }

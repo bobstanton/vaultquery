@@ -6,6 +6,6 @@ export default [
 ].map(([input, file]) => ({
   input,
   output: { file, format: 'es' },
-  external: (id) => !id.startsWith('.') && !id.startsWith('/'),
-  plugins: [dts()],
+  external: (id) => id !== 'placeholder-resolver/core' && !id.startsWith('.') && !id.startsWith('/'),
+  plugins: [dts({ tsconfig: './tsconfig.json', respectExternal: true })],
 }));

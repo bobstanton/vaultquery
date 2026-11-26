@@ -1,3 +1,12 @@
+interface TemplateSubstitution {
+    readonly value: unknown;
+    readonly text: string;
+    readonly directHelper?: string;
+}
+type TemplateRenderer = (strings: readonly string[], substitutions: readonly TemplateSubstitution[]) => string;
+
+type ResolveNoteText = (text: string, format?: (value: string) => string, render?: TemplateRenderer) => Promise<string>;
+
 interface CsvFormat {
     readonly kind: 'csv';
     readonly bom: boolean;
@@ -51,18 +60,22 @@ interface ProviderTableDefinition {
     indexes?: ProviderIndexDefinition[];
     defaultStaleAfterMs?: number;
 }
+type ProviderLoadMode = 'eager' | 'lazy';
 interface ProviderRefreshDefinition {
     id: string;
     displayName?: string;
+    loadMode?: ProviderLoadMode;
     requestedTables?: string[];
     request: Record<string, unknown>;
 }
 interface ProviderDefinitionBlockContext {
+    resolveNoteText?: ResolveNoteText;
     path: string;
     blockIndex: number;
     blockHash: string;
 }
 interface ProviderDefinitionBlock {
+    noteParameters?: boolean;
     language: string;
     parse: (source: string, context: ProviderDefinitionBlockContext) => Promise<ProviderRefreshDefinition> | ProviderRefreshDefinition;
     completions?: ProviderDefinitionCompletionConfig;
@@ -120,6 +133,7 @@ interface ProviderTablesChangedEvent {
 interface VaultQueryTableProvider {
     id: string;
     displayName: string;
+    loadMode?: ProviderLoadMode;
     tables: ProviderTableDefinition[];
     definitionTables?: {
         format: 'csv' | 'json';
@@ -159,4 +173,4 @@ interface IndexedProviderDefinitionBlock {
     blockHash: string;
 }
 
-export type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderSnapshotMetadata, ProviderTableDefinition, ProviderTableRows, ProviderTableSnapshot, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider };
+export type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderLoadMode, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderSnapshotMetadata, ProviderTableDefinition, ProviderTableRows, ProviderTableSnapshot, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider };

@@ -31,6 +31,7 @@ import { registerProviderDefinitionLanguage } from './Constants/EditorConstants'
 import { createInlineButtonExtension, processReadingViewInlineButtons } from './Editor/InlineButtonExtension';
 import { createInlineQueryExtension, processReadingViewInlineQueries } from './Editor/InlineQueryExtension';
 import { createVaultQueryCompletionExtension } from './Editor/VaultQueryCompletionExtension';
+import type { SqlCompletionProvider } from './Editor/SqlCompletionTypes';
 import { registerVaultQueryCliHandlers } from './Services/CliQueryService';
 import { IndexingReadiness } from './Services/IndexingReadiness';
 import { logger as rootLogger } from './utils/logger';
@@ -82,6 +83,7 @@ export default class VaultQueryPlugin extends Plugin {
   public indexingStateManager!: IndexingStateManager;
   private databaseRecoveryManager!: DatabaseRecoveryManager;
   private invalidateCompletionSchemaCache: (() => void) | null = null;
+  private completeSql: SqlCompletionProvider | null = null;
   private settingsReindexPending = false;
   private settingsReindexDebouncer = debounce(() => {
     void this.runPendingSettingsReindex();
@@ -262,6 +264,7 @@ export default class VaultQueryPlugin extends Plugin {
       const completion = createVaultQueryCompletionExtension(this);
 
       this.invalidateCompletionSchemaCache = completion.invalidateSchemaCache;
+      this.completeSql = completion.completeSql;
       this.registerEditorExtension(completion.extension);
 
       this.addCommand({
@@ -508,6 +511,8 @@ export default class VaultQueryPlugin extends Plugin {
     this.api.setProviderBlockLanguageRegistrar((language) => {
       this.registerProviderDefinitionBlockLanguage(language);
     });
+
+    if (this.completeSql) this.api.setSqlCompletionProvider(this.completeSql);
 
     this.setupAutocompleteSchemaInvalidation();
     this.setupSettingsStatusUpdates();

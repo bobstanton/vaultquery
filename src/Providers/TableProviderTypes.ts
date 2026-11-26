@@ -1,3 +1,4 @@
+import type { ResolveNoteText } from '../Services/NoteText';
 import type { TabularDocument } from '../Tabular/TabularTypes';
 
 export type ProviderColumnType = 'TEXT' | 'INTEGER' | 'REAL' | 'BLOB';
@@ -24,20 +25,25 @@ export interface ProviderTableDefinition {
   defaultStaleAfterMs?: number;
 }
 
+export type ProviderLoadMode = 'eager' | 'lazy';
+
 export interface ProviderRefreshDefinition {
   id: string;
   displayName?: string;
+  loadMode?: ProviderLoadMode;
   requestedTables?: string[];
   request: Record<string, unknown>;
 }
 
 export interface ProviderDefinitionBlockContext {
+  resolveNoteText?: ResolveNoteText;
   path: string;
   blockIndex: number;
   blockHash: string;
 }
 
 export interface ProviderDefinitionBlock {
+  noteParameters?: boolean;
   language: string;
   parse: (source: string, context: ProviderDefinitionBlockContext) => Promise<ProviderRefreshDefinition> | ProviderRefreshDefinition;
   completions?: ProviderDefinitionCompletionConfig;
@@ -105,6 +111,7 @@ export interface ProviderTablesChangedEvent {
 export interface VaultQueryTableProvider {
   id: string;
   displayName: string;
+  loadMode?: ProviderLoadMode;
   tables: ProviderTableDefinition[];
   definitionTables?: { format: 'csv' | 'json'; readOnly: true };
   definitionBlock: ProviderDefinitionBlock;

@@ -1,3 +1,4 @@
+import { hasPlaceholders } from 'placeholder-resolver/core';
 import { PathExclusions } from '../utils/PathExclusions';
 import { mapWithConcurrency } from '../utils/Concurrent';
 import { App, TFile, CachedMetadata, HeadingCache, LinkCache, TagCache, ListItemCache, BlockCache, ReferenceCache, type Pos, normalizePath, getFrontMatterInfo, parseYaml } from 'obsidian';
@@ -9,6 +10,7 @@ import { ContentLocationService } from './ContentLocationService';
 import { PerformanceMonitor } from './PerformanceMonitor';
 import type { FilePreparationTiming } from './PerformanceMonitor';
 import { ERROR_MESSAGES } from '../utils/ErrorMessages';
+import { resolveQueryTemplate } from './QueryTemplate';
 import { getIndexedFilesFromDatabase } from '../Database/IndexedFiles';
 import { INDEXING_SQL } from '../Database/IndexingQueries';
 import { extractTaskMetadata } from '../utils/TaskMetadataParser';
@@ -954,6 +956,10 @@ export class IndexingService {
     const frontmatterData = this.processFrontmatter(frontmatter);
     const featuresStartedAt = performance.now();
     const features = this.processFeatures(file, content, contentWithoutFrontmatter, cache, contentAvailable);
+
+    for (const trigger of features.userTriggers ?? []) {
+      if (hasPlaceholders(trigger.trigger_sql)) trigger.activation_sql = await resolveQueryTemplate(trigger.trigger_sql, this.app, file);
+    }
 
     const finishedAt = performance.now();
 

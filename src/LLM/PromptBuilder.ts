@@ -10,7 +10,7 @@ import { VAULTQUERY_FUNCTION_SIGNATURES } from '../Constants/SqlCatalog';
 
 const logger = rootLogger.scope('LlmPrompt');
 
-export const SQL_PROMPT_VERSION = 0;
+export const SQL_PROMPT_VERSION = 1;
 
 const SELECTED_EXAMPLE_COUNT = 3;
 
@@ -172,7 +172,8 @@ const SQL_RULES = [
   '- Paths are vault-relative with .md extensions. Match folder boundaries with = or LIKE, using parentheses around alternative folders. Avoid INNER JOINs on optional display properties.',
   '- tags.tag_name contains body tags with #; frontmatter tags are individual properties rows with key = \'tags\' and values without #. Unless a source is explicitly requested, consider both available sources.',
   '- Double-quote identifiers when needed, single-quote string literals. created/modified on notes are Unix milliseconds; divide by 1000 for SQLite unixepoch date functions.',
-  '- Do not use {this.*} placeholders; the question has no current-note context. Add a LIMIT only when the request implies a short list; "all" means no arbitrary limit.',
+  "- For questions about this note, use '{this.path}' for its vault-relative path or '{this.property}' for the requested frontmatter property in SQL text literals. Preserve explicit note placeholders. VaultQuery resolves them locally for each note.",
+  '- Add a LIMIT only when the request implies a short list; "all" means no arbitrary limit.',
   '- Examples demonstrate patterns, not facts about this vault. Preserve the user\'s constraints even when no rows match.'
 ].join('\n');
 

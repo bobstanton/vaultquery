@@ -454,7 +454,7 @@ export function replaceUserFunctionsCore(adapter: IndexingDbAdapter, path: strin
   }, logger);
 }
 
-type ActivateTriggerHook = (triggerName: string, triggerSql: string, path: string) => void;
+type ActivateTriggerHook = (triggerName: string, activationSql: string) => void;
 
 export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string, userTriggers: UserTriggerData[] | undefined, skipDeletes: boolean, activateTrigger: ActivateTriggerHook | null, logger: IndexingLogger): void {
   replaceUserEntitiesCore(adapter, path, userTriggers, skipDeletes, {
@@ -472,7 +472,7 @@ export function replaceUserTriggersCore(adapter: IndexingDbAdapter, path: string
 
         if (activateTrigger) {
           try {
-            activateTrigger(trigger.trigger_name, trigger.trigger_sql, path);
+            activateTrigger(trigger.trigger_name, trigger.activation_sql ?? trigger.trigger_sql);
           } catch (error) {
             logger.warn(`Failed to activate trigger "${trigger.trigger_name}" during indexing`, error);
           }

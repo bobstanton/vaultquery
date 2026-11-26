@@ -45,6 +45,10 @@ export interface TabularParseLimits {
   readonly maxColumns: number;
 }
 
+export interface TabularParseOptions {
+  readonly rowProperty?: string;
+}
+
 export type DataFileErrorCode = 'format' | 'encoding' | 'limit' | 'source-changed' | 'ownership' | 'io';
 
 const FORMAT_EXTENSIONS: Record<string, DataFileFormat> = { csv: 'csv', json: 'json' };

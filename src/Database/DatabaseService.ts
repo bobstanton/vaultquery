@@ -83,6 +83,7 @@ export class VaultDatabase {
   private matRefreshSqlCache = new MatRefreshSqlCache();
   private exportGeneration = 0;
   private readonly queryCursors = new QueryBatchCursors(() => this.db);
+  private readonly activeTriggerSql = new Map<string, string>();
 
   private constructor(_app: App, db: Database, fileAdapter: VaultFileAdapter | null, useMemoryStorage: boolean, databasePath: string, configDir: string) {
     this.db = db;
@@ -941,7 +942,7 @@ export class VaultDatabase {
    * (even if empty) do we delete/replace.
    */
   private replaceUserTriggers(path: string, userTriggers?: IndexNoteData['userTriggers'], skipDeletes: boolean = false): void {
-    replaceUserTriggersCore(this.createIndexingAdapter(), path, userTriggers, skipDeletes, (name, sql, triggerPath) => this.activateTrigger(name, sql, triggerPath), logger);
+    replaceUserTriggersCore(this.createIndexingAdapter(), path, userTriggers, skipDeletes, (name, sql) => this.activateTrigger(name, sql), logger);
   }
 
   private queryCatalogRows<T>(label: string, sql: string, mapRow: (row: unknown[]) => T): T[] {
@@ -959,12 +960,11 @@ export class VaultDatabase {
     return this.queryCatalogRows('getAllUserTriggers', INDEXING_SQL.SELECT_ALL_USER_TRIGGERS, mapUserTriggerRow);
   }
 
-  public registerUserTriggers(): void {
-    const triggers = this.getAllUserTriggers();
-
-    for (const trigger of triggers) {
+  /** Activates every stored trigger. `resolve` fills in the note placeholders of each one. */
+  public async registerUserTriggers(resolve: (triggerSql: string, path: string) => Promise<string>): Promise<void> {
+    for (const trigger of this.getAllUserTriggers()) {
       try {
-        this.activateTrigger(trigger.trigger_name, trigger.trigger_sql, trigger.path);
+        this.activateTrigger(trigger.trigger_name, await resolve(trigger.trigger_sql, trigger.path));
       }
       catch (error) {
         logger.error(`Failed to register trigger "${trigger.trigger_name}"`, error);
@@ -993,12 +993,12 @@ export class VaultDatabase {
     }
   }
 
-  public registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
+  public registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string, activationSql = triggerSql): void {
     if (sqlUpdatesColumn(triggerSql, 'notes', 'content')) {
       throw new Error('UPDATE notes SET content is not auto-synced. Use vq_replace_content() or vq_set_content() instead.');
     }
 
-    if (!this.triggerNeedsRecreation(triggerName, triggerSql)) {
+    if (!this.triggerNeedsRecreation(triggerName, triggerSql) && this.activeTriggerSql.get(triggerName) === activationSql) {
       return;
     }
 
@@ -1008,13 +1008,14 @@ export class VaultDatabase {
       this.runWithPreparedStatement(INDEXING_SQL.INSERT_USER_TRIGGER, [triggerName, sourcePath, triggerSql, newHash]);
     }
 
-    this.activateTrigger(triggerName, triggerSql, sourcePath);
+    this.activateTrigger(triggerName, activationSql);
   }
 
-  private activateTrigger(triggerName: string, triggerSql: string, sourcePath?: string): void {
+  private activateTrigger(triggerName: string, activationSql: string): void {
     this.queryCursors.invalidate();
     logger.debug(`Activating trigger ${USER_TRIGGER_PREFIX}${triggerName}`);
-    activateUserTrigger(this.db, triggerName, triggerSql, sourcePath);
+    activateUserTrigger(this.db, triggerName, activationSql);
+    this.activeTriggerSql.set(triggerName, activationSql);
   }
 
   public getAllUserViews(): UserViewRow[] {

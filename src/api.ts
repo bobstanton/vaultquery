@@ -1,4 +1,4 @@
-export { declareVaultQueryProviderBlockLanguages, getVaultQueryAPI, registerVaultQueryTableProviders, waitForVaultQueryAPI, VAULTQUERY_API_READY_EVENT } from './helpers';
+export { declareVaultQueryProviderBlockLanguages, getVaultQueryAPI, isVaultQueryEnabled, registerVaultQueryTableProviders, waitForVaultQueryAPI, VAULTQUERY_API_READY_EVENT } from './helpers';
 
 export type { ManagedVaultQueryTableProviderRegistration, RegisterVaultQueryTableProvidersOptions, VaultQueryAppLike, VaultQueryProviderRegistrationLogger, VaultQueryProviderRegistrationState, WaitForAPIOptions } from './helpers';
 
@@ -10,7 +10,7 @@ export type { DatabaseHealth, DatabaseLostEvent, DatabaseRestoredEvent, EventRef
 
 export type { AutocompleteSchemaColumnInfo, AutocompleteSchemaRelationInfo, AutocompleteSchemaShape } from './utils/AutocompleteSchemaUtils';
 
-export type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderTableSnapshot, ProviderSnapshotMetadata, ProviderRowValue, ProviderTableDefinition, ProviderTableRows, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './Providers/TableProviderTypes';
+export type { IndexedProviderDefinitionBlock, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderLoadMode, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderTableSnapshot, ProviderSnapshotMetadata, ProviderRowValue, ProviderTableDefinition, ProviderTableRows, ProviderTablesChangedEvent, TableProviderRegistration, TableProviderStatus, VaultQueryTableProvider } from './Providers/TableProviderTypes';
 
 export type { IndexingStats, NoteSource } from './types';
 export type { PreviewResult } from './Services/PreviewService';
@@ -29,3 +29,6 @@ export type { QueryIterationOptions } from './Database/QueryIteration';
 
 export type { SchemaTable, SchemaColumnDoc } from './Database/SchemaDocumentation';
 export type { SqlSyntax } from './Constants/SqlCatalog';
+export type { SqlCompletionItem, SqlCompletionRequest, SqlCompletionResult } from './Editor/SqlCompletionTypes';
+
+export type { QueryTemplateOptions } from './VaultQueryAPI';

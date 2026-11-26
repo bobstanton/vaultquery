@@ -3,9 +3,13 @@ import { RangeSetBuilder, EditorState, Transaction, Prec } from '@codemirror/sta
 import type { SyntaxNode } from '@lezer/common';
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { CONFIG_CAPABLE_LANGUAGES, PROVIDER_DEFINITION_LANGUAGES, VAULTQUERY_LANGUAGES } from '../Constants/EditorConstants';
+import { REMOTE_DATA_LANGUAGES } from '../Constants/RemoteDataLanguages';
 import { SQL_KEYWORD_TOKENS as SQL_KEYWORDS, SQL_FUNCTION_TOKENS as SQL_FUNCTIONS, SQL_TYPE_TOKENS as SQL_TYPES } from '../Constants/SqlCatalog';
 import { CHART_TYPES, CHART_RENDERERS } from '../Constants/BlockConfigCatalog';
 import { tokenizeSqlStatement } from '../utils/SQLParsingUtils';
+import { parseFenceLine } from '../utils/MarkdownFenceUtils';
+import { REMOTE_BODY_BLOCK, remoteBlockScanner } from '../Providers/RemoteDataBlock';
+import type { RemoteBlockLine } from '../Providers/RemoteDataBlock';
 import { skipWhitespace } from '../utils/StringUtils';
 
 const SQL_OPERATORS = new Set(['=', '<>', '!=', '<', '>', '<=', '>=', '||', '+', '-', '*', '/', '%']);
@@ -34,7 +38,7 @@ const stringMark = Decoration.mark({ class: 'cm-string' });
 const numberMark = Decoration.mark({ class: 'cm-number' });
 const operatorMark = Decoration.mark({ class: 'cm-operator' });
 const commentMark = Decoration.mark({ class: 'cm-comment' });
-const propertyMark = Decoration.mark({ class: 'cm-propertyName' });
+const propertyMark = Decoration.mark({ class: 'cm-property cm-propertyName' });
 const labelMark = Decoration.mark({ class: 'cm-meta' });
 
 const noSpellcheckMark = Decoration.mark({
@@ -442,51 +446,87 @@ function tokenizeYamlConfigLine(text: string, baseOffset: number, builder: Range
   addYamlValue(entry, baseOffset, builder, classifyValue(entry.key, entry.value));
 }
 
+function highlightJsonLine(text: string, offset: number, builder: RangeSetBuilder<Decoration>): void {
+  const tokens = /"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}[\],:]/g;
+
+  for (const token of text.matchAll(tokens)) {
+    const value = token[0];
+    const end = token.index + value.length;
+    let mark: Decoration;
+
+    if (value.startsWith('"')) mark = /^\s*:/.test(text.slice(end)) ? propertyMark : stringMark;
+    else if (/^[-\d]/.test(value)) mark = numberMark;
+    else if (/^[a-z]/.test(value)) mark = keywordMark;
+    else mark = operatorMark;
+
+    builder.add(offset + token.index, offset + end, mark);
+  }
+}
+
+function highlightRemoteLine(text: string, offset: number, builder: RangeSetBuilder<Decoration>, scanned: RemoteBlockLine): void {
+  if (scanned.kind === 'body') {
+    highlightJsonLine(text, offset, builder);
+
+    return;
+  }
+
+  if (scanned.kind === 'comment') {
+    builder.add(offset + text.length - text.trimStart().length, offset + text.length, commentMark);
+
+    return;
+  }
+
+  const entry = parseYamlEntry(text);
+
+  if (!entry) return;
+  addYamlEntryScaffold(entry, offset, builder);
+  if (!entry.value) return;
+
+  if (scanned.kind === 'entry' && scanned.key === 'body' && scanned.value !== REMOTE_BODY_BLOCK) highlightJsonLine(entry.value, offset + entry.valueStart, builder);
+  else addYamlValue(entry, offset, builder, classifyGenericYamlValue(entry.key, entry.value));
+}
+
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = view.state.doc;
 
-  let currentBlock: { language: string; contentStart: number; lines: Array<{ from: number; to: number }> } | null = null;
+  let currentBlock: { language: string; openingLine: number } | null = null;
 
   const tree = syntaxTree(view.state);
 
   tree.iterate({
     enter: (node: { name: string; from: number; to: number }) => {
       if (node.name.includes('HyperMD-codeblock-begin')) {
-        const lineText = doc.sliceString(node.from, node.to);
-        const match = lineText.match(/^```(\S+)/);
+        const line = doc.lineAt(node.from);
+        const language = parseFenceLine(line.text)?.language;
 
-        if (match && VAULTQUERY_LANGUAGES.has(match[1])) {
-          currentBlock = {
-            language: match[1],
-            contentStart: node.to + 1,
-            lines: []
-          };
-        }
-        else {
-          currentBlock = null;
-        }
+        currentBlock = language && VAULTQUERY_LANGUAGES.has(language) ? { language, openingLine: line.number } : null;
 
         return;
       }
 
       if (node.name.includes('HyperMD-codeblock-end')) {
-        if (currentBlock && currentBlock.lines.length > 0) {
+        const lastLine = doc.lineAt(node.from).number - 1;
+
+        if (currentBlock && currentBlock.openingLine < lastLine) {
           const isProviderDefinitionBlock = PROVIDER_DEFINITION_LANGUAGES.has(currentBlock.language);
+          const isRemoteBlock = REMOTE_DATA_LANGUAGES.has(currentBlock.language);
           const isConfigCapableBlock = CONFIG_CAPABLE_LANGUAGES.has(currentBlock.language);
           const isQueryBlock = currentBlock.language === 'vaultquery';
 
           let inTemplate = false;
           let inConfig = false;
+          const scanRemoteLine = remoteBlockScanner();
           const sqlRanges: DecorationRange[] = [];
           let sqlRangeIndex = 0;
-          const first = currentBlock.lines[0].from;
-          const last = currentBlock.lines[currentBlock.lines.length - 1].to;
+          const first = doc.line(currentBlock.openingLine + 1).from;
+          const last = doc.line(lastLine).to;
 
           if (!isProviderDefinitionBlock) tokenizeSql(doc.sliceString(first, last), rangeTokenSink(first, sqlRanges));
 
-          for (const line of currentBlock.lines) {
-            const content = doc.sliceString(line.from, line.to);
+          for (let number = currentBlock.openingLine + 1; number <= lastLine; number++) {
+            const line = doc.line(number);
+            const content = line.text;
             const trimmed = content.trim();
 
             while (sqlRanges[sqlRangeIndex]?.to <= line.from) sqlRangeIndex++;
@@ -496,6 +536,11 @@ function buildDecorations(view: EditorView): DecorationSet {
 
             if (line.from < line.to) {
               builder.add(line.from, line.to, noSpellcheckMark);
+            }
+
+            if (isRemoteBlock) {
+              highlightRemoteLine(content, line.from, builder, scanRemoteLine(content));
+              continue;
             }
 
             if (isProviderDefinitionBlock) {
@@ -547,10 +592,6 @@ function buildDecorations(view: EditorView): DecorationSet {
         currentBlock = null;
 
         return;
-      }
-
-      if (currentBlock && node.name === 'hmd-codeblock') {
-        currentBlock.lines.push({ from: node.from, to: node.to });
       }
     },
   });
@@ -608,14 +649,7 @@ function isInsideVaultqueryBlock(state: EditorState, pos: number): boolean {
         searchNode = searchNode.prevSibling;
 
         if (searchNode.name.includes('HyperMD-codeblock-begin')) {
-          const lineText = doc.sliceString(searchNode.from, searchNode.to);
-          const match = lineText.match(/^```(\S+)/);
-
-          if (match && VAULTQUERY_LANGUAGES.has(match[1])) {
-            return true;
-          }
-
-          return false;
+          return VAULTQUERY_LANGUAGES.has(parseFenceLine(doc.lineAt(searchNode.from).text)?.language ?? '');
         }
 
         if (searchNode.name.includes('HyperMD-codeblock-end')) {

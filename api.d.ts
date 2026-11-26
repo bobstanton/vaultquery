@@ -72,6 +72,15 @@ interface IndexedDataFile {
     readonly error: string | null;
 }
 
+interface TemplateSubstitution {
+    readonly value: unknown;
+    readonly text: string;
+    readonly directHelper?: string;
+}
+type TemplateRenderer = (strings: readonly string[], substitutions: readonly TemplateSubstitution[]) => string;
+
+type ResolveNoteText = (text: string, format?: (value: string) => string, render?: TemplateRenderer) => Promise<string>;
+
 type ProviderColumnType = 'TEXT' | 'INTEGER' | 'REAL' | 'BLOB';
 interface ProviderColumnDefinition {
     name: string;
@@ -92,18 +101,22 @@ interface ProviderTableDefinition {
     indexes?: ProviderIndexDefinition[];
     defaultStaleAfterMs?: number;
 }
+type ProviderLoadMode = 'eager' | 'lazy';
 interface ProviderRefreshDefinition {
     id: string;
     displayName?: string;
+    loadMode?: ProviderLoadMode;
     requestedTables?: string[];
     request: Record<string, unknown>;
 }
 interface ProviderDefinitionBlockContext {
+    resolveNoteText?: ResolveNoteText;
     path: string;
     blockIndex: number;
     blockHash: string;
 }
 interface ProviderDefinitionBlock {
+    noteParameters?: boolean;
     language: string;
     parse: (source: string, context: ProviderDefinitionBlockContext) => Promise<ProviderRefreshDefinition> | ProviderRefreshDefinition;
     completions?: ProviderDefinitionCompletionConfig;
@@ -161,6 +174,7 @@ interface ProviderTablesChangedEvent {
 interface VaultQueryTableProvider {
     id: string;
     displayName: string;
+    loadMode?: ProviderLoadMode;
     tables: ProviderTableDefinition[];
     definitionTables?: {
         format: 'csv' | 'json';
@@ -255,6 +269,27 @@ interface SqlSyntax {
     readonly keywords: ReadonlySet<string>;
     readonly functions: ReadonlySet<string>;
     readonly types: ReadonlySet<string>;
+}
+
+interface SqlCompletionRequest {
+    sql: string;
+    cursor: number;
+    explicit?: boolean;
+    scope?: 'query' | 'trigger';
+}
+interface SqlCompletionItem {
+    label: string;
+    displayLabel?: string;
+    apply: string;
+    detail?: string;
+    type?: string;
+    boost?: number;
+    cursorOffset?: number;
+}
+interface SqlCompletionResult {
+    from: number;
+    to: number;
+    items: SqlCompletionItem[];
 }
 
 interface SchemaColumnDoc {
@@ -379,14 +414,17 @@ interface QueryMirrorStatus {
     active: boolean;
     reason?: string;
 }
+interface QueryTemplateOptions {
+    bindings?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
 interface IVaultQueryAPI {
     readonly sqlSyntax?: SqlSyntax;
-    iterateQueryBatches(sql: string, noteSource?: NoteSource, options?: QueryIterationOptions): AsyncIterableIterator<QueryResult[]>;
+    iterateQueryBatches(sql: string, noteSource?: NoteSource, options?: QueryIterationOptions & QueryTemplateOptions): AsyncIterableIterator<QueryResult[]>;
     /**
      * Run a single SELECT against the indexed vault data, excluding action functions.
      * Pass a note when the query uses `{this.*}` placeholders.
      */
-    query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]>;
+    query(sql: string, noteSource?: NoteSource, options?: QueryTemplateOptions): Promise<QueryResult[]>;
     /**
      * Reindex files that have changed since the last run.
      */
@@ -442,6 +480,7 @@ interface IVaultQueryAPI {
      * Live schema data for editor autocomplete.
      */
     getAutocompleteSchema(): Promise<AutocompleteSchemaShape>;
+    getSqlCompletions(request: SqlCompletionRequest): Promise<SqlCompletionResult | null>;
     /**
      * True when a file passes the indexing filters in settings.
      */
@@ -564,6 +603,7 @@ interface ManagedVaultQueryTableProviderRegistration {
 }
 type VaultQueryAppLike = object & {
     plugins?: {
+        enabledPlugins?: ReadonlySet<string>;
         plugins?: Record<string, {
             api?: IVaultQueryAPI;
             declareProviderDefinitionBlockLanguages?: (languages: readonly string[]) => void;
@@ -594,12 +634,21 @@ declare function declareVaultQueryProviderBlockLanguages(app: VaultQueryAppLike,
  */
 declare function getVaultQueryAPI(app: VaultQueryAppLike): IVaultQueryAPI | null;
 /**
- * Wait for the VaultQuery API to become available with exponential backoff.
- * Useful when a plugin loads before VaultQuery, especially on mobile.
+ * Whether the VaultQuery plugin is turned on in this vault. True while it is still
+ * starting, when `getVaultQueryAPI()` returns null. Use it to tell "not installed"
+ * from "not ready yet".
  *
  * @param app - An Obsidian-like app object with plugin registry access
- * @param options - Configuration for retry behavior
- * @returns The VaultQuery API or null if not available after all retries
+ */
+declare function isVaultQueryEnabled(app: VaultQueryAppLike): boolean;
+/**
+ * Wait for the VaultQuery API to become available.
+ * Useful when a plugin loads before VaultQuery, especially on mobile.
+ * Resolves to null at once when VaultQuery is not turned on, rather than after the timeout.
+ *
+ * @param app - An Obsidian-like app object with plugin registry access
+ * @param options - How long to wait, and whether to wait for indexing too
+ * @returns The VaultQuery API, or null if VaultQuery is not turned on or did not start in time
  *
  * @example
  * ```typescript
@@ -640,5 +689,5 @@ interface VaultQueryPlugin {
     api: IVaultQueryAPI;
 }
 
-export { FilePreviewStaleError, FileWriteApplyError, QueryIterationInvalidatedError, VAULTQUERY_API_READY_EVENT, declareVaultQueryProviderBlockLanguages, getVaultQueryAPI, registerVaultQueryTableProviders, retainsRows, waitForVaultQueryAPI };
-export type { AutocompleteSchemaColumnInfo, AutocompleteSchemaRelationInfo, AutocompleteSchemaShape, CsvFormat, DataFileFormat, DatabaseHealth, DatabaseLostEvent, DatabaseRestoredEvent, ExternalRoot, ExternalRootFailure, ExternalRootState, ExternalRootStatus, ExternalRootsChangedEvent, FileIndexedEvent, FileIndexedSource, FileRemovedEvent, FileWritePhase, FilesIndexedEvent, IVaultQueryAPI, IndexedProviderDefinitionBlock, IndexingStats, JsonFormat, ManagedVaultQueryTableProviderRegistration, NoteSource, PreviewResult, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderSnapshotMetadata, ProviderTableDefinition, ProviderTableRows, ProviderTableSnapshot, ProviderTablesChangedEvent, QueryIterationOptions, QueryMirrorStatus, QueryRelations, QueryResult, QueryValue, RegisterVaultQueryTableProvidersOptions, SchemaColumnDoc, SchemaTable, SqlSyntax, TableProviderRegistration, TableProviderStatus, TabularColumn, TabularColumnType, TabularDocument, TabularFormat, TabularParseLimits, TabularValue, VaultIndexedEvent, VaultQueryAppLike, VaultQueryCapabilities, VaultQueryPlugin, VaultQueryProviderRegistrationLogger, VaultQueryProviderRegistrationState, VaultQueryTableProvider, WaitForAPIOptions };
+export { FilePreviewStaleError, FileWriteApplyError, QueryIterationInvalidatedError, VAULTQUERY_API_READY_EVENT, declareVaultQueryProviderBlockLanguages, getVaultQueryAPI, isVaultQueryEnabled, registerVaultQueryTableProviders, retainsRows, waitForVaultQueryAPI };
+export type { AutocompleteSchemaColumnInfo, AutocompleteSchemaRelationInfo, AutocompleteSchemaShape, CsvFormat, DataFileFormat, DatabaseHealth, DatabaseLostEvent, DatabaseRestoredEvent, ExternalRoot, ExternalRootFailure, ExternalRootState, ExternalRootStatus, ExternalRootsChangedEvent, FileIndexedEvent, FileIndexedSource, FileRemovedEvent, FileWritePhase, FilesIndexedEvent, IVaultQueryAPI, IndexedProviderDefinitionBlock, IndexingStats, JsonFormat, ManagedVaultQueryTableProviderRegistration, NoteSource, PreviewResult, ProviderColumnDefinition, ProviderColumnType, ProviderDefinitionBlock, ProviderDefinitionBlockContext, ProviderDefinitionCompletionConfig, ProviderDefinitionCompletionItem, ProviderIndexDefinition, ProviderLoadMode, ProviderRefreshContext, ProviderRefreshDefinition, ProviderRefreshResult, ProviderRowValue, ProviderSnapshotMetadata, ProviderTableDefinition, ProviderTableRows, ProviderTableSnapshot, ProviderTablesChangedEvent, QueryIterationOptions, QueryMirrorStatus, QueryRelations, QueryResult, QueryTemplateOptions, QueryValue, RegisterVaultQueryTableProvidersOptions, SchemaColumnDoc, SchemaTable, SqlCompletionItem, SqlCompletionRequest, SqlCompletionResult, SqlSyntax, TableProviderRegistration, TableProviderStatus, TabularColumn, TabularColumnType, TabularDocument, TabularFormat, TabularParseLimits, TabularValue, VaultIndexedEvent, VaultQueryAppLike, VaultQueryCapabilities, VaultQueryPlugin, VaultQueryProviderRegistrationLogger, VaultQueryProviderRegistrationState, VaultQueryTableProvider, WaitForAPIOptions };

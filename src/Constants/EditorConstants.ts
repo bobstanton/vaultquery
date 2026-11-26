@@ -1,4 +1,7 @@
+import { REMOTE_DATA_LANGUAGES } from './RemoteDataLanguages';
+
 export const VAULTQUERY_LANGUAGES = new Set([
+  ...REMOTE_DATA_LANGUAGES,
   'vaultquery',
   'vaultquery-write',
   'vaultquery-schema',
@@ -12,7 +15,7 @@ export const VAULTQUERY_LANGUAGES = new Set([
   'vaultquery-trigger',
 ]);
 
-export const PROVIDER_DEFINITION_LANGUAGES = new Set<string>();
+export const PROVIDER_DEFINITION_LANGUAGES = new Set(REMOTE_DATA_LANGUAGES);
 
 export function registerProviderDefinitionLanguage(language: string): void {
   const normalized = language.trim();

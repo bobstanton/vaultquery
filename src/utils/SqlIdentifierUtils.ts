@@ -6,9 +6,7 @@ export function normalizeOwnedSchemaSql(sql: unknown): string {
   return String(sql).replace(/[\s"]/g, '').toLowerCase();
 }
 
-export function escapeSqlString(value: string): string {
-  return value.replace(/'/g, "''");
-}
+export { escapeSqlString } from 'placeholder-resolver/sql';
 
 export function quoteIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;

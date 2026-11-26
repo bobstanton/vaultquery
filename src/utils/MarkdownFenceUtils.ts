@@ -6,6 +6,23 @@ export interface MarkdownCodeFence {
   end: number;
 }
 
+export interface FenceLine {
+  marker: string;
+  language: string;
+}
+
+export function parseFenceLine(line: string): FenceLine | undefined {
+  const [, marker, language] = /^[ \t]*(`{3,}|~{3,})[ \t]*([^\s`~]*)/.exec(line) ?? [];
+
+  return marker === undefined ? undefined : { marker, language };
+}
+
+export function closesFence(opening: FenceLine, line: string): boolean {
+  const closing = parseFenceLine(line);
+
+  return closing !== undefined && !closing.language && closing.marker[0] === opening.marker[0] && closing.marker.length >= opening.marker.length;
+}
+
 export function scanMarkdownCodeFences(content: string): MarkdownCodeFence[] {
   const blocks: MarkdownCodeFence[] = [];
   const regex = /^[ \t]*(`{3,}|~{3,})([^\r\n]*)(?=\r?$)/gm;

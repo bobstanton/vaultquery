@@ -110,6 +110,7 @@ export interface UserFunctionData {
 export interface UserTriggerData {
   trigger_name: string;
   trigger_sql: string;
+  activation_sql?: string;
 }
 
 export interface IndexingStats {

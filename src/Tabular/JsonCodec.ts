@@ -1,7 +1,7 @@
 import { validateCsvHeaders } from './CsvCodec';
 import { checkDataFileSize, dataFileParseLimits, dataFileUtf8ByteLength } from './TabularLimits';
 import { DataFileError } from './TabularTypes';
-import type { JsonFormat, RowOrigins, TabularColumn, TabularColumnType, TabularDocument, TabularParseLimits, TabularRows, TabularValue } from './TabularTypes';
+import type { JsonFormat, RowOrigins, TabularColumn, TabularColumnType, TabularDocument, TabularParseLimits, TabularParseOptions, TabularRows, TabularValue } from './TabularTypes';
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -45,7 +45,16 @@ function parseSource(source: string, path: string): JsonValue {
 
 const isRecord = (value: JsonValue): value is { [key: string]: JsonValue } => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-function selectRows(root: JsonValue, path: string): { rows: JsonValue[]; property: string | null } {
+function selectRows(root: JsonValue, path: string, rowProperty?: string): { rows: JsonValue[]; property: string | null } {
+  if (rowProperty !== undefined) {
+    const selected = isRecord(root) && Object.prototype.hasOwnProperty.call(root, rowProperty) ? root[rowProperty] : null;
+
+    if (Array.isArray(selected)) return { rows: selected, property: rowProperty };
+    if (isRecord(selected)) return { rows: [selected], property: rowProperty };
+
+    throw new DataFileError(path, 'format', `Property "${rowProperty}" must contain an object or an array of rows.`);
+  }
+
   if (Array.isArray(root)) return { rows: root, property: null };
 
   if (isRecord(root)) {
@@ -75,13 +84,13 @@ function hasUnsafeIntegers(source: string): boolean {
   return numbers.some(literal => /^-?\d+$/.test(literal) && !Number.isSafeInteger(Number(literal)));
 }
 
-export function parseJson(source: string, path: string, limits: TabularParseLimits = dataFileParseLimits()): TabularDocument {
+export function parseJson(source: string, path: string, limits: TabularParseLimits = dataFileParseLimits(), { rowProperty }: TabularParseOptions = {}): TabularDocument {
   const sourceBytes = dataFileUtf8ByteLength(source, path);
 
   checkDataFileSize(path, sourceBytes, limits);
   const bom = source.startsWith('\ufeff');
   const input = bom ? source.slice(1) : source;
-  const { rows: entries, property } = selectRows(parseSource(input, path), path);
+  const { rows: entries, property } = selectRows(parseSource(input, path), path, rowProperty);
   const scalarRows = entries.every(entry => !isRecord(entry));
   const types = new Map<string, TabularColumnType>();
   const names = new Set<string>();

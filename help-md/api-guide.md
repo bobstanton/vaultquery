@@ -20,6 +20,19 @@ const api = await waitForVaultQueryAPI(this.app);
 if (!api) return;
 ~~~
 
+`waitForVaultQueryAPI()` waits up to 10 seconds for VaultQuery to start. It resolves to `null` at once when VaultQuery is not turned on. `isVaultQueryEnabled()` tells the two cases apart:
+
+~~~typescript
+import { isVaultQueryEnabled, waitForVaultQueryAPI } from 'vaultquery/api';
+
+const api = await waitForVaultQueryAPI(this.app);
+
+if (!api) {
+  console.warn(isVaultQueryEnabled(this.app) ? 'VaultQuery has not finished starting' : 'VaultQuery is not installed or not enabled');
+  return;
+}
+~~~
+
 ### Waiting for indexing
 
 Call `waitForIndexing()` before queries that need complete results. `query()` does not wait for indexing:
@@ -98,6 +111,44 @@ console.log(schemaMarkdown);
 // Returns formatted markdown with all tables, columns, and types
 ~~~
 
+## SQL completions
+
+`getSqlCompletions()` returns the suggestions VaultQuery offers in its own blocks, for SQL that another plugin holds in a setting of its block. Pass the SQL and the cursor's offset into it. The result's `from` and `to` are offsets into the same text; add the SQL's position in the document to get editor positions.
+
+~~~typescript
+import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+
+// sqlFrom is where the SQL starts in the document
+async function sqlSource(context: CompletionContext, sql: string, sqlFrom: number): Promise<CompletionResult | null> {
+  const found = await api.getSqlCompletions({ sql, cursor: context.pos - sqlFrom, explicit: context.explicit });
+
+  if (!found) return null;
+
+  return {
+    from: sqlFrom + found.from,
+    to: sqlFrom + found.to,
+    options: found.items.map(({ cursorOffset, ...item }) => ({
+      ...item,
+      apply: cursorOffset === undefined ? item.apply : (view, _completion, from, to) => view.dispatch({
+        changes: { from, to, insert: item.apply },
+        selection: { anchor: from + cursorOffset },
+      }),
+    })),
+  };
+}
+~~~
+
+| Request field | Meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `sql`         | The whole query. Indented lines are fine                                   |
+| `cursor`      | Offset of the cursor in `sql`                                              |
+| `explicit`    | `true` offers suggestions at an empty position, as Ctrl+Space does         |
+| `scope`       | `trigger` adds the `vq_*` action functions. The default is `query`         |
+
+Items contain the typed text, ignoring case. `cursorOffset` is where to leave the cursor inside `apply`, such as between a function's parentheses. The result is `null` when there is nothing to suggest, including inside a string literal.
+
+`api.sqlSyntax` holds the keyword, function and type names for highlighting the same SQL.
+
 ## Read queries
 
 `query()` returns rows from a single SELECT or WITH query. VaultQuery action functions must be called through `execute()`.
@@ -133,6 +184,16 @@ const backlinks = await api.query(`
   WHERE link_target_path = '{this.path}'
 `, file);
 ~~~
+
+Pass template bindings in the third argument to `query` or `iterateQueryBatches` to use values from another plugin alongside note properties. VaultQuery evaluates the original SQL once per preparation. Braces inside a supplied value stay literal.
+
+```typescript
+const rows = await api.query(
+  "SELECT {h.sqlLiteral(this.title)} AS note, {h.sqlLiteral(parameter.label)} AS label",
+  sourcePath,
+  { bindings: { parameter: { label: "O'Brien {this.title}" } } },
+);
+```
 
 ### Iterating query batches
 
@@ -399,6 +460,7 @@ import type { VaultQueryTableProvider } from 'vaultquery/api';
 const provider: VaultQueryTableProvider = {
   id: 'example.weather',
   displayName: 'Example Weather',
+  loadMode: 'lazy',
   tables: [{
     name: 'weather_daily',
     primaryKey: ['id', 'date'],
@@ -453,13 +515,15 @@ Once indexed, query the table through the API:
 console.table(await api.query('SELECT * FROM weather_daily'));
 ~~~
 
-`parse()` returns a stable, unique definition `id` and a `request` passed to `refresh()`. Refresh runs when the definition is indexed or its data expires. `replaceWhere` deletes matching rows in the same transaction before upserting returned rows; omit it to upsert only.
+`parse()` returns a stable, unique definition `id` and a `request` passed to `refresh()`. `replaceWhere` deletes matching rows in the same transaction before upserting returned rows; omit it to upsert only.
+
+With `loadMode: 'lazy'`, VaultQuery indexes the definition immediately. The first query that reads `weather_daily` waits for `refresh()`, including queries through a view. Put network requests in `refresh()`. Subsequent queries reuse the rows until their expiry. The definition block’s **Refresh** button can fetch them at any time.
 
 Use `definitionBlock.completions` for key/value suggestions. Registered tables and columns appear in SQL autocomplete.
 
 ### Read-only snapshots per definition
 
-The built-in `vaultquery-remote-csv` and `vaultquery-web-json` providers expose read-only tables from public HTTPS sources.
+The built-in `vaultquery-remote-csv` and `vaultquery-remote-json` providers expose read-only tables from HTTPS sources. Add `loadMode: lazy` to either kind of code block to defer its first download until a query reads that table or you press **Refresh**.
 
 To return complete table snapshots:
 

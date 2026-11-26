@@ -1,5 +1,4 @@
 import type { PreviewResult } from '../Services/PreviewService';
-import { filterRelevantColumns } from '../utils/ColumnUtils';
 
 interface PreviewOptions {
   columns?: readonly string[];
@@ -11,6 +10,15 @@ export interface PreviewPresentation {
   rows: Record<string, unknown>[];
   columns?: string[];
   changedFields: number;
+}
+
+const METADATA_COLUMNS = ['created', 'modified', 'title', 'size'];
+
+function filterRelevantColumns(columns: string[]): string[] {
+  return columns.filter(column => column !== 'rowid'
+    && !column.startsWith('sqlite_')
+    && !column.startsWith('__')
+    && !METADATA_COLUMNS.includes(column));
 }
 
 function equalValues(a: unknown, b: unknown): boolean {

@@ -3,3 +3,7 @@ export async function sha256Hex(bytes: BufferSource): Promise<string> {
 
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
 }
+
+export function sha256HexOfText(text: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(text));
+}

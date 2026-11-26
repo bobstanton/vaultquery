@@ -2,6 +2,7 @@ import { isDataFilePath } from './Tabular/TabularTableOwnership';
 import { SQL_SYNTAX, type SqlSyntax } from './Constants/SqlCatalog';
 import { pathExtension } from './utils/PathUtils';
 import type { QueryValue } from './Database/QueryValues';
+import type { SqlCompletionProvider, SqlCompletionRequest, SqlCompletionResult } from './Editor/SqlCompletionTypes';
 import { awaitQueryOperation, consumeQuerySnapshot, QueryIterationInvalidatedError, throwIfQueryAborted } from './Database/QueryIteration';
 import type { QueryIterationOptions } from './Database/QueryIteration';
 import { App, MarkdownPostProcessorContext, TFile, normalizePath, requestUrl } from 'obsidian';
@@ -13,8 +14,9 @@ import { CsvQueryDependencies } from './Tabular/TabularQueryDependencies';
 import type { CsvQueryDependenciesResult } from './Tabular/TabularQueryDependencies';
 import { dataFileParseLimits } from './Tabular/TabularLimits';
 import { ProviderSnapshotCoordinator } from './Providers/ProviderSnapshotCoordinator';
-import { createWebDataProvider, webProviderId } from './Providers/WebDataProvider';
-import { NativeWebCsvTransport } from './Providers/WebCsvTransport';
+import { REMOTE_BLOCK_LANGUAGES } from './Constants/RemoteDataLanguages';
+import { createRemoteDataProvider, remoteProviderId } from './Providers/RemoteDataProvider';
+import { NativeRemoteDataTransport } from './Providers/RemoteDataTransport';
 import { publishProviderSnapshots } from './Providers/ProviderSnapshotMirror';
 import { extractSqlDdlObject, splitSqlStatements } from './utils/SQLParsingUtils';
 import type { IndexedDataFile } from './Tabular/TabularDatabaseOperations';
@@ -31,7 +33,8 @@ import { IndexingService } from './Services/IndexingService';
 import type { PreparedMarkdownChanges } from './Services/WriteSyncService';
 import { WriteSyncService } from './Services/WriteSyncService';
 import { TriggerFunctions, TriggerService, TRIGGER_FUNCTION_NAMES } from './Triggers';
-import { resolveQueryTemplate } from './Services/QueryTemplator';
+import { resolveQueryTemplate } from './Services/QueryTemplate';
+import { ObsidianContextProvider } from 'placeholder-resolver/obsidian';
 import { getErrorMessage, ERROR_MESSAGES } from './utils/ErrorMessages';
 import { quoteIdentifier, sqliteIdentifierKey } from './utils/SqlIdentifierUtils';
 import { detectDmlOperationInSql, detectSqlOperation, disallowedSqlStatement, extractSqlMutationTarget, extractSqlReferencedTables, hasSqlActionFunctions, hasSqlFileActionFunctions, isSelectOnly, parseDroppedSQLObjectName, parseSQLObjectName, stripSqlComments } from './utils/SQLParsingUtils';
@@ -189,14 +192,18 @@ export interface QueryMirrorStatus {
   reason?: string;
 }
 
+export interface QueryTemplateOptions {
+  bindings?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
 export interface IVaultQueryAPI {
   readonly sqlSyntax?: SqlSyntax;
-  iterateQueryBatches(sql: string, noteSource?: NoteSource, options?: QueryIterationOptions): AsyncIterableIterator<QueryResult[]>;
+  iterateQueryBatches(sql: string, noteSource?: NoteSource, options?: QueryIterationOptions & QueryTemplateOptions): AsyncIterableIterator<QueryResult[]>;
   /**
    * Run a single SELECT against the indexed vault data, excluding action functions.
    * Pass a note when the query uses `{this.*}` placeholders.
    */
-  query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]>;
+  query(sql: string, noteSource?: NoteSource, options?: QueryTemplateOptions): Promise<QueryResult[]>;
 
   /**
    * Reindex files that have changed since the last run.
@@ -262,6 +269,8 @@ export interface IVaultQueryAPI {
    * Live schema data for editor autocomplete.
    */
   getAutocompleteSchema(): Promise<AutocompleteSchemaShape>;
+
+  getSqlCompletions(request: SqlCompletionRequest): Promise<SqlCompletionResult | null>;
 
   /**
    * True when a file passes the indexing filters in settings.
@@ -557,13 +566,13 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       () => ['notes', 'other_files', 'image_files', 'image_metadata', ...Object.keys(TABLE_FEATURE_CONFIG), ...this.tableProviderService.getRegisteredProviders().flatMap(provider => provider.tables.map(table => table.name))]);
 
     this.tableProviderService = new TableProviderService(database, this.settings.enableThirdPartyProviderTables, this.providerSnapshots,
-      path => this.app.vault.getAbstractFileByPath(path) instanceof TFile, this.settings.enableRemoteDataReads);
+      path => this.app.vault.getAbstractFileByPath(path) instanceof TFile, this.settings.enableRemoteDataReads, path => new ObsidianContextProvider(this.app, path));
 
     QueryRefreshRegistry.setScopeResolver(this.scopeResolver);
 
     this.csvDependencies = new CsvQueryDependencies(
       sql => this.getSqlAnalysis(sql).exactReferences,
-      name => this.isIndexedRelation(name),
+      name => this.isIndexedRelation(name) || this.tableProviderService.hasRegisteredTable(name),
       async () => {
         const database = this.database;
         const rows = await database.all('PRAGMA main.schema_version');
@@ -612,13 +621,16 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
     this.tableProviderService.setOnAllQueriesRefresh(() => QueryRefreshRegistry.refreshAll({ force: true }));
 
-    this.tableProviderService.setOnRefreshWaveComplete(async tables => {
+    this.tableProviderService.setOnRefreshWaveComplete(async (tables, loadMode) => {
       await this.queueProviderTableMirrorSync(tables);
 
       // The initial refresh wave performs one refresh after its readiness
       // promise is cleared, so dependent queries do not wait on themselves.
       if (!this.providerRefreshWave) {
-        await QueryRefreshRegistry.refreshAll({ force: true, tables });
+        const refresh = QueryRefreshRegistry.refreshAll({ force: true, tables });
+
+        if (loadMode === 'lazy') void refresh.catch(error => logger.error('Could not refresh queries after a lazy provider load', error));
+        else await refresh;
       }
     });
 
@@ -687,7 +699,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
         // Register user-defined SQLite triggers after indexing completes (if enabled)
         if (this.settings.enableTriggers) {
-          this.registerUserTriggers();
+          await this.registerUserTriggers();
 
           await this.queueMirrorTriggerSync();
         }
@@ -735,9 +747,9 @@ export class VaultQueryAPI implements IVaultQueryAPI {
   /**
    * Called after indexing completes to activate triggers for future file changes.
    */
-  private registerUserTriggers(): void {
+  private async registerUserTriggers(): Promise<void> {
     if (this.database instanceof VaultDatabase) {
-      this.database.registerUserTriggers();
+      await this.database.registerUserTriggers((triggerSql, path) => resolveQueryTemplate(triggerSql, this.app, path));
     }
   }
 
@@ -1424,7 +1436,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (!await this.needsIndexing(file)) {
         const names = this.providerSnapshots.confirmIndexedPath(file.path, providerRevisions.get(file.path));
 
-        this.tableProviderService.refreshSnapshotsAfterRead(names);
+        this.tableProviderService.refreshStaleSnapshots(names, 'index');
 
         if (names.length) {
           await this.tableProviderService.rerenderProviderBlocksForPath(file.path);
@@ -2180,8 +2192,16 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       let rowsModified = 0;
 
       for (const statement of splitSqlStatements(sql)) {
+        const operation = detectSqlOperation(statement);
+
+        if (operation) {
+          const dependencies = await this.csvDependencies.resolve(statement);
+
+          await this.tableProviderService.prepareLazyTablesForRead(dependencies.relations);
+        }
+
         // SELECT must be consumed completely so an action runs for every matching row.
-        if (detectSqlOperation(statement) === 'select') {
+        if (operation === 'select') {
           await this.database.all(statement, params as (string | number | null | Uint8Array)[]);
         }
         else {
@@ -2236,6 +2256,16 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return parseDroppedSQLObjectName(stripSqlComments(sql), 'VIEW');
   }
 
+  private sqlCompletionProvider: SqlCompletionProvider | null = null;
+
+  public setSqlCompletionProvider(provider: SqlCompletionProvider): void {
+    this.sqlCompletionProvider = provider;
+  }
+
+  public async getSqlCompletions(request: SqlCompletionRequest): Promise<SqlCompletionResult | null> {
+    return await this.sqlCompletionProvider?.(request) ?? null;
+  }
+
   public setProviderBlockLanguageRegistrar(registerBlockLanguage: (language: string) => void): void {
     this.tableProviderService.setBlockLanguageRegistrar(registerBlockLanguage);
   }
@@ -2252,14 +2282,15 @@ export class VaultQueryAPI implements IVaultQueryAPI {
 
   private async ensureRemoteDataProviders(): Promise<void> {
     const registered = new Set(this.tableProviderService.getRegisteredProviders().map(provider => provider.id));
-    const pending = (['csv', 'json'] as const).filter(format => !registered.has(webProviderId(format)));
+    const pending = (['csv', 'json'] as const).filter(format => !registered.has(remoteProviderId(format)));
 
     if (!this.settings.enableRemoteDataReads || !pending.length) return;
     if (this.remoteDataRegistration) return this.remoteDataRegistration;
 
-    const transport = new NativeWebCsvTransport(options => requestUrl(options));
+    const transport = new NativeRemoteDataTransport(options => requestUrl(options));
 
-    const registration = Promise.all(pending.map(format => this.tableProviderService.registerProvider(createWebDataProvider(format, this.settings, transport), true))).then(() => {});
+    const registration = Promise.all(pending.map(format =>
+      this.tableProviderService.registerProvider(createRemoteDataProvider(format, this.settings, transport), { builtIn: true, aliases: REMOTE_BLOCK_LANGUAGES[format].aliases }))).then(() => {});
 
     this.remoteDataRegistration = registration;
 
@@ -2424,11 +2455,13 @@ export class VaultQueryAPI implements IVaultQueryAPI {
    * Called by TriggerCodeBlockProcessor when a trigger block is rendered.
    */
   public async registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): Promise<void> {
-    await this.database.registerTrigger(triggerName, triggerSql, sourcePath);
+    const activationSql = sourcePath ? await resolveQueryTemplate(triggerSql, this.app, sourcePath) : triggerSql;
+
+    await this.database.registerTrigger(triggerName, triggerSql, sourcePath, activationSql);
   }
 
-  public async query(sql: string, noteSource?: NoteSource): Promise<QueryResult[]> {
-    return this.runQuery(sql, noteSource);
+  public async query(sql: string, noteSource?: NoteSource, options?: QueryTemplateOptions): Promise<QueryResult[]> {
+    return this.runQuery(sql, noteSource, options);
   }
 
   private isIndexedRelation(name: string): boolean {
@@ -2444,12 +2477,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return relations.every(name => this.providerSnapshots.owns(name) || !this.tableProviderService.hasRegisteredTable(name));
   }
 
-  private async runQuery(sql: string, noteSource: NoteSource | undefined): Promise<QueryResult[]> {
+  private async runQuery(sql: string, noteSource: NoteSource | undefined, options?: QueryTemplateOptions): Promise<QueryResult[]> {
     const started = performance.now();
 
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.attemptQuery(sql, noteSource);
+        if (attempt === 0 && (noteSource || options?.bindings)) sql = await resolveQueryTemplate(sql, this.app, noteSource, options?.bindings);
+
+        return await this.attemptQuery(sql);
       } catch (error) {
         if (!(error instanceof QueryIterationInvalidatedError) || attempt >= QUERY_RETRY_ATTEMPTS) {
           this.logQueryFailure(error, noteSource, started);
@@ -2464,15 +2499,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
   }
 
-  private async attemptQuery(sql: string, noteSource: NoteSource | undefined): Promise<QueryResult[]> {
-    const prepared = await this.prepareQuery(sql, noteSource);
-
-    sql = prepared.sql;
-    let dependencies = prepared.dependencies;
+  private async attemptQuery(sql: string): Promise<QueryResult[]> {
+    let dependencies = await this.prepareQuery(sql);
 
     const finish = (rows: QueryResult[]): QueryResult[] => {
       this.recordCsvHeaders(rows, dependencies);
-      this.tableProviderService.refreshSnapshotsAfterRead(dependencies.relations);
+      this.tableProviderService.refreshStaleSnapshots(dependencies.relations, 'read');
 
       return rows;
     };
@@ -2505,8 +2537,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     }
   }
 
-  private async prepareQuery(sql: string, noteSource: NoteSource | undefined): Promise<{ sql: string; dependencies: CsvQueryDependenciesResult }> {
-    if (noteSource) sql = await resolveQueryTemplate(sql, this.app, noteSource);
+  private async prepareQuery(sql: string): Promise<CsvQueryDependenciesResult> {
     this.assertProviderSnapshotWriteAllowed(sql);
     if (!isSelectOnly(sql)) throw new Error(ERROR_MESSAGES.QUERY_UNSAFE_OPERATIONS);
     const warning = this.checkForUnindexedData(sql);
@@ -2514,7 +2545,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (warning) throw new Error(warning);
     if (this.providerMirrorSync) await this.providerMirrorSync;
 
-    return { sql, dependencies: await this.prepareReadDependencies(sql) };
+    return this.prepareReadDependencies(sql);
   }
 
   private recordCsvHeaders(rows: QueryResult[], dependencies: CsvQueryDependenciesResult): void {
@@ -2544,7 +2575,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     });
   }
 
-  public async *iterateQueryBatches(sql: string, noteSource?: NoteSource, options: QueryIterationOptions = {}): AsyncGenerator<QueryResult[]> {
+  public async *iterateQueryBatches(sql: string, noteSource?: NoteSource, options: QueryIterationOptions & QueryTemplateOptions = {}): AsyncGenerator<QueryResult[]> {
     const started = performance.now();
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -2564,8 +2595,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     try {
       throwIfQueryAborted(signal);
 
+      if (noteSource || options.bindings) {
+        sql = await awaitQueryOperation(resolveQueryTemplate(sql, this.app, noteSource, options.bindings), signal);
+      }
+
       if (options.snapshot) {
-        const rows = await awaitQueryOperation(this.attemptQuery(sql, noteSource), signal);
+        const rows = await awaitQueryOperation(this.attemptQuery(sql), signal);
         const columns = this.dataFileColumns.get(rows);
 
         for (const batch of consumeQuerySnapshot(rows, signal)) {
@@ -2577,10 +2612,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
         return;
       }
 
-      const prepared = await awaitQueryOperation(this.prepareQuery(sql, noteSource), signal);
-
-      sql = prepared.sql;
-      dependencies = prepared.dependencies;
+      dependencies = await awaitQueryOperation(this.prepareQuery(sql), signal);
       mirror = this.queryMirror;
       iterator = (mirror ?? this.database).iterateQueryBatches(sql, [], { signal });
 
@@ -2623,7 +2655,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       }
 
       if (iterator) void iterator.return(undefined).catch(error => logger.debug('Query iteration cleanup', getErrorMessage(error)));
-      if (dependencies) this.tableProviderService.refreshSnapshotsAfterRead(dependencies.relations);
+      if (dependencies) this.tableProviderService.refreshStaleSnapshots(dependencies.relations, 'read');
     }
   }
 
@@ -2649,6 +2681,8 @@ export class VaultQueryAPI implements IVaultQueryAPI {
           await this.providerRefreshWave;
         }
 
+        if (await this.tableProviderService.prepareLazyTablesForRead(dependencies.relations)) waited = true;
+
         if (dependencies.relations.some(name => this.providerSnapshots.owns(name) && !this.providerSnapshots.ready(name))) {
           waited = true;
 
@@ -2669,7 +2703,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
       if (current !== dependencies) { dependencies = current; continue; }
 
       if (readinessError) {
-        this.tableProviderService.refreshSnapshotsAfterRead(dependencies.relations);
+        this.tableProviderService.refreshStaleSnapshots(dependencies.relations, 'read');
 
         throw readinessError;
       }
@@ -3108,6 +3142,14 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     return warnings.length > 0 ? warnings.join('\n\n') : null;
   }
 
+  private async preparePreviewDependencies(sql: string): Promise<void> {
+    const dependencies = await this.csvDependencies.resolve(sql);
+
+    await this.ensureCsvQueryReady(sql, true, dependencies);
+
+    await this.tableProviderService.prepareLazyTablesForRead(dependencies.relations);
+  }
+
   public async previewQuery(sql: string, params: unknown[] = [], noteSource?: NoteSource): Promise<PreviewResult> {
     if (noteSource) {
       sql = await resolveQueryTemplate(sql, this.app, noteSource);
@@ -3129,7 +3171,7 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (otherFileDml) {
       if (this.getIndexingStatus().isIndexing) await this.waitForIndexing();
       await this.transferToMainThread();
-      await this.ensureCsvQueryReady(sql, true);
+      await this.preparePreviewDependencies(sql);
 
       return this.getOtherFileWriteService().preview(sql, params);
     }
@@ -3139,12 +3181,12 @@ export class VaultQueryAPI implements IVaultQueryAPI {
     if (csvTarget) {
       assertDataFileReads(this.settings);
       await this.ensureCsvQueryReady(`SELECT * FROM ${quoteIdentifier(csvTarget)}`, true);
-      await this.ensureCsvQueryReady(sql, true);
+      await this.preparePreviewDependencies(sql);
 
       return this.getCsvWriteService().preview(csvTarget, sql, params);
     }
 
-    await this.ensureCsvQueryReady(sql, true);
+    await this.preparePreviewDependencies(sql);
 
     // Don't wait for indexing - previews are read-only (they rollback)
     // and can work with partial data

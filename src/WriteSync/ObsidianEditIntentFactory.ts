@@ -303,8 +303,7 @@ async function createMultiStatementIntents(app: App, previewResult: PreviewResul
   return intents;
 }
 
-function collectTableCellStatement(previewResult: PreviewResult, changedCellsByTable: TableCellMapByTable,
-  deletedCellsByTable: TableCellKeySetByTable, affectedTables: Set<string>, warnings: string[]): void {
+function collectTableCellStatement(previewResult: PreviewResult, changedCellsByTable: TableCellMapByTable, deletedCellsByTable: TableCellKeySetByTable, affectedTables: Set<string>, warnings: string[]): void {
   if (previewResult.op === 'delete') {
     for (const cell of convertRows(previewResult.before, row => toTableCellRow(row, warnings))) {
       const tableKey = createTableKey(cell.path, cell.table_index);

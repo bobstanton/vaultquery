@@ -49,9 +49,7 @@ const PLAIN_CONTROL: ControlAccessor = {
   set: (settings, value, id) => { (settings as unknown as Record<string, unknown>)[id] = value; },
 };
 
-function rootControl<K extends keyof ExternalRoot>(
-  field: K, fallback: unknown, parse: (value: unknown) => ExternalRoot[K], format: (value: ExternalRoot[K]) => unknown = value => value
-): ControlAccessor {
+function rootControl<K extends keyof ExternalRoot>(field: K, fallback: unknown, parse: (value: unknown) => ExternalRoot[K], format: (value: ExternalRoot[K]) => unknown = value => value): ControlAccessor {
   return {
     get: (settings, id) => {
       const root = settings.externalRoots[Number(id)];

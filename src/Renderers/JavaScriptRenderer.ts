@@ -1,5 +1,6 @@
-import { debounce } from 'obsidian';
-import { mergeHelpers, obsidianHelpers } from 'placeholder-resolver';
+import { debounce, sanitizeHTMLToDom } from 'obsidian';
+import { mergeHelpers } from 'placeholder-resolver/core';
+import { obsidianHelpers } from 'placeholder-resolver/obsidian';
 import { renderUserHtmlTemplate } from 'user-template-renderer';
 import { BaseRenderer } from './BaseRenderer';
 import { logger as rootLogger } from '../utils/logger';
@@ -104,6 +105,7 @@ export class JavaScriptRenderer extends BaseRenderer {
           { name: 'h', value: helpers },
         ],
         container,
+        sanitize: sanitizeHTMLToDom,
         clearContainer: false,
         setupRoot: (root) => this.setupInternalLinks(root, openFile),
       });

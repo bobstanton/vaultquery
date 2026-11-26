@@ -313,10 +313,10 @@ export class PreviewGridRenderer {
 
   /**
    * SlickGrid exposes no row-index attribute on .slick-row elements; rows are
-   * absolutely positioned at index x rowHeight.
+   * offset by index x rowHeight, with translateY or, for spanned rows, top.
    */
   private static rowIndexOfRowElement(row: HTMLElement): number {
-    const topPx = parseInt(row.style.top);
+    const topPx = parseInt(/translateY\((-?\d+)/.exec(row.style.transform)?.[1] ?? row.style.top);
     const height = row.offsetHeight;
 
     if (isNaN(topPx) || height <= 0) {

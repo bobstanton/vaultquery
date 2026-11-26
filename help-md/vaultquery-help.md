@@ -269,7 +269,7 @@ ORDER BY table_index, row_index, column_name;
 
 # Template variables
 
-Placeholders are replaced before the query runs.
+Placeholders are replaced before the query makes it to SQLite. For a text property, use quotes: `WHERE title = '{this.title}'`. For a property that may be a number, a checkbox, text or missing, use `WHERE rating = {h.sqlLiteral(this.rating)}`, which handles apostrophes. For a list, use `WHERE path IN ({h.sqlIn(this.outgoingLinks)})`.
 
 | Variable               | Type   | Description                                  | Example                         |
 | ---------------------- | ------ | -------------------------------------------- | ------------------------------- |
@@ -667,29 +667,43 @@ Files are limited to 50 MiB and 1,999 columns.
 > [!important] Requirements
 > **Setting:** **Settings > VaultQuery > Indexing > Other files > Remote CSV and JSON**.
 >
-> **Also requires:** A source definition with a public HTTPS URL; an internet connection for the first download.
+> **Also requires:** A source definition with an HTTPS URL and an internet connection for the first download.
 >
 > **Plugin default:** Off. 
 
-Use `vaultquery-remote-csv` for a public HTTPS CSV source or `vaultquery-web-json` for JSON:
+Use `vaultquery-remote-csv` for an HTTPS CSV source or `vaultquery-remote-json` for JSON:
 
 ~~~vaultquery-remote-csv
 id: sample_state_population
 url: https://raw.githubusercontent.com/plotly/datasets/master/2014_usa_states.csv
 table: sample_state_population
 cache: 1h
+loadMode: lazy
 ~~~
 
 Settings:
 
-| Setting | Description                                                                                                                  | Examples                                                                       |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `id`    | Required. Starts with a letter; contains only letters, digits, and underscores.                                              | `sample_state_population`                                                      |
-| `url`   | Required. Public HTTPS CSV or JSON source.                                                                                   | `https://raw.githubusercontent.com/plotly/datasets/master/2014_usa_states.csv` |
-| `table` | SQL table name. Defaults to `web_csv_<id>` or `web_json_<id>`. Uses the same naming rules as `id`.                           | `sample_state_population`                                                      |
-| `cache` | Age before cached data becomes stale. Positive whole minutes (`m`), hours (`h`), or days (`d`). Does not schedule refreshes. | **`1h`**, `30m`, `2d`                                                          |
+| Setting       | Description                                                                                                                  | Examples                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `id`          | Required. Starts with a letter; contains only letters, digits, and underscores.                                              | `sample_state_population`                                                      |
+| `url`         | Required. HTTPS CSV or JSON source.                                                                                          | `https://raw.githubusercontent.com/plotly/datasets/master/2014_usa_states.csv` |
+| `table`       | SQL table name. Defaults to `remote_csv_<id>` or `remote_json_<id>`. Uses the same naming rules as `id`.                           | `sample_state_population`                                                      |
+| `cache`       | Age before cached data becomes stale. Positive whole minutes (`m`), hours (`h`), or days (`d`). Does not schedule refreshes. | **`1h`**, `30m`, `2d`                                                          |
+| `loadMode`    | When to fetch this source. Choose `eager` for loading during indexing or `lazy` for loading on the first query.              | **`eager`**, `lazy`                                                            |
+| `method`      | HTTP request method.                                                                                                         | **`GET`**, `POST`                                                              |
+| `body`        | JSON input for a POST request. Accepts inline or indented multiline JSON.                                  | `{"region":"{this.region}","limit":10}`                                        |
+| `headers`     | HTTP request headers, one indented name and value per line.                                                                  | `Authorization: "Bearer YOUR_KEY"`                                             |
+| `rowProperty` | JSON only. Read rows from a top-level array property, or read one row from an object property.                               | `data`                                                                         |
 
-Query it with `SELECT * FROM sample_state_population`.
+Use `{this.property}` in a URL path segment, query value, HTTP header value, or JSON body string to read frontmatter from the note containing the block. For example, `/stations/{this.station}?region={this.region}` encodes each value for the URL. A header such as `Accept-Language: {this.language}` uses plain text. Lists supply comma-separated values. After a property edit is indexed, a lazy table loads the updated request on its next read.
+
+Existing `vaultquery-web-json` blocks also accept these settings.
+
+For multiline JSON, put `body: |` on its own line and indent the JSON below it.
+
+Header values are stored in the Markdown note.
+
+With `loadMode: lazy`, the first `SELECT * FROM sample_state_population` waits for the download if the table has no cached snapshot.
 
 Queries use cached data while stale sources refresh. Use the source block's **Refresh** button to retry. Network errors retain cached data; invalid CSV or JSON makes the table unavailable. Select disk storage to retain data across restarts. Changing the URL or forcing a reindex requires a new download. Removing or excluding a definition removes its table.
 

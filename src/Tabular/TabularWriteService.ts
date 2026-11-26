@@ -1,7 +1,7 @@
 import { isDataFilePath } from './TabularTableOwnership';
 import { isAbsoluteRootPath } from '../External/ExternalRootSettings';
 import { sqliteIdentifierKey } from '../utils/SqlIdentifierUtils';
-import { sha256Hex } from '../utils/Sha256';
+import { sha256HexOfText } from '../utils/Sha256';
 import { TFile } from 'obsidian';
 import type { App } from 'obsidian';
 import type { VaultDatabase } from '../Database/DatabaseService';
@@ -251,6 +251,6 @@ export class CsvWriteService {
   }
 
   private async revision(source: string): Promise<string> {
-    return sha256Hex(new TextEncoder().encode(source));
+    return sha256HexOfText(source);
   }
 }

@@ -1,3 +1,4 @@
+import { resolveOutputParameters } from './OutputParameters';
 import { processQueryBlock } from './QueryBlockLifecycle';
 import { App, MarkdownPostProcessorContext, MarkdownRenderer } from 'obsidian';
 import { parseQueryBlock } from '../utils/QueryParsingUtils';
@@ -101,6 +102,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       const queryStartedAt = performance.now();
       const results = await this.executeQuery(api, parsed.query, ctx.sourcePath);
       const dataFileColumns = await api.getDataFileColumnNames(results);
+      const renderedQuery = await resolveOutputParameters(parsed, this.app, ctx.sourcePath);
       const queryMs = performance.now() - queryStartedAt;
 
       if (!this.renderGuard.isCurrent(container, renderVersion)) {
@@ -110,7 +112,7 @@ export abstract class BaseReadQueryCodeBlockProcessor {
       const renderContext: RenderContext = {
         results,
         dataFileColumns,
-        parsed,
+        parsed: renderedQuery,
         container,
         app: this.app,
         openFile: createOpenFileHandler(this.app),

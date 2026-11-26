@@ -1,3 +1,5 @@
+import { lexSql, type SqlLexToken } from 'placeholder-resolver/sql';
+export type { SqlLexToken } from 'placeholder-resolver/sql';
 import { scanMarkdownCodeFences } from './MarkdownFenceUtils';
 import { TRIGGER_FUNCTION_NAMES } from '../Constants/TriggerFunctionNames';
 import { quoteIdentifier, sqliteIdentifierKey } from './SqlIdentifierUtils';
@@ -245,13 +247,6 @@ export function validateSQLObjectStart(sql: string, type: 'VIEW' | 'TRIGGER'): b
 export type DmlOperation = "insert" | "update" | "delete";
 export type SqlOperation = DmlOperation | "select";
 
-export interface SqlLexToken {
-  readonly kind: 'word' | 'identifier' | 'literal' | 'punctuation' | 'comment' | 'number' | 'parameter' | 'blob' | 'placeholder';
-  readonly value: string;
-  readonly start: number;
-  readonly end: number;
-}
-
 export function stripTrailingSemicolon(sql: string): string {
   return sql.replace(/;\s*$/, "");
 }
@@ -264,14 +259,6 @@ const tokenCache = new Map<string, { tokens: readonly SqlLexToken[]; all: readon
 const TOKEN_CACHE_BYTES = 2 * 1024 * 1024;
 let tokenCacheBytes = 0;
 
-function identifierStart(code: number): boolean {
-  return code >= 65 && code <= 90 || code >= 97 && code <= 122 || code === 95 || code > 127;
-}
-
-function identifierPart(code: number): boolean {
-  return identifierStart(code) || code >= 48 && code <= 57 || code === 36;
-}
-
 /** Significant SQL tokens by default; comments are included for source editing and highlighting. */
 export function tokenizeSqlStatement(sql: string, includeComments = false): readonly SqlLexToken[] {
   let cached = tokenCache.get(sql);
@@ -281,7 +268,7 @@ export function tokenizeSqlStatement(sql: string, includeComments = false): read
     tokenCache.set(sql, cached);
   }
   else {
-    const all = tokenizeSqlUncached(sql);
+    const all = lexSql(sql);
     const tokens = all.filter(token => token.kind !== 'comment');
     const bytes = sql.length * 4 + all.length * 88;
 
@@ -302,101 +289,6 @@ export function tokenizeSqlStatement(sql: string, includeComments = false): read
   }
 
   return includeComments ? cached.all : cached.tokens;
-}
-
-const SQL_NUMBER = /(?:0[xX][0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|(?:[0-9]+(?:_[0-9]+)*(?:\.[0-9]*(?:_[0-9]+)*)?|\.[0-9]+(?:_[0-9]+)*)(?:[eE][+-]?[0-9]+(?:_[0-9]+)*)?)/y;
-
-function consumeSqlQuotedToken(sql: string, start: number): number {
-  const close = sql[start] === '[' ? ']' : sql[start];
-  let index = start + 1;
-
-  while (index < sql.length) {
-    if (sql[index++] !== close) continue;
-    if (close !== ']' && sql[index] === close) index++;
-    else break;
-  }
-
-  return index;
-}
-
-function tokenizeSqlUncached(sql: string): readonly SqlLexToken[] {
-  const tokens: SqlLexToken[] = [];
-
-  for (let index = 0; index < sql.length;) {
-    const char = sql[index];
-    const code = sql.charCodeAt(index);
-    const start = index;
-    let kind: SqlLexToken['kind'] = 'punctuation';
-
-    if (code === 32 || code >= 9 && code <= 13 || code > 127 && /\s/.test(char)) {
-      index++;
-      continue;
-    }
-
-    if (char === '-' && sql[index + 1] === '-') {
-      const end = sql.indexOf('\n', index + 2);
-
-      index = end < 0 ? sql.length : end;
-      kind = 'comment';
-    }
-    else if (char === '/' && sql[index + 1] === '*') {
-      const end = sql.indexOf('*/', index + 2);
-
-      index = end < 0 ? sql.length : end + 2;
-      kind = 'comment';
-    }
-    else if (char === "'" || char === '"' || char === '`' || char === '[') {
-      index = consumeSqlQuotedToken(sql, index);
-      kind = char === "'" ? 'literal' : 'identifier';
-    }
-    else if ((char === 'x' || char === 'X') && sql[index + 1] === "'") {
-      index = consumeSqlQuotedToken(sql, index + 1);
-      kind = 'blob';
-    }
-    else if (char === '{' && sql[index + 1] === '{') {
-      const end = sql.indexOf('}}', index + 2);
-
-      index = end < 0 ? sql.length : end + 2;
-      kind = 'placeholder';
-    }
-    else if (char === '?' || [':', '@', '$'].includes(char) && identifierPart(sql.charCodeAt(index + 1))) {
-      index++;
-      while (index < sql.length && !/\s/.test(sql[index]) && (char === '?' ? /[0-9]/.test(sql[index]) : identifierPart(sql.charCodeAt(index)))) index++;
-
-      // SQLite also accepts Tcl-style $name::suffix(argument) parameters.
-      if (char === '$') {
-        while (sql.slice(index, index + 2) === '::') {
-          index += 2;
-          while (index < sql.length && identifierPart(sql.charCodeAt(index)) && !/\s/.test(sql[index])) index++;
-        }
-
-        if (sql[index] === '(') {
-          const end = sql.indexOf(')', index + 1);
-
-          index = end < 0 ? sql.length : end + 1;
-        }
-      }
-
-      kind = 'parameter';
-    }
-    else if (code >= 48 && code <= 57 || char === '.' && /[0-9]/.test(sql[index + 1] ?? '')) {
-      SQL_NUMBER.lastIndex = index;
-      index += SQL_NUMBER.exec(sql)![0].length;
-      kind = 'number';
-    }
-    else if (identifierStart(code)) {
-      index++;
-      while (index < sql.length && identifierPart(sql.charCodeAt(index)) && !/\s/.test(sql[index])) index++;
-      kind = 'word';
-    }
-    else index++;
-
-    const raw = sql.slice(start, index);
-
-    tokens.push({ kind, value: kind === 'word' ? raw.replace(/[a-z]/g, letter => letter.toUpperCase()) : raw, start, end: index });
-  }
-
-  return tokens;
 }
 
 export function tokenIsWord(token: SqlLexToken | undefined, word: string): boolean {

@@ -380,7 +380,7 @@ export class WorkerDatabase {
     return true;
   }
 
-  public async registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string): Promise<void> {
+  public async registerTrigger(triggerName: string, triggerSql: string, sourcePath?: string, _activationSql?: string): Promise<void> {
     await this.callWorker({ type: 'registerTrigger', triggerName, triggerSql, sourcePath });
   }
 

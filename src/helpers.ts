@@ -56,6 +56,7 @@ export interface ManagedVaultQueryTableProviderRegistration {
 
 export type VaultQueryAppLike = object & {
   plugins?: {
+    enabledPlugins?: ReadonlySet<string>;
     plugins?: Record<string, { api?: IVaultQueryAPI; declareProviderDefinitionBlockLanguages?: (languages: readonly string[]) => void }>;
   };
   workspace?: {
@@ -102,12 +103,24 @@ export function getVaultQueryAPI(app: VaultQueryAppLike): IVaultQueryAPI | null 
 }
 
 /**
- * Wait for the VaultQuery API to become available with exponential backoff.
- * Useful when a plugin loads before VaultQuery, especially on mobile.
+ * Whether the VaultQuery plugin is turned on in this vault. True while it is still
+ * starting, when `getVaultQueryAPI()` returns null. Use it to tell "not installed"
+ * from "not ready yet".
  *
  * @param app - An Obsidian-like app object with plugin registry access
- * @param options - Configuration for retry behavior
- * @returns The VaultQuery API or null if not available after all retries
+ */
+export function isVaultQueryEnabled(app: VaultQueryAppLike): boolean {
+  return app.plugins?.enabledPlugins?.has('vaultquery') === true || app.plugins?.plugins?.vaultquery !== undefined;
+}
+
+/**
+ * Wait for the VaultQuery API to become available.
+ * Useful when a plugin loads before VaultQuery, especially on mobile.
+ * Resolves to null at once when VaultQuery is not turned on, rather than after the timeout.
+ *
+ * @param app - An Obsidian-like app object with plugin registry access
+ * @param options - How long to wait, and whether to wait for indexing too
+ * @returns The VaultQuery API, or null if VaultQuery is not turned on or did not start in time
  *
  * @example
  * ```typescript
@@ -132,8 +145,9 @@ export async function waitForVaultQueryAPI(app: VaultQueryAppLike, options?: Wai
   let api = getVaultQueryAPI(app);
 
   const workspace = app.workspace;
+  const turnedOff = app.plugins?.enabledPlugins !== undefined && !isVaultQueryEnabled(app);
 
-  if (api === null && workspace) {
+  if (api === null && workspace && !turnedOff) {
     api = await new Promise<IVaultQueryAPI | null>((resolve) => {
       let timeoutId: number | null = null;
       let ref: unknown = null;

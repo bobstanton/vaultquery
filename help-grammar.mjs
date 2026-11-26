@@ -44,6 +44,7 @@ const GRAMMARS = {
   'vaultquery-trigger': Prism.languages.sql,
   'vaultquery-function': Prism.languages.javascript,
   'vaultquery-remote-csv': Prism.languages.yaml,
+  'vaultquery-remote-json': Prism.languages.yaml,
   'vaultquery-web-json': Prism.languages.yaml,
   'vaultquery-nl': { 'config-section': sqlWithConfig['config-section'] },
   'typescript': Prism.languages.typescript,

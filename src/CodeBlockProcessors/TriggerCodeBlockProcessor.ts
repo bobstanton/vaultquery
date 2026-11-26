@@ -34,9 +34,7 @@ export class TriggerCodeBlockProcessor extends BaseUserDefinedProcessor {
     try {
       const api = this.requireApi();
 
-      if (api.triggerNeedsRecreation(triggerName, sql)) {
-        await api.registerTrigger(triggerName, sql, ctx.sourcePath);
-      }
+      await api.registerTrigger(triggerName, sql, ctx.sourcePath);
 
       this.renderSuccess(container, triggerName);
     }

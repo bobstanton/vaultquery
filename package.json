@@ -1,6 +1,6 @@
 {
 	"name": "vaultquery",
-	"version": "1.2.3",
+	"version": "1.2.4",
 	"description": "Query notes and frontmatter through a local SQLite index with output to table, chart or calendar.",
 	"main": "main.js",
 	"types": "index.d.ts",
@@ -73,16 +73,16 @@
 		"@fullcalendar/interaction": "^6.1.22",
 		"@fullcalendar/timegrid": "^6.1.22",
 		"@xmldom/xmldom": "0.9.12",
-		"chart.js": "^4.5.1",
-		"exifreader": "^4.51.0",
+		"chart.js": "^4.6.2",
+		"exifreader": "^4.55.1",
 		"fnv-plus": "^1.3.1",
-		"markdown-table": "^3.0.4",
+		"markdown-table": "^3.1.0",
 		"obsidian-debug-logger": "git+https://github.com/bobstanton/obsidian-debug-logger.git",
-		"papaparse": "^5.7.0",
-		"placeholder-resolver": "git+https://github.com/bobstanton/placeholder-resolver.git#3ed9fc1ae04e27681788906046065f1cb7112c4f",
-		"slickgrid": "^5.20.2",
-		"sql.js": "~1.16.0",
-		"user-template-renderer": "git+https://github.com/bobstanton/user-template-renderer.git"
+		"papaparse": "^5.7.1",
+		"placeholder-resolver": "git+https://github.com/bobstanton/placeholder-resolver.git#7450cfe6e37b09d73b66bf955fc0ddc143095e82",
+		"slickgrid": "^6.0.0",
+		"sql.js": "~1.17.0",
+		"user-template-renderer": "git+https://github.com/bobstanton/user-template-renderer.git#da61d32bf2f5c3f7733402e1bd4438bca61ee8b9"
 	},
 	"overrides": {
 		"fast-uri": "^4.1.2",

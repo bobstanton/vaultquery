@@ -73,10 +73,6 @@
     background: var(--background-modifier-active);
 }
 
-.vaultquery-data-grid .slick-header-column.slick-sortable-placeholder {
-    background: var(--background-modifier-active);
-}
-
 /* Sort indicators */
 .vaultquery-data-grid .slick-sort-indicator {
     position: absolute;

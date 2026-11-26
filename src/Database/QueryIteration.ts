@@ -238,10 +238,7 @@ export async function awaitQueryOperation<T>(operation: Promise<T>, signal?: Abo
   }
 }
 
-export async function* iterateQueryCursor(
-  source: { open(): Promise<number>; next(id: number): Promise<QueryBatch>; close(id: number): Promise<void> },
-  signal?: AbortSignal,
-): AsyncGenerator<Record<string, unknown>[]> {
+export async function* iterateQueryCursor(source: { open(): Promise<number>; next(id: number): Promise<QueryBatch>; close(id: number): Promise<void> }, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>[]> {
   let id: number | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
